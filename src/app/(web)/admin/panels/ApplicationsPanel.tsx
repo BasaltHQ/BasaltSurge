@@ -26,8 +26,8 @@ type PartnerApplication = {
   approvedBy?: string;
 };
 
-function canEditBrandKey(app: PartnerApplication) {
-  return app.status !== "approved" && app.approvedAt == null && !app.approvedBy;
+function canEditBrandKey(_app?: PartnerApplication | null) {
+  return true;
 }
 
 export default function ApplicationsPanel() {
@@ -228,7 +228,7 @@ export default function ApplicationsPanel() {
   async function saveEdit() {
     if (!editApp) return;
     const brandKey = editBrandKey.trim().toLowerCase();
-    const brandKeyChanged = canEditBrandKey(editApp) && brandKey !== editApp.brandKey;
+    const brandKeyChanged = brandKey !== editApp.brandKey;
     if (brandKeyChanged && !/^[a-z0-9]+(?:-+[a-z0-9]+)*$/.test(brandKey)) {
       setEditError("Use letters, numbers, and hyphens for the brand key, starting and ending with a letter or number.");
       return;
@@ -392,7 +392,7 @@ export default function ApplicationsPanel() {
               type="text"
               value={editBrandKey}
               onChange={(e) => setEditBrandKey(e.target.value)}
-              disabled={editBusy || !canEditBrandKey(editApp)}
+              disabled={editBusy}
               autoCapitalize="none"
               autoComplete="off"
               spellCheck={false}
@@ -400,9 +400,7 @@ export default function ApplicationsPanel() {
               className="w-full rounded-md border border-foreground/10 bg-background/50 px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-50"
             />
             <p id="application-brand-key-help" className="text-xs text-muted-foreground">
-              {canEditBrandKey(editApp)
-                ? "Correct the brand key before approval. Use letters, numbers, and hyphens; letters are saved in lowercase. Save or cancel your edits before approving."
-                : "The brand key is locked after approval. You can still update application images."}
+              Use letters, numbers, and hyphens; letters are saved in lowercase. Save or cancel your edits before approving or syncing.
             </p>
           </div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">

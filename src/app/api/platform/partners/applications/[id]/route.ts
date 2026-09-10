@@ -224,11 +224,6 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
           return json({ error: "invalid_brand_key" }, { status: 400 });
         }
         if (updatedBrandKey !== brandKey) {
-          // Approval metadata persists even if an approved application is later rejected.
-          if (app.status === "approved" || app.approvedAt != null || app.approvedBy) {
-            return json({ error: "brand_key_locked" }, { status: 409 });
-          }
-
           const { resources: candidates } = await c.items
             .query<PartnerApplicationDoc | BrandConfigDoc>({
               query: "SELECT * FROM c WHERE (c.type = @brandType OR c.type = @applicationType) AND (LOWER(c.brandKey) = @brandKey OR LOWER(c.wallet) = @brandKey)",
@@ -249,6 +244,23 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
           });
           if (keyInUse) {
             return json({ error: "brand_key_in_use" }, { status: 409 });
+          }
+
+          // If the application was already approved, migrate its existing brand_config to the new brand key
+          if (app.status === "approved" || app.approvedAt != null || app.approvedBy) {
+            try {
+              const { resource: existingBrandConfig } = await c.item("brand:config", brandKey).read<BrandConfigDoc>();
+              if (existingBrandConfig) {
+                await c.items.upsert({
+                  ...existingBrandConfig,
+                  wallet: updatedBrandKey,
+                  updatedAt: now,
+                });
+                try {
+                  await c.item("brand:config", brandKey).delete();
+                } catch {}
+              }
+            } catch {}
           }
         }
       }

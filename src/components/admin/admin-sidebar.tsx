@@ -562,7 +562,8 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
   const isTeamMemberOnly = teamProfiles.length > 0 && authMe?.hasOwnShop === false && !isSuperadmin;
   const showMyShop = !isTeamMemberOnly;
   const adminRole = resolveWalletRole(wallet) || '';
-  const isPartnerOrPlatformAdmin = adminRole.startsWith('platform_') || adminRole.startsWith('partner_');
+  const isMerchantRole = adminRole.startsWith('merchant_') || adminRole === 'manager' || adminRole === 'staff';
+  const isPartnerOrPlatformAdmin = adminRole.startsWith('platform_') || adminRole.startsWith('partner_') || (!isMerchantRole && !!adminRole);
 
   const groups: NavItem[] = [
     {
@@ -624,7 +625,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
       title: 'Partner/Admin',
       icon: <Brush className="w-4 h-4" />,
       items: [
-        ...(isPartnerContainer ? [{ title: 'Partner Analytics', key: 'partnerAnalytics' as AdminTabKey, icon: <LineChart className="w-4 h-4" /> }] : []),
+        { title: 'Partner Analytics', key: 'partnerAnalytics' as AdminTabKey, icon: <LineChart className="w-4 h-4" /> },
         { title: 'Devices', key: 'devices' as AdminTabKey, icon: <Smartphone className="w-4 h-4" /> },
         ...(!isRequestMode || isSuperadmin ? [{ title: 'Split Config', key: 'splitConfig' as AdminTabKey, icon: <GitMerge className="w-4 h-4" /> }] : []),
         { title: 'Branding', key: 'branding' as AdminTabKey, icon: <Palette className="w-4 h-4" /> },
@@ -643,7 +644,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         { title: 'Roadmap', key: 'roadmap' as AdminTabKey, icon: <LayoutGrid className="w-4 h-4" /> },
         { title: 'Modules', key: 'modules' as AdminTabKey, icon: <Blocks className="w-4 h-4" /> },
         { title: 'Notifications', key: 'notificationsPartner' as AdminTabKey, icon: <Bell className="w-4 h-4" /> },
-      ].filter((item) => (item.key === 'partnerAnalytics' || isPartnerOrPlatformAdmin) && canAccessPanel(item.key as any, wallet)),
+      ].filter((item) => isPartnerOrPlatformAdmin && canAccessPanel(item.key as any, wallet)),
     },
     {
       title: 'Platform',

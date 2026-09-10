@@ -71,7 +71,10 @@ function harness(options = {}) {
         return { resource: document };
       },
     },
-    item: (id, wallet) => ({ read: async () => ({ resource: structuredClone(documents.get(`${wallet}/${id}`)) }) }),
+    item: (id, wallet) => ({
+      read: async () => ({ resource: structuredClone(documents.get(`${wallet}/${id}`)) }),
+      delete: async () => { documents.delete(`${wallet}/${id}`); return { resource: undefined, statusCode: 204 }; },
+    }),
   };
   const mocks = {
     "next/server": { NextRequest: Request, NextResponse: Response },
@@ -146,18 +149,25 @@ test("invalid keys reject the entire edit without persisting any fields", async 
   }
 });
 
-test("approval or historical approval metadata locks a changed brand key", async () => {
+test("approved applications can change brand keys anytime and migrate existing brand config", async () => {
   for (const application of [
     { status: "approved" },
     { status: "rejected", approvedAt: 123 },
     { status: "reviewing", approvedAt: 0 },
     { status: "rejected", approvedBy: "admin" },
   ]) {
-    const h = harness({ application });
+    const h = harness({
+      application,
+      documents: [{ id: "brand:config", wallet: "typo", type: "brand_config", name: "Partner Brand" }],
+    });
     const response = await h.patch({ action: "update", updates: { brandKey: "correct" } });
-    assert.equal(response.status, 409);
-    assert.equal((await response.json()).error, "brand_key_locked");
-    assert.equal(h.writes.length, 0);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).brandKey, "correct");
+    assert.equal(h.savedApplication().brandKey, "correct");
+    // Verifies brand:config migrated to the new key
+    assert.equal(h.documents.get("correct/brand:config")?.wallet, "correct");
+    // Verifies old brand:config was deleted
+    assert.equal(h.documents.get("typo/brand:config"), undefined);
   }
 });
 
