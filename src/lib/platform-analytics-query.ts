@@ -136,7 +136,8 @@ export function resolveAnalyticsBrand(receipt: Record<string, any>, configs: Rec
   // Parse the origin hostname; a query string mentioning a brand is not attribution.
   try {
     const hostname = new URL(String(receipt.parentUrl || "")).hostname.toLowerCase();
-    for (const key of ["aipowerpay", "basaltsurge", "lucky13", "xoinpay"]) {
+    if (hostname === "digital.tnpsettle.com") return "tnp";
+    for (const key of ["aipowerpay", "basaltsurge", "lucky13", "xoinpay", "tnp"]) {
       if (hostname.split(".").some(segment => segment === key)) return key;
     }
   } catch { /* unknown origin remains unknown */ }

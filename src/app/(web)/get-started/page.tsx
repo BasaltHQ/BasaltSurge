@@ -3,7 +3,7 @@
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import React from "react";
-import { ArrowDown, ArrowRight, ArrowUpRight, Check, ChevronDown, Code2, Globe2, Layers3, Pause, Play, ShieldCheck, Wallet, Zap } from "lucide-react";
+import { ArrowUpRight, Check, ChevronDown, Code2, Globe2, Layers3, Pause, Play, ShieldCheck, Wallet, Zap } from "lucide-react";
 import { useBrand } from "@/contexts/BrandContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { isPlatformBrand, normalizeBrandName } from "@/lib/branding";
@@ -87,7 +87,6 @@ export default function GetStartedPage() {
             <p className={styles.heroDetail}>{brandName} brings payments, onchain settlement, and your brand into one seamless experience. Built for business. Designed for people.</p>
             <div className={styles.actions}>
               <SignupButton className={styles.primaryButton}>Start accepting payments <ArrowUpRight size={18} /></SignupButton>
-              <a className={styles.textButton} href="#how-it-works"><ArrowDown size={16} /> Explore the experience</a>
             </div>
             <div className={styles.heroNotes}><span><Check size={14} /> Online & in person</span><span><Check size={14} /> Your brand, built in</span></div>
           </div>
@@ -143,7 +142,7 @@ export default function GetStartedPage() {
         <div className={styles.container}>
           <div className={styles.sectionHeading}><div><div className={styles.eyebrow}>ONE PLATFORM. YOUR WAY OF WORKING.</div><h2 id="business-title">Built for your next move.</h2></div><p>At the counter, in your store, or inside your own product. Make better payments part of your business.</p></div>
           <div className={styles.businessGrid}>
-            <article className={styles.businessCard}><div className={styles.businessVisual} aria-hidden="true"><div className={styles.receiptIllustration}><span>YOUR BUSINESS</span><strong>Ready when<br />they are.</strong><div className={styles.receiptLine} /><span>PAYMENT LINK <ArrowUpRight size={15} /></span></div><span className={styles.visualTag}><Check size={13} /> Online & in person</span></div><div className={styles.businessBody}><h3>Wherever you do business.</h3><p>Payment links, QR checkout, and commerce integrations. Meet customers wherever the sale happens.</p><Link href="/terminal" className={styles.textButton}>Explore the terminal <ArrowUpRight size={17} /></Link></div></article>
+            <article className={styles.businessCard}><div className={styles.businessVisual} aria-hidden="true"><div className={styles.receiptIllustration}><span>YOUR BUSINESS</span><strong>Ready when<br />they are.</strong><div className={styles.receiptLine} /><span>PAYMENT LINK <ArrowUpRight size={15} /></span></div><span className={styles.visualTag}><Check size={13} /> Online & in person</span></div><div className={styles.businessBody}><h3>Wherever you do business.</h3><p>Payment links, QR checkout, and commerce integrations. Meet customers wherever the sale happens.</p><SignupButton className={styles.textButton}>Sign up <ArrowUpRight size={17} /></SignupButton></div></article>
             <article className={styles.businessCard}><div className={`${styles.businessVisual} ${styles.routingVisual}`} aria-hidden="true"><div className={styles.routeNode}><Wallet size={21} /><span>Payment received</span></div><div className={styles.routeConnector} /><div className={styles.routeDestinations}><span>Merchant</span><span>Partner</span></div><span className={styles.visualTag}><Layers3 size={13} /> Programmable revenue</span></div><div className={styles.businessBody}><h3>More control behind the scenes.</h3><p>Configure revenue splits, track activity, and connect your systems with APIs for orders, inventory, and receipts.</p><Link href="/developers" className={styles.textButton}>Explore the developer tools <ArrowUpRight size={17} /></Link></div></article>
           </div>
           {!isPartner && <div className={styles.partnerBanner}><div className={styles.partnerIcon}><Code2 size={26} /></div><div><span className={styles.smallLabel}>FOR PLATFORMS & PAYMENT PARTNERS</span><h3>Your brand. Our payment infrastructure.</h3><p>Build your own branded payment business with the partner program.</p></div><Link href="/partners" className={styles.secondaryButton}>Become a partner <ArrowUpRight size={17} /></Link></div>}
@@ -155,7 +154,7 @@ export default function GetStartedPage() {
         <div className={styles.faqList}>{questions.map(({ question, answer }) => <details key={question}><summary>{question}<ChevronDown size={18} /></summary><p>{answer}</p></details>)}</div>
       </section>
 
-      <section className={styles.finalSection} aria-labelledby="start-title"><div className={styles.container}><div className={styles.eyebrow}>YOUR NEXT CHAPTER STARTS HERE</div><h2 id="start-title">Better payments.<br /><span>More possibilities.</span></h2><p>Bring the {brandName} experience to your business.</p><div className={styles.actions}><SignupButton className={styles.primaryButton}>Start accepting payments <ArrowUpRight size={18} /></SignupButton><Link href="/pricing" className={styles.textButton}>Explore pricing <ArrowRight size={17} /></Link></div>
+      <section className={styles.finalSection} aria-labelledby="start-title"><div className={styles.container}><div className={styles.eyebrow}>YOUR NEXT CHAPTER STARTS HERE</div><h2 id="start-title">Better payments.<br /><span>More possibilities.</span></h2><p>Bring the {brandName} experience to your business.</p><div className={styles.actions}><SignupButton className={styles.primaryButton}>Start accepting payments <ArrowUpRight size={18} /></SignupButton></div>
         {!isPartner && <details className={styles.contactDisclosure}><summary>Prefer to talk with our team? <ChevronDown size={16} /></summary><div className={styles.contactForm}><ContactFormSection /></div></details>}
       </div></section>
       {localSignupOpen && <SignupWizard isOpen onClose={() => setLocalSignupOpen(false)} onComplete={() => setLocalSignupOpen(false)} />}

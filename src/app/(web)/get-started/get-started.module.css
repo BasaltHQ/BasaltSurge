@@ -9,7 +9,7 @@
 .hero { --landing-header-height: 112px; position: relative; padding-top: var(--landing-header-height); background: radial-gradient(ellipse at 82% 28%, color-mix(in srgb, var(--landing-accent) 9%, transparent), transparent 49%); }
 .heroMedia { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .heroMedia video { display: block; width: 100%; height: 100%; object-fit: cover; }
-.heroMedia::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, #090b0ed9 0%, #090b0e99 45%, #090b0e66 100%), linear-gradient(0deg, #090b0e 0%, #090b0ee6 7%, #090b0e66 20%, transparent 40%); }
+.heroMedia::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, #090b0ed9 0%, #090b0e99 45%, #090b0e66 100%), linear-gradient(0deg, #090b0e 0%, #090b0e 12%, #090b0ef5 20%, #090b0e99 32%, transparent 55%); }
 .scrollPrompt { position: relative; display: flex; justify-content: center; padding: 18px 0 24px; }
 .scrollCue { display: flex; flex-direction: column; align-items: center; gap: 10px; min-width: 140px; padding: 10px 18px; border-radius: 12px; color: #aeb7c2; transition: color .2s; }
 .scrollCue > span:first-child { font-size: 9px; font-weight: 500; letter-spacing: .18em; text-transform: uppercase; }
@@ -44,7 +44,7 @@
 .productStage { min-width: 0; }
 .stageLabel { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #949ba5; font-size: 9px; letter-spacing: .12em; margin-bottom: 15px; }
 .demoBadge { background: #ffffff06; border: 1px solid #ffffff16; border-radius: 4px; padding: 5px 7px; font-size: 8px; color: #b4bac3; }
-.checkout { position: relative; border: 1px solid #ffffff20; border-radius: 17px; padding: 23px; background: linear-gradient(145deg, #1c2026, #111419 70%); box-shadow: 0 25px 80px #0006, 0 0 0 7px #ffffff02; }
+.checkout { position: relative; border: 1px solid #ffffff30; border-radius: 17px; padding: 23px; background: linear-gradient(145deg, #26303c66, #11141980 70%); -webkit-backdrop-filter: blur(24px) saturate(135%); backdrop-filter: blur(24px) saturate(135%); box-shadow: 0 25px 80px #0005, inset 0 1px 0 #ffffff12, 0 0 0 7px #ffffff02; }
 .checkoutBrand { display: flex; align-items: center; gap: 10px; }
 .merchantSymbol { display: grid; place-items: center; width: 37px; height: 37px; border: 1px solid #ffffff1c; border-radius: 10px; color: var(--landing-accent); }
 .checkoutBrand > div { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }

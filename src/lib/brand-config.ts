@@ -16,6 +16,7 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   lucky13: "lucky13",
   lucky13marketing: "lucky13",
   canyapay: "canyapay",
+  tnp: "tnp",
   // Add more partner brands here as needed
 };
 
@@ -34,8 +35,7 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "www.pay.lucky13marketing.com": "lucky13",
   "canyapay.com": "canyapay",
   "www.canyapay.com": "canyapay",
-  "canyapay.azurewebsites.net": "canyapay",
-  "canyapay.payportal.co": "canyapay"
+  "digital.tnpsettle.com": "tnp"
 };
 
 // Cache and variables for dynamic partner domains from DB
@@ -167,7 +167,7 @@ export async function getDynamicPartnerDomains(): Promise<Record<string, string>
 
   // 2. Stale-While-Revalidate: If we have an existing cache, return it instantly and refresh in background
   if (hasCache && isStale) {
-    fetchDynamicDomainsInBackground().catch(() => {});
+    fetchDynamicDomainsInBackground().catch(() => { });
     return DYNAMIC_PARTNER_DOMAINS;
   }
 
@@ -178,7 +178,7 @@ export async function getDynamicPartnerDomains(): Promise<Record<string, string>
 // Eager background pre-warming at module load (server-side only)
 if (typeof window === "undefined") {
   setTimeout(() => {
-    fetchDynamicDomainsInBackground().catch(() => {});
+    fetchDynamicDomainsInBackground().catch(() => { });
   }, 100);
 }
 
@@ -290,7 +290,7 @@ export async function deriveContainerIdentityFromHostname(host: string, cookieHe
         const { cookies } = require("next/headers");
         const cookieStore = await cookies();
         cookieVal = String(cookieStore.get("pp_sandbox_brand_key")?.value || "").toLowerCase().trim();
-      } catch {}
+      } catch { }
     }
 
     if (cookieVal) {
@@ -464,7 +464,7 @@ export async function readBrandOverridesFromCosmos(brandKey: string): Promise<Br
       if (resources && resources.length > 0) {
         return resources[0] || null;
       }
-    } catch {}
+    } catch { }
 
     return null;
   } catch {

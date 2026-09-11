@@ -177,6 +177,7 @@ export function getBrandKey(req?: NextRequest): string {
     if (hostLower.includes("icunow")) return "icunow-store";
     if (hostLower.includes("aipowerpay")) return "aipowerpay";
     if (hostLower.includes("canyapay")) return "canyapay";
+    if (hostLower === "digital.tnpsettle.com") return "tnp";
     
     // Check localhost subdomains or Azure/PayPortal subdomains
     if (parts.length >= 2) {

@@ -151,6 +151,7 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         portalpay: "BasaltSurge",
         aipowerpay: "AI PowerPay",
         lucky13: "Lucky 13",
+        tnp: "TNP",
         "data-opt": "Data-Opt",
         dataopt: "Data-Opt",
         xoinpay: "XoinPay"

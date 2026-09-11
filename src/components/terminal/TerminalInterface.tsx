@@ -54,6 +54,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     const [hasDefaultTax, setHasDefaultTax] = useState<boolean>(false);
     const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
     const [unifiedFeeEnabled, setUnifiedFeeEnabled] = useState<boolean>(false);
+    const [brandKey, setBrandKey] = useState<string | undefined>(undefined);
     const [terminalLogoUrl, setTerminalLogoUrl] = useState<string>(logoUrl || "");
 
     const { pushQRToCustomerScreen, clearCustomerScreen } = useQRCodeDisplay();
@@ -73,6 +74,8 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                 const cfg = j?.config || {};
                 setFeeMinusEnabled(!!cfg?.feeMinusEnabled);
                 setUnifiedFeeEnabled(!!cfg?.unifiedFeeEnabled);
+                const bk = cfg?.theme?.brandKey || cfg?.brandKey;
+                if (bk) setBrandKey(bk);
                 const feePct = Math.max(0, Number(cfg?.processingFeePct || 0));
                 setProcessingFeePct(feePct);
 
@@ -151,6 +154,8 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
 
     const baseUsd = parseAmount();
     const activeTaxRate = hasDefaultTax ? Math.max(0, Math.min(1, taxRate || 0)) : 0;
+    const totalFeePct = +(basePlatformFeePct + processingFeePct).toFixed(2);
+    const feePctFraction = Math.max(0, totalFeePct / 100);
 
     let taxUsd = 0;
     let processingFeeUsd = 0;
@@ -158,28 +163,16 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
     let displayBaseUsd = baseUsd;
 
     if (feeMinusEnabled) {
-        const rawSubtotal = baseUsd;
-        const rawTax = +(rawSubtotal * activeTaxRate).toFixed(2);
-        const rawTotal = rawSubtotal + rawTax;
-        const feePctFraction = Math.max(0, (basePlatformFeePct + processingFeePct) / 100);
-
-        const adjustedTotal = rawTotal;
-        const adjustedBaseWithoutFee = +(adjustedTotal / (1 + feePctFraction)).toFixed(2);
-        const finalFee = +(adjustedTotal - adjustedBaseWithoutFee).toFixed(2);
-
-        const scaleFactor = rawTotal > 0 ? (adjustedBaseWithoutFee / rawTotal) : 1;
-        const adjustedSubtotal = +(rawSubtotal * scaleFactor).toFixed(2);
-        const adjustedTax = +(adjustedBaseWithoutFee - adjustedSubtotal).toFixed(2);
-
-        displayBaseUsd = adjustedSubtotal;
-        taxUsd = adjustedTax;
-        processingFeeUsd = finalFee;
-        totalUsd = adjustedTotal;
+        taxUsd = +(baseUsd * activeTaxRate).toFixed(2);
+        // In fee-minus mode, fees are absorbed by the merchant and not added to the customer total.
+        processingFeeUsd = 0;
+        totalUsd = +(baseUsd + taxUsd).toFixed(2);
+        displayBaseUsd = baseUsd;
     } else {
         taxUsd = +(baseUsd * activeTaxRate).toFixed(2);
-        const feePctFraction = Math.max(0, (basePlatformFeePct + processingFeePct) / 100);
         processingFeeUsd = +((baseUsd + taxUsd) * feePctFraction).toFixed(2);
         totalUsd = +((baseUsd + taxUsd + processingFeeUsd)).toFixed(2);
+        displayBaseUsd = baseUsd;
     }
 
     // Conversion
@@ -198,69 +191,6 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
         const converted = convertFromUsd(taxUsd, terminalCurrency, rates);
         return converted > 0 ? roundForCurrency(converted, terminalCurrency) : taxUsd;
     }, [taxUsd, terminalCurrency, usdRates, rates]);
-
-    // Split & presented fee breakdown calculation (in USD)
-    const basePreFeeUsd = feeMinusEnabled ? displayBaseUsd : (baseUsd + taxUsd);
-
-    const presentedFeeUsd = presentedFeeBps !== undefined
-        ? +(basePreFeeUsd * (presentedFeeBps / 10000)).toFixed(2)
-        : 0;
-
-    const platformFeeUsd = presentedFeeBps === undefined
-        ? +(basePreFeeUsd * ((platformBps ?? 50) / 10000)).toFixed(2)
-        : 0;
-
-    const partnerFeeUsd = (partnerBps || 0) > 0
-        ? +(basePreFeeUsd * ((partnerBps || 0) / 10000)).toFixed(2)
-        : 0;
-
-    const agentFeeUsd = (agentBps || 0) > 0
-        ? +(basePreFeeUsd * ((agentBps || 0) / 10000)).toFixed(2)
-        : 0;
-
-    const processingAddonUsd = (processingFeePct || 0) > 0
-        ? +(basePreFeeUsd * ((processingFeePct || 0) / 100)).toFixed(2)
-        : 0;
-
-    const presentedFeeConverted = useMemo(() => {
-        if (terminalCurrency === "USD") return presentedFeeUsd;
-        const usdRate = Number(usdRates[terminalCurrency] || 0);
-        if (usdRate > 0) return roundForCurrency(presentedFeeUsd * usdRate, terminalCurrency);
-        const converted = convertFromUsd(presentedFeeUsd, terminalCurrency, rates);
-        return converted > 0 ? roundForCurrency(converted, terminalCurrency) : presentedFeeUsd;
-    }, [presentedFeeUsd, terminalCurrency, usdRates, rates]);
-
-    const platformFeeConverted = useMemo(() => {
-        if (terminalCurrency === "USD") return platformFeeUsd;
-        const usdRate = Number(usdRates[terminalCurrency] || 0);
-        if (usdRate > 0) return roundForCurrency(platformFeeUsd * usdRate, terminalCurrency);
-        const converted = convertFromUsd(platformFeeUsd, terminalCurrency, rates);
-        return converted > 0 ? roundForCurrency(converted, terminalCurrency) : platformFeeUsd;
-    }, [platformFeeUsd, terminalCurrency, usdRates, rates]);
-
-    const partnerFeeConverted = useMemo(() => {
-        if (terminalCurrency === "USD") return partnerFeeUsd;
-        const usdRate = Number(usdRates[terminalCurrency] || 0);
-        if (usdRate > 0) return roundForCurrency(partnerFeeUsd * usdRate, terminalCurrency);
-        const converted = convertFromUsd(partnerFeeUsd, terminalCurrency, rates);
-        return converted > 0 ? roundForCurrency(converted, terminalCurrency) : partnerFeeUsd;
-    }, [partnerFeeUsd, terminalCurrency, usdRates, rates]);
-
-    const agentFeeConverted = useMemo(() => {
-        if (terminalCurrency === "USD") return agentFeeUsd;
-        const usdRate = Number(usdRates[terminalCurrency] || 0);
-        if (usdRate > 0) return roundForCurrency(agentFeeUsd * usdRate, terminalCurrency);
-        const converted = convertFromUsd(agentFeeUsd, terminalCurrency, rates);
-        return converted > 0 ? roundForCurrency(converted, terminalCurrency) : agentFeeUsd;
-    }, [agentFeeUsd, terminalCurrency, usdRates, rates]);
-
-    const processingAddonConverted = useMemo(() => {
-        if (terminalCurrency === "USD") return processingAddonUsd;
-        const usdRate = Number(usdRates[terminalCurrency] || 0);
-        if (usdRate > 0) return roundForCurrency(processingAddonUsd * usdRate, terminalCurrency);
-        const converted = convertFromUsd(processingAddonUsd, terminalCurrency, rates);
-        return converted > 0 ? roundForCurrency(converted, terminalCurrency) : processingAddonUsd;
-    }, [processingAddonUsd, terminalCurrency, usdRates, rates]);
 
     const processingFeeConverted = useMemo(() => {
         if (terminalCurrency === "USD") return processingFeeUsd;
@@ -335,7 +265,8 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                 servedBy: cleanEmployeeName, // Alias
                 // Session tracking
                 sessionId,
-                sessionStartTime
+                sessionStartTime,
+                brandKey,
             };
 
             const r = await fetch("/api/receipts/terminal", {
@@ -691,40 +622,10 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
                                 <span className="text-muted-foreground">Tax {hasDefaultTax ? `(${(Math.round(activeTaxRate * 10000) / 100).toFixed(2)}%)` : ""}</span>
                                 <span>{formatCurrency(taxConverted, terminalCurrency)}</span>
                             </div>
-                            {/* Presented Fee or Platform Fee */}
-                            {presentedFeeBps !== undefined ? (
+                            {!feeMinusEnabled && (totalFeePct > 0 || processingFeeConverted > 0) && (
                                 <div className="flex justify-between items-center text-sm">
-                                    <span className="text-muted-foreground">Presented Fee ({(presentedFeeBps / 100).toFixed(2)}%)</span>
-                                    <span>{formatCurrency(presentedFeeConverted, terminalCurrency)}</span>
-                                </div>
-                            ) : (
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="text-muted-foreground">Platform ({((platformBps ?? 50) / 100).toFixed(2)}%)</span>
-                                    <span>{formatCurrency(platformFeeConverted, terminalCurrency)}</span>
-                                </div>
-                            )}
-
-                            {/* Partner Fee component */}
-                            {(partnerBps || 0) > 0 && (
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="text-muted-foreground">Partner ({((partnerBps || 0) / 100).toFixed(2)}%)</span>
-                                    <span>{formatCurrency(partnerFeeConverted, terminalCurrency)}</span>
-                                </div>
-                            )}
-
-                            {/* Agent Fee component */}
-                            {(agentBps || 0) > 0 && (
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="text-muted-foreground">Agent ({((agentBps || 0) / 100).toFixed(2)}%)</span>
-                                    <span>{formatCurrency(agentFeeConverted, terminalCurrency)}</span>
-                                </div>
-                            )}
-
-                            {/* Processing Fee add-on */}
-                            {(processingFeePct || 0) > 0 && (
-                                <div className="flex justify-between items-center text-sm">
-                                    <span className="text-muted-foreground">Processing Fee ({(processingFeePct || 0).toFixed(2)}%)</span>
-                                    <span>{formatCurrency(processingAddonConverted, terminalCurrency)}</span>
+                                    <span className="text-muted-foreground">{unifiedFeeEnabled ? "Fees" : "Processing Fee"} ({totalFeePct.toFixed(2)}%)</span>
+                                    <span>{formatCurrency(processingFeeConverted, terminalCurrency)}</span>
                                 </div>
                             )}
                             <div className="h-px bg-foreground/10 my-2" />
