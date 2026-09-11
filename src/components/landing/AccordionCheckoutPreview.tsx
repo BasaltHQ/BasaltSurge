@@ -6,7 +6,7 @@ import { ArrowRight, Check, CheckCircle2, CreditCard, Landmark, Layers3, LockKey
 import { AccordionCard } from "@/components/checkout/accordion/AccordionCard";
 import { AccordionStepHeader } from "@/components/checkout/accordion/AccordionStepHeader";
 import { AccordionContent } from "@/components/checkout/accordion/AccordionContent";
-import styles from "@/app/(web)/get-started/get-started.module.css";
+import styles from "@/app/(web)/landing.module.css";
 
 const titles = ["Contact & Account Information", "Identity Verification", "Payment Method", "Payment & Order Confirmation"];
 
