@@ -15,7 +15,7 @@ const resolvedClientIdCache: Record<string, string> = {};
 
 export function getClient() {
   const secret = process.env.THIRDWEB_SECRET_KEY;
-  
+
   // Resolve brandKey dynamically
   let brandKey = "";
   if (typeof window !== "undefined") {
@@ -41,8 +41,7 @@ export function getClient() {
         "www.pay.lucky13marketing.com": "lucky13",
         "canyapay.com": "canyapay",
         "www.canyapay.com": "canyapay",
-        "canyapay.azurewebsites.net": "canyapay",
-        "canyapay.payportal.co": "canyapay"
+        "digital.tnpsettle.com": "tnp"
       };
       if (KNOWN_PARTNER_DOMAINS[hostLower]) {
         brandKey = KNOWN_PARTNER_DOMAINS[hostLower];
@@ -62,6 +61,7 @@ export function getClient() {
           lucky13: "lucky13",
           lucky13marketing: "lucky13",
           canyapay: "canyapay",
+          tnp: "tnp",
         };
         brandKey = KNOWN_PARTNER_PATTERNS[candidate] || candidate;
       }
@@ -79,6 +79,7 @@ export function getClient() {
           aipowerpay: "aipowerpay",
           lucky13: "lucky13",
           canyapay: "canyapay",
+          tnp: "tnp",
         };
         if (KNOWN_PARTNER_PATTERNS[candidate]) {
           brandKey = KNOWN_PARTNER_PATTERNS[candidate];
@@ -105,12 +106,12 @@ export function getClient() {
   // For "basaltsurge" (platform), strictly use the main client ID, do NOT look for a brand-specific one.
   // This avoids issues where NEXT_PUBLIC_THIRDWEB_CLIENT_ID_BASALTSURGE is set incorrectly or missing.
   const isPlatform = !brandKey || brandKey.toLowerCase() === "basaltsurge" || brandKey.toLowerCase() === "portalpay";
-  
+
   // Normalize brandKey (e.g. "data-opt" -> "DATA_OPT") to resolve env vars safely
   const normalizedKey = brandKey ? brandKey.toUpperCase().replace(/-/g, "_") : "";
-  
+
   let clientId: string | undefined = undefined;
-  
+
   // 1. Check module-level cache first to guarantee immunity against Next.js layout DOM resets during SPA transitions
   if (typeof window !== "undefined" && brandKey && resolvedClientIdCache[brandKey]) {
     clientId = resolvedClientIdCache[brandKey];
@@ -134,12 +135,12 @@ export function getClient() {
       clientId = undefined;
     }
   }
-  
+
   // 4. Check brand-specific env var (partners only)
   if (!clientId && !isPlatform && normalizedKey) {
     clientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${normalizedKey}`];
   }
-  
+
   // 5. Fallback to default env var
   clientId = clientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
 

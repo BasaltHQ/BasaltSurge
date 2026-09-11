@@ -64,7 +64,7 @@ export default function SandboxPanel() {
         setBrandsList(normalized);
       } catch (e) {
         console.error("Failed to load brands:", e);
-        setBrandsList(["basaltsurge", "aipowerpay", "paynex", "xoinpay", "icunow-store"]);
+        setBrandsList(["basaltsurge", "aipowerpay", "paynex", "xoinpay", "icunow-store", "tnp"]);
       }
     })();
   }, []);

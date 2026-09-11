@@ -898,11 +898,6 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
 
                         {/* Desktop Navigation */}
                         <div data-nav-part="links" className="hidden lg:flex items-center gap-1">
-                            {isLanding && !account?.address && <>
-                                <Link href="/get-started#platform">Platform</Link>
-                                <Link href="/get-started#how-it-works">How it works</Link>
-                                <Link href="/pricing">Pricing</Link>
-                            </>}
                             {account?.address ? (
                                 <div
                                     className="relative"
@@ -1196,11 +1191,6 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                             />
 
                             <div className="flex flex-col gap-2 pt-2">
-                                {isLanding && !account?.address && <div className={landingNavStyles.mobileLinks}>
-                                    <Link href="/get-started#platform" onClick={() => setMobileOpen(false)}>Platform</Link>
-                                    <Link href="/get-started#how-it-works" onClick={() => setMobileOpen(false)}>How it works</Link>
-                                    <Link href="/pricing" onClick={() => setMobileOpen(false)}>Pricing</Link>
-                                </div>}
                                 {/* Explore Section - SEO Pages */}
                                 <div className="mb-2 pb-2" style={{ borderBottom: `1px solid ${themeColor}20` }}>
                                     <button

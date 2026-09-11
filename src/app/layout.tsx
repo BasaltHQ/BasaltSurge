@@ -55,6 +55,7 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   lucky13: "lucky13",
   lucky13marketing: "lucky13",
   canyapay: "canyapay",
+  tnp: "tnp",
   // Add more partner brands here as needed
 };
 
@@ -72,7 +73,8 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "canyapay.com": "canyapay",
   "www.canyapay.com": "canyapay",
   "canyapay.azurewebsites.net": "canyapay",
-  "canyapay.payportal.co": "canyapay"
+  "canyapay.payportal.co": "canyapay",
+  "digital.tnpsettle.com": "tnp"
   // Add more custom partner domains here as needed
 };
 
@@ -879,7 +881,8 @@ export default async function RootLayout({
       >
         <PPInitScript domains={dynamicDomains} />
         <DeviceStyleInjector />
-        <Script id="linkedin-insight-tag" strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `
+        <Script id="linkedin-insight-tag" strategy="afterInteractive" dangerouslySetInnerHTML={{
+          __html: `
           _linkedin_partner_id = "8943644";
           window._linkedin_data_partner_ids = window._linkedin_data_partner_ids || [];
           window._linkedin_data_partner_ids.push(_linkedin_partner_id);
@@ -894,7 +897,8 @@ export default async function RootLayout({
           })(window.lintrk);
         `}} />
         {Boolean(layoutClarityId) && (
-          <Script id={`microsoft-clarity-${brand.key || 'app'}`} strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `
+          <Script id={`microsoft-clarity-${brand.key || 'app'}`} strategy="afterInteractive" dangerouslySetInnerHTML={{
+            __html: `
             (function(c,l,a,r,i,t,y){
               c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
               t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
@@ -910,7 +914,8 @@ export default async function RootLayout({
         )}
         <ConsoleBanner />
         {process.env.NODE_ENV !== "production" && (<>
-          <Script id="pp-fix-thirdweb-nested-buttons" strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `
+          <Script id="pp-fix-thirdweb-nested-buttons" strategy="afterInteractive" dangerouslySetInnerHTML={{
+            __html: `
           try {
             (function(){
               function patchRoot(root){
@@ -985,7 +990,8 @@ export default async function RootLayout({
             })();
           } catch {}
         `}} />
-          <Script id="pp-reassert-console-filters" strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `
+          <Script id="pp-reassert-console-filters" strategy="afterInteractive" dangerouslySetInnerHTML={{
+            __html: `
           try {
             (function(){
               var patterns = [
@@ -1045,14 +1051,16 @@ export default async function RootLayout({
         <ThemeReadyGate />
         {/* Client-side scrub to prevent hydration mismatch from extensions */}
         <HydrationSanitizer />
-        <Script id="org-jsonld" type="application/ld+json" strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: JSON.stringify({
-          "@context": "https://schema.org",
-          "@type": "Organization",
-          name: displayBrandNameLayout,
-          url: pageBase,
-          logo: `${pageBase}${brand.logos.app}`,
-          description: runtimeBrand.meta?.ogDescription || `${displayBrandNameLayout} enables modern crypto payments with unified billing, instant receipts, and real-time analytics.`,
-        })}} />
+        <Script id="org-jsonld" type="application/ld+json" strategy="afterInteractive" dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            "@context": "https://schema.org",
+            "@type": "Organization",
+            name: displayBrandNameLayout,
+            url: pageBase,
+            logo: `${pageBase}${brand.logos.app}`,
+            description: runtimeBrand.meta?.ogDescription || `${displayBrandNameLayout} enables modern crypto payments with unified billing, instant receipts, and real-time analytics.`,
+          })
+        }} />
         <div className="fixed inset-0 -z-10 pointer-events-none global-gradient-layer" aria-hidden hidden>
           <div className="absolute inset-0 max-w-[100vw] overflow-hidden" style={{
             background:
@@ -1061,7 +1069,8 @@ export default async function RootLayout({
             filter: "saturate(1.1)",
           }} />
         </div>
-        <Script id="pp-hide-global-gradient-portal" strategy="afterInteractive" dangerouslySetInnerHTML={{ __html: `
+        <Script id="pp-hide-global-gradient-portal" strategy="afterInteractive" dangerouslySetInnerHTML={{
+          __html: `
           try {
             var d=document.documentElement;
             var route=d.getAttribute('data-pp-route')||'';

@@ -1,16 +1,17 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React from "react";
 import Link from 'next/link';
 import Image from 'next/image';
 import { useTheme } from "../../contexts/ThemeContext";
 import { useBrand } from "../../contexts/BrandContext";
+import { useSeoCategoryVisibility } from "@/hooks/useSeoCategoryVisibility";
 
 const navigationLinks = [
-  { label: 'Industries', href: '/crypto-payments' },
-  { label: 'Comparisons', href: '/vs' },
-  { label: 'Locations', href: '/locations' },
-];
+  { label: 'Industries', href: '/crypto-payments', category: 'industries' },
+  { label: 'Comparisons', href: '/vs', category: 'comparisons' },
+  { label: 'Locations', href: '/locations', category: 'locations' },
+] as const;
 
 const ecosystemLinks = [
   { label: 'BasaltHQ', href: 'https://basalthq.com', description: 'Main Homepage' },
@@ -33,6 +34,8 @@ const socialLinks = [
 export default function SiteFooter() {
   const { theme } = useTheme();
   const brand = useBrand();
+  const categoryVisibility = useSeoCategoryVisibility();
+  const visibleNavigationLinks = navigationLinks.filter(link => categoryVisibility[link.category]);
 
   // Get navbarMode from brand context or theme, respecting merchant overrides
   const brandNavbarMode = (brand as any)?.logos?.navbarMode;
@@ -161,10 +164,10 @@ export default function SiteFooter() {
           </div>
 
           {/* Navigation */}
-          <div>
+          {visibleNavigationLinks.length > 0 && <div>
             <h4 className="text-xs font-mono tracking-wider text-gray-500 mb-4">NAVIGATE</h4>
             <ul className="space-y-2">
-              {navigationLinks.map((link) => (
+              {visibleNavigationLinks.map((link) => (
                 <li key={link.label}>
                   <Link
                     href={link.href}
@@ -175,7 +178,7 @@ export default function SiteFooter() {
                 </li>
               ))}
             </ul>
-          </div>
+          </div>}
 
           {/* Ecosystem (Available only for Platform) */}
           {!isPartner && (

@@ -24,7 +24,7 @@ function isCustomDomainHostname(hostname: string): boolean {
  */
 export function HideableNavbar({ isServerCustomDomain = false }: { isServerCustomDomain?: boolean }) {
   const pathname = usePathname() || "";
-  const isLandingPreview = pathname === "/get-started";
+  const isLanding = pathname === "/";
   const searchParams = useSearchParams();
   const [isCustomDomain, setIsCustomDomain] = useState(isServerCustomDomain);
   const [isMobile, setIsMobile] = useState(false);
@@ -54,7 +54,7 @@ export function HideableNavbar({ isServerCustomDomain = false }: { isServerCusto
   const isTerminalView = viewParam === "terminal" || viewParam === "" || !viewParam;
 
   const shouldHideNavbar =
-    (isCustomDomain && !isLandingPreview) ||
+    (isCustomDomain && !isLanding) ||
     pathname === "/portal" || pathname.startsWith("/portal/") ||
     pathname.startsWith("/shop/") ||
     pathname.startsWith("/shopify/") || pathname === "/shopify" ||
@@ -83,21 +83,21 @@ export function HideableNavbar({ isServerCustomDomain = false }: { isServerCusto
     } else {
       document.body.classList.remove("with-global-navbar");
     }
-    document.body.classList.toggle("with-landing-navbar", isLandingPreview && !shouldHideNavbar);
+    document.body.classList.toggle("with-landing-navbar", isLanding && !shouldHideNavbar);
     return () => {
       document.body.classList.remove("with-global-navbar");
       document.body.classList.remove("with-landing-navbar");
     };
-  }, [shouldHideNavbar, isLandingPreview]);
+  }, [shouldHideNavbar, isLanding]);
 
   if (shouldHideNavbar) {
     return null;
   }
 
   return (
-    <div id="global-hideable-navbar" className={`fixed top-0 left-0 right-0 z-[10001] flex flex-col ${isLandingPreview ? landingNavStyles.header : ""}`}>
-      <Navbar variant={isLandingPreview ? "landing" : "default"} />
-      {!isMobile && !((pathname.startsWith("/pricing") || pathname.startsWith("/terminal")) && isMobile) ? <LanguageSelectorBar className={isLandingPreview ? landingNavStyles.languageBar : ""} /> : null}
+    <div id="global-hideable-navbar" className={`fixed top-0 left-0 right-0 z-[10001] flex flex-col ${isLanding ? landingNavStyles.header : ""}`}>
+      <Navbar variant={isLanding ? "landing" : "default"} />
+      {!isMobile && !((pathname.startsWith("/pricing") || pathname.startsWith("/terminal")) && isMobile) ? <LanguageSelectorBar className={isLanding ? landingNavStyles.languageBar : ""} /> : null}
       {(pathname.startsWith("/pricing") || pathname.startsWith("/terminal")) && !isMobile ? <TerminalViewBar /> : null}
     </div>
   );

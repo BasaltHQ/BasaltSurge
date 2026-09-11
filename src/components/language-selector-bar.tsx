@@ -7,11 +7,8 @@ import { GROUPS, LANGS_BY_REGION_OR_GROUP, FICTIONAL_LANG_ICONS } from "@/lib/ma
 import { useTheme } from "@/contexts/ThemeContext";
 import { getSupportedLanguages, isLanguageSupported, getLanguageCode } from "@/lib/site-translator";
 import { useTranslations } from "next-intl";
-import { getAllIndustries } from "@/lib/landing-pages/industries";
-import { getAllComparisons } from "@/lib/landing-pages/comparisons";
-import { getAllLocations } from "@/lib/landing-pages/locations";
+import { useSeoCategoryVisibility } from "@/hooks/useSeoCategoryVisibility";
 
-type PageCategory = 'industries' | 'comparisons' | 'locations';
 
 interface LanguageSelectorBarProps {
   className?: string;
@@ -53,12 +50,7 @@ export function LanguageSelectorBar({ className = "" }: LanguageSelectorBarProps
   const dropdownRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // SEO page visibility state
-  const [categoryVisibility, setCategoryVisibility] = useState<Record<PageCategory, boolean>>({
-    industries: true,
-    comparisons: true,
-    locations: true,
-  });
+  const categoryVisibility = useSeoCategoryVisibility();
 
   // Load saved language preference and failed languages on mount
   useEffect(() => {
@@ -70,43 +62,6 @@ export function LanguageSelectorBar({ className = "" }: LanguageSelectorBarProps
 
     } catch { }
 
-    // Load SEO page settings to determine category visibility
-    async function loadSeoPageSettings() {
-      try {
-        const res = await fetch('/api/admin/seo-pages', {
-          cache: 'no-store',
-          headers: { 'Content-Type': 'application/json' },
-        });
-
-        if (!res.ok) return;
-
-        const data = await res.json();
-        if (!data.ok || !data.settings?.pageStatuses) return;
-
-        const pageStatuses = data.settings.pageStatuses;
-
-        // Get all page IDs for each category
-        const industryIds = getAllIndustries().map(i => `industry-${i.slug}`);
-        const comparisonIds = getAllComparisons().map(c => `comparison-${c.slug}`);
-        const locationIds = getAllLocations().map(l => `location-${l.slug}`);
-
-        // Check if ALL pages in a category are disabled
-        const isAllDisabled = (ids: string[]) => {
-          if (ids.length === 0) return false;
-          return ids.every(id => pageStatuses[id]?.enabled === false);
-        };
-
-        setCategoryVisibility({
-          industries: !isAllDisabled(industryIds),
-          comparisons: !isAllDisabled(comparisonIds),
-          locations: !isAllDisabled(locationIds),
-        });
-      } catch (err) {
-        console.error('[LanguageSelectorBar] Failed to load SEO page settings:', err);
-      }
-    }
-
-    loadSeoPageSettings();
 
     // Clear any previously stored failed languages so users can retry
     // especially Fictional languages that triggered 400 errors previously
