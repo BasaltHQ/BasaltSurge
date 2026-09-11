@@ -1,5 +1,7 @@
 "use client";
 
+import modalStyles from "./landing-modal.module.css";
+
 import React, { useState, useRef, useCallback } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -64,10 +66,10 @@ function ContactModalShell({ onClose, children, className }: { onClose: () => vo
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose(); }}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[11000] bg-black/80 backdrop-blur-sm" />
+        <Dialog.Overlay className={`${modalStyles.backdrop} fixed inset-0 z-[11000] bg-black/80 backdrop-blur-sm`} />
         <Dialog.Content
           aria-describedby={undefined}
-          className={`fixed left-1/2 top-1/2 z-[11001] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-2xl custom-scrollbar ${className}`}
+          className={`${modalStyles.surface} fixed left-1/2 top-1/2 z-[11001] w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-2xl border border-white/10 bg-neutral-900/95 backdrop-blur-xl shadow-2xl custom-scrollbar ${className}`}
         >
           {children}
         </Dialog.Content>
@@ -81,7 +83,7 @@ function SuccessModal({ onClose, accentColor }: { onClose: () => void; accentCol
     <ContactModalShell onClose={onClose} className="max-w-md p-8 text-center">
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 text-gray-500 hover:text-white transition-colors"
+          className={`${modalStyles.close} absolute top-4 right-4 text-gray-500 hover:text-white transition-colors`}
           aria-label="Close"
         >
           <X className="w-5 h-5" />
@@ -102,7 +104,7 @@ function SuccessModal({ onClose, accentColor }: { onClose: () => void; accentCol
 
         <button
           onClick={onClose}
-          className="px-8 py-3 rounded-lg text-white text-sm font-mono tracking-wider font-bold transition-all hover:opacity-90"
+          className={`${modalStyles.contactAction} px-8 py-3 rounded-lg text-white text-sm font-mono tracking-wider font-bold transition-all hover:opacity-90`}
           style={{ backgroundColor: accentColor }}
         >
           GOT IT
@@ -201,7 +203,7 @@ function ContactFormInner({
       <button
         type="submit"
         disabled={submitting}
-        className="w-full md:w-auto flex items-center justify-center gap-2 px-10 py-4 rounded-lg text-white text-sm font-mono tracking-wider font-bold transition-all hover:opacity-90 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
+        className={`${modalStyles.contactAction} w-full md:w-auto flex items-center justify-center gap-2 px-10 py-4 rounded-lg text-white text-sm font-mono tracking-wider font-bold transition-all hover:opacity-90 hover:scale-[1.02] active:scale-95 disabled:opacity-50 disabled:pointer-events-none`}
         style={{ backgroundColor: accentColor }}
       >
         {submitting ? (
@@ -256,7 +258,7 @@ export function ContactFormModal({ isOpen, onClose }: { isOpen: boolean; onClose
           {/* Close button */}
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 z-20 text-gray-500 hover:text-white transition-colors p-1"
+            className={`${modalStyles.close} absolute top-4 right-4 z-20 text-gray-500 hover:text-white transition-colors p-1`}
             aria-label="Close"
           >
             <X className="w-5 h-5" />
@@ -279,7 +281,7 @@ export function ContactFormModal({ isOpen, onClose }: { isOpen: boolean; onClose
           </div>
 
           {/* Free Tier Banner */}
-          <div className="relative p-4 rounded-xl bg-gradient-to-br from-emerald-500/15 via-emerald-600/10 to-cyan-500/10 border border-emerald-500/30 overflow-hidden mb-6">
+          <div className={`${modalStyles.panel} relative p-4 rounded-xl bg-gradient-to-br from-emerald-500/15 via-emerald-600/10 to-cyan-500/10 border border-emerald-500/30 overflow-hidden mb-6`}>
             <div className="absolute top-2 right-3 px-2 py-0.5 rounded text-[9px] font-bold tracking-widest bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">FOREVER FREE</div>
             <div className="flex items-baseline gap-2 mb-1">
               <span className="text-2xl font-black text-white">$0</span>
