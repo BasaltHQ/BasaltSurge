@@ -56,9 +56,22 @@ object HardwareRegistry {
     }
 
     private fun initValor(context: Context) {
-        Log.d(TAG, "Initializing Valor SDK Manager...")
+        Log.d(TAG, "Initializing Valor SDK Manager & NSDK...")
+        try {
+            val p2 = com.valor.valorvp500sdk.p2.a()
+            if (!p2.c()) {
+                val moduleManager = com.newland.nsdk.core.internal.NSDKModuleManagerImpl.getInstance()
+                moduleManager.init(context.applicationContext)
+                p2.b = moduleManager
+                p2.a = java.lang.ref.WeakReference(context.applicationContext)
+                Log.d(TAG, "NSDK ModuleManager bound to Valor p2 successfully")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Direct NSDK init encountered exception, will fallback to SDKInt: ${e.message}")
+        }
+
         val manager = ValorSDK()
-        manager.SDK_Service_Int(context, object : OnResult {
+        manager.SDKInt(context.applicationContext, 1, object : OnResult {
             override fun Success() {
                 Log.d(TAG, "Valor SDK Service initialized successfully")
                 valorSDKManager = manager
