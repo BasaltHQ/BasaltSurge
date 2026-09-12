@@ -134,7 +134,7 @@ export default function GlobalSplitGuard() {
 
   let brandKey = String((brand as any)?.key || "basaltsurge").toLowerCase();
   const partnerContext = brandKey !== "portalpay" && brandKey !== "basaltsurge";
-  const isDual = typeof window !== 'undefined' && typeof document !== 'undefined' && document.documentElement.getAttribute("data-pp-dual-split") === "1";
+  const isDual = (typeof window !== 'undefined' && typeof document !== 'undefined' && document.documentElement.getAttribute("data-pp-dual-split") === "1") || !!(brand as any)?.dualSplitEnabled;
 
   // NEW: Check if Private Partner functionality dictates suppression
   // If we are in a partner context AND it is private (request mode) => Only Admins should deal with splits.
@@ -209,7 +209,8 @@ export default function GlobalSplitGuard() {
     const partnerN = typeof rawPartner === "number" ? Math.floor(rawPartner) : 0;
     const agentsList = Array.isArray((brand as any)?.agents) ? (brand as any).agents : [];
     const agentN = agentsList.reduce((sum: number, a: any) => sum + Math.max(0, Math.floor(Number(a?.bps || 0))), 0);
-    return Math.max(0, Math.min(10000, partnerN + platformBps + agentN));
+    const defPlatform = isDual ? ((brand as any)?.creditPlatformFeeBps ?? 125) : platformBps;
+    return Math.max(0, Math.min(10000, partnerN + defPlatform + agentN));
   })();
 
   // Partner share actually used for split deployment (gated by partner wallet configuration)
@@ -234,7 +235,7 @@ export default function GlobalSplitGuard() {
       }
     } catch { }
     if (!partnerContext) {
-      return Math.max(0, 10000 - platformBps);
+      return Math.max(0, 10000 - (isDual ? ((brand as any)?.creditPlatformFeeBps ?? 125) : platformBps));
     }
     return Math.max(0, 10000 - partnerTotalBpsDisplay);
   })();
@@ -248,7 +249,6 @@ export default function GlobalSplitGuard() {
   const merchantBps = Math.max(0, 10000 - platformBps - partnerBps);
 
   const creditTotalBpsDisplay = (() => {
-    if (!partnerContext) return 150;
     try {
       const list = Array.isArray(previewRecipientsCredit) ? previewRecipientsCredit : [];
       if (list.length >= 2) {
@@ -263,7 +263,8 @@ export default function GlobalSplitGuard() {
         }
       }
     } catch { }
-    return 150;
+    const defaultDebitPlatformBps = typeof (brand as any)?.platformFeeBps === "number" ? (brand as any).platformFeeBps : 50;
+    return partnerContext ? 150 : defaultDebitPlatformBps;
   })();
 
   const creditMerchantBpsDisplay = Math.max(0, 10000 - creditTotalBpsDisplay);
@@ -571,7 +572,7 @@ export default function GlobalSplitGuard() {
           </div>
         )}
 
-        {partnerContext && isDual ? (
+        {isDual ? (
           <div className="space-y-4 mb-4">
             {/* Credit Card & Native Crypto Card */}
             <div className="rounded-md border bg-muted/30 p-4">
@@ -588,9 +589,13 @@ export default function GlobalSplitGuard() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">Processing Fee (Credit/Crypto)</span>
+                  <span className="font-medium">{partnerContext ? "Processing Fee (Credit/Crypto)" : "Platform Service Fee (Credit/Crypto)"}</span>
                   <span className="flex items-center gap-2">
-                    {partnerValid ? <TruncatedAddress address={partnerAddr as any} /> : <span className="text-red-500">Not configured</span>}
+                    {partnerContext ? (
+                      partnerValid ? <TruncatedAddress address={partnerAddr as any} /> : <span className="text-red-500">Not configured</span>
+                    ) : (
+                      platformValid ? <TruncatedAddress address={platformRecipient as any} /> : <span className="text-red-500">Invalid</span>
+                    )}
                     <span className="font-mono text-xs bg-background px-2 py-0.5 rounded">{bpsToPercent(partnerTotalBpsDisplay)}%</span>
                   </span>
                 </div>
@@ -612,9 +617,13 @@ export default function GlobalSplitGuard() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between text-sm">
-                  <span className="font-medium">Processing Fee (Debit)</span>
+                  <span className="font-medium">{partnerContext ? "Processing Fee (Debit)" : "Platform Service Fee (Debit)"}</span>
                   <span className="flex items-center gap-2">
-                    {partnerValid ? <TruncatedAddress address={partnerAddr as any} /> : <span className="text-red-500">Not configured</span>}
+                    {partnerContext ? (
+                      partnerValid ? <TruncatedAddress address={partnerAddr as any} /> : <span className="text-red-500">Not configured</span>
+                    ) : (
+                      platformValid ? <TruncatedAddress address={platformRecipient as any} /> : <span className="text-red-500">Invalid</span>
+                    )}
                     <span className="font-mono text-xs bg-background px-2 py-0.5 rounded">{bpsToPercent(creditTotalBpsDisplay)}%</span>
                   </span>
                 </div>

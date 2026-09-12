@@ -489,7 +489,7 @@ export async function GET(req: NextRequest) {
         parseJson(process.env.AGENT_WALLETS_JSON, envAgents, creditBpsVal);
 
         const { getSanitizedCreditSplitBps, getEnv, isDualSplitEnabled } = await import("@/lib/env");
-        const isDualSplit = isDualSplitEnabled();
+        const isDualSplit = dbBrand?.dualSplitEnabled !== undefined ? Boolean(dbBrand.dualSplitEnabled) : isDualSplitEnabled();
         const creditBps = getSanitizedCreditSplitBps();
         const creditPlatformBps = dbCreditPlatformFeeBps !== undefined ? dbCreditPlatformFeeBps : (creditBps?.platform ?? 125);
         const debitPlatformBps = dbPlatformFeeBps !== undefined ? dbPlatformFeeBps : (getEnv().PLATFORM_BPS ?? 125);
@@ -832,7 +832,10 @@ export async function PATCH(req: NextRequest) {
 
                         // Dual Split Sync
                         const { isDualSplitEnabled, getEnv } = await import("@/lib/env");
-                        if (isDualSplitEnabled()) {
+                        const { getBrandConfigFromCosmos } = await import("@/lib/brand-config");
+                        const { brand: brandDoc } = await getBrandConfigFromCosmos(existingDoc?.brandKey || brandKey);
+                        const isDual = brandDoc?.dualSplitEnabled !== undefined ? Boolean(brandDoc.dualSplitEnabled) : isDualSplitEnabled();
+                        if (isDual) {
                             const clientCredit = splitConfig.splitConfigCredit;
                             const debitPlatformBps = typeof clientCredit?.platformBps === "number"
                                 ? clientCredit.platformBps
@@ -949,7 +952,10 @@ export async function PATCH(req: NextRequest) {
                     };
 
                     const { isDualSplitEnabled, getEnv } = await import("@/lib/env");
-                    if (isDualSplitEnabled()) {
+                    const { getBrandConfigFromCosmos } = await import("@/lib/brand-config");
+                    const { brand: brandDoc } = await getBrandConfigFromCosmos(request?.brandKey || brandKey);
+                    const isDual = brandDoc?.dualSplitEnabled !== undefined ? Boolean(brandDoc.dualSplitEnabled) : isDualSplitEnabled();
+                    if (isDual) {
                         const clientCredit = splitConfig.splitConfigCredit;
                         const debitPlatformBps = typeof clientCredit?.platformBps === "number"
                             ? clientCredit.platformBps
