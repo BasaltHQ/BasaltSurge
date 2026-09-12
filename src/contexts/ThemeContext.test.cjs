@@ -18,7 +18,7 @@ const source = ts.transpileModule(fs.readFileSync(path.join(__dirname, 'ThemeCon
 
 // Exercise the provider's public refetch API (also used on mount), with real
 // theme merging and event payloads, without network or wallet SDK dependencies.
-function createHarness({ pathname = '/', wallet = '', brand = partner, containerType = 'partner' } = {}) {
+function createHarness({ pathname = '/', wallet = '', brand = partner, containerType = 'partner', siteOverrides = {}, shopOverrides = {} } = {}) {
   const states = [];
   const requests = [];
   const events = [];
@@ -40,6 +40,7 @@ function createHarness({ pathname = '/', wallet = '', brand = partner, container
     primaryColor: brand.colors.primary, secondaryColor: brand.colors.accent,
     brandName: brand.name, brandLogoUrl: brand.logos.app,
     symbolLogoUrl: brand.logos.symbol, brandFaviconUrl: brand.logos.favicon,
+    ...siteOverrides,
   };
   const dependencies = {
     react,
@@ -66,7 +67,7 @@ function createHarness({ pathname = '/', wallet = '', brand = partner, container
     fetch: async (url, options) => {
       requests.push({ url, options });
       const theme = url.startsWith('/api/shop/config')
-        ? { ...siteTheme, primaryColor: '#0ea5e9', secondaryColor: '#22c55e' }
+        ? { ...siteTheme, primaryColor: '#0ea5e9', secondaryColor: '#22c55e', ...shopOverrides }
         : siteTheme;
       return { ok: true, json: async () => ({ config: { theme: { ...theme } } }) };
     },
@@ -128,4 +129,47 @@ test('logged-out platform continues using the global site theme', async () => {
   await h.render().refetch();
   assert.deepEqual(h.requests.map(r => r.url), ['/api/site/config']);
   assert.equal(h.render().theme.primaryColor, '#35ff7c');
+});
+
+test('partner keeps symbol + name mode when the site response omits navbarMode', async () => {
+  const h = createHarness();
+  assert.equal(h.render().theme.navbarMode, 'symbol');
+  await h.render().refetch();
+  assert.equal(h.render().theme.navbarMode, 'symbol');
+  assert.equal(h.render().theme.brandName, 'CanYaPay');
+  assert.equal(h.events.find(e => e.type === 'pp:theme:updated').detail.navbarMode, 'symbol');
+});
+
+for (const mode of ['symbol', 'logo']) {
+  test(`partner preserves configured ${mode} mode when the site response has no mode`, async () => {
+    const h = createHarness({ brand: { ...partner, logos: { ...partner.logos, navbarMode: mode } } });
+    assert.equal(h.render().theme.navbarMode, mode);
+    await h.render().refetch();
+    assert.equal(h.render().theme.navbarMode, mode);
+  });
+
+  test(`explicit site ${mode} mode takes precedence over the brand fallback`, async () => {
+    const h = createHarness({
+      brand: { ...partner, logos: { ...partner.logos, navbarMode: mode === 'logo' ? 'symbol' : 'logo' } },
+      siteOverrides: { navbarMode: mode },
+    });
+    await h.render().refetch();
+    assert.equal(h.render().theme.navbarMode, mode);
+  });
+
+  test(`nested site ${mode} mode is honored`, async () => {
+    const h = createHarness({ siteOverrides: { logos: { navbarMode: mode } } });
+    await h.render().refetch();
+    assert.equal(h.render().theme.navbarMode, mode);
+  });
+}
+
+test('logout restores symbol + name after a merchant used full-logo mode', async () => {
+  const h = createHarness({ wallet: MERCHANT, shopOverrides: { navbarMode: 'logo' } });
+  await h.render().refetch();
+  assert.equal(h.render().theme.navbarMode, 'logo');
+  h.setWallet('');
+  await h.render().refetch();
+  assert.equal(h.render().theme.navbarMode, 'symbol');
+  assert.equal(h.render().theme.primaryColor, '#8b48be');
 });
