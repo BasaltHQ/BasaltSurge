@@ -766,6 +766,10 @@ export default function ClientRequestsPanel() {
     const unifiedServiceFeeBps = currentPlatformBps + primaryAgentBps;
     const customAgents = currentAgents.filter(a => !isAgentImmutable(a.wallet, isDebitTab));
     const customAgentsBps = customAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
+    const stripeFeeBps = isDebitTab
+        ? ((fetchedBrand as any)?.debitStripeFeeBps ?? (brand as any)?.debitStripeFeeBps ?? 225)
+        : ((fetchedBrand as any)?.creditStripeFeeBps ?? (brand as any)?.creditStripeFeeBps ?? 350);
+    const platformPresentedFeeBps = stripeFeeBps + currentPlatformBps + agentsBps;
 
     async function load() {
         try {
@@ -2530,8 +2534,63 @@ export default function ClientRequestsPanel() {
                                                         </button>
                                                     </div>
                                                 </div>
-                                            ) : (
-                                                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
+                                                 ) : (
+                                                 <div className="space-y-6">
+                                                     {/* PLATFORM PRESENTED FEE BANNER (Unique to platform containers) */}
+                                                     {isPlatformContainer && (
+                                                         <div className={`p-6 rounded-2xl border bg-gradient-to-br ${
+                                                             isDebitTab 
+                                                                 ? "from-purple-500/10 via-zinc-800/50 to-purple-600/5 border-purple-500/20 shadow-lg shadow-purple-500/[0.02]" 
+                                                                 : "from-emerald-500/10 via-zinc-800/50 to-emerald-600/5 border-emerald-500/20 shadow-lg shadow-emerald-500/[0.02]"
+                                                         } flex flex-col items-center justify-center text-center space-y-3`}>
+                                                             <div className="flex items-center gap-2">
+                                                                 <span className={`text-[10px] font-mono px-2 py-0.5 rounded uppercase tracking-wider ${
+                                                                     isDebitTab ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                                 }`}>
+                                                                     {isDebitTab ? "Debit Configuration" : "Credit & Crypto Configuration"}
+                                                                 </span>
+                                                                 <span className="text-zinc-600 text-xs">•</span>
+                                                                 <span className="text-zinc-400 text-xs uppercase tracking-wider font-mono">Customer Presented Fee</span>
+                                                             </div>
+
+                                                             <div className="flex items-baseline gap-1">
+                                                                 <span className={`text-4xl sm:text-5xl font-extrabold tracking-tight ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
+                                                                     {(platformPresentedFeeBps / 100).toFixed(2)}%
+                                                                 </span>
+                                                             </div>
+
+                                                             <span className="text-zinc-400 text-xs max-w-md">
+                                                                 Top-line transaction fee presented to checkout users (Stripe + Platform + Agents).
+                                                             </span>
+
+                                                             {/* 3-Part Component Cards: Stripe + Platform + Agents */}
+                                                             <div className="w-full pt-1">
+                                                                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-xs font-mono">
+                                                                     <div className="p-3 rounded-xl bg-black/40 border border-white/5 flex flex-col items-center justify-center text-center">
+                                                                         <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-sans">Stripe Gateway</span>
+                                                                         <span className="text-base font-bold text-white mt-0.5">{(stripeFeeBps / 100).toFixed(2)}%</span>
+                                                                         <span className="text-[10px] text-zinc-500 font-sans mt-0.5">{isDebitTab ? "Fixed Debit (2.25%)" : "Credit/Crypto (3.50%)"}</span>
+                                                                     </div>
+                                                                     <div className={`p-3 rounded-xl border flex flex-col items-center justify-center text-center ${
+                                                                         isDebitTab ? "bg-purple-500/10 border-purple-500/25 text-purple-300" : "bg-emerald-500/10 border-emerald-500/25 text-emerald-300"
+                                                                     }`}>
+                                                                         <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-sans">Platform Revenue</span>
+                                                                         <span className={`text-base font-bold mt-0.5 ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
+                                                                             {(currentPlatformBps / 100).toFixed(2)}%
+                                                                         </span>
+                                                                         <span className="text-[10px] text-zinc-500 font-sans mt-0.5">Adjustable Below</span>
+                                                                     </div>
+                                                                     <div className="p-3 rounded-xl bg-black/40 border border-white/5 flex flex-col items-center justify-center text-center">
+                                                                         <span className="text-[10px] uppercase tracking-wider text-zinc-400 font-sans">Agents / Sales</span>
+                                                                         <span className="text-base font-bold text-amber-400 mt-0.5">{(agentsBps / 100).toFixed(2)}%</span>
+                                                                         <span className="text-[10px] text-zinc-500 font-sans mt-0.5">{currentAgents.length} Active Agent{currentAgents.length === 1 ? "" : "s"}</span>
+                                                                     </div>
+                                                                 </div>
+                                                             </div>
+                                                         </div>
+                                                     )}
+
+                                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
                                                     {/* LEFT COLUMN: Configuration */}
                                                     <div className="space-y-6">
                                                         <div className="flex items-center gap-2 mb-2">
@@ -2587,7 +2646,10 @@ export default function ClientRequestsPanel() {
                                                                     {isPlatformContainer ? (
                                                                         <div className="p-4 rounded-lg bg-zinc-800/50 border border-white/10 space-y-4">
                                                                             <div className="flex justify-between items-center">
-                                                                                <span className="text-white text-sm font-medium">Platform</span>
+                                                                                <div>
+                                                                                    <span className="text-white text-sm font-medium">Platform Fee</span>
+                                                                                    <span className="ml-2 text-[10px] text-zinc-400 font-mono">(Extend Platform)</span>
+                                                                                </div>
                                                                                 <div className="flex items-center gap-2">
                                                                                     <input
                                                                                         type="number"
@@ -2607,8 +2669,13 @@ export default function ClientRequestsPanel() {
                                                                                 onChange={(e) => setCurrentPlatformBps(parseInt(e.target.value))}
                                                                                 className={`w-full h-2 bg-zinc-700 rounded-lg appearance-none cursor-pointer ${isDebitTab ? "accent-purple-500" : "accent-emerald-500"}`}
                                                                             />
-                                                                            <div className={`text-right text-xs font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
-                                                                                {(currentPlatformBps / 100).toFixed(2)}%
+                                                                            <div className="flex justify-between items-center text-xs font-mono">
+                                                                                <span className="text-[11px] text-zinc-400">
+                                                                                    Base Stripe ({(stripeFeeBps / 100).toFixed(2)}%) + Platform
+                                                                                </span>
+                                                                                <span className={`font-bold ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
+                                                                                    {(currentPlatformBps / 100).toFixed(2)}%
+                                                                                </span>
                                                                             </div>
                                                                         </div>
                                                                     ) : (
@@ -2775,10 +2842,51 @@ export default function ClientRequestsPanel() {
                                                         <div className="space-y-2">
                                                             <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
                                                                 <span>Allocation Check</span>
-                                                                <span>Total: {(totalFeeBps / 100).toFixed(2)}% Fees</span>
+                                                                <span>
+                                                                    {isPlatformContainer
+                                                                        ? `Total Presented: ${(platformPresentedFeeBps / 100).toFixed(2)}%`
+                                                                        : `Total: ${(totalFeeBps / 100).toFixed(2)}% Fees`}
+                                                                </span>
                                                             </div>
                                                             <div className="p-3 rounded-lg border border-white/5 bg-black/20 space-y-2">
-                                                                {unifiedFeeEnabled && !isPlatformContainer ? (
+                                                                {isPlatformContainer ? (
+                                                                    <>
+                                                                        <div className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 pb-1 border-b border-white/5 flex justify-between">
+                                                                            <span>Customer Fee</span>
+                                                                            <span className={isDebitTab ? "text-purple-400 font-bold" : "text-emerald-400 font-bold"}>
+                                                                                {(platformPresentedFeeBps / 100).toFixed(2)}%
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="flex justify-between text-xs">
+                                                                            <span className="text-zinc-400">1. Stripe Base</span>
+                                                                            <span className="font-mono text-zinc-300">{(stripeFeeBps / 100).toFixed(2)}%</span>
+                                                                        </div>
+                                                                        <div className="flex justify-between text-xs">
+                                                                            <span className="text-zinc-400">2. Platform Fee</span>
+                                                                            <span className={`font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>{(currentPlatformBps / 100).toFixed(2)}%</span>
+                                                                        </div>
+                                                                        {currentAgents.length > 0 && (
+                                                                            <div className="flex justify-between text-xs">
+                                                                                <span className="text-zinc-400">3. Agents ({currentAgents.length})</span>
+                                                                                <span className="font-mono text-amber-400">{(agentsBps / 100).toFixed(2)}%</span>
+                                                                            </div>
+                                                                        )}
+                                                                        <div className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 pt-2 pb-1 border-b border-white/5 flex justify-between">
+                                                                            <span>On-Chain Split</span>
+                                                                            <span className="text-zinc-400 font-mono">100.00%</span>
+                                                                        </div>
+                                                                        <div className="flex justify-between text-xs">
+                                                                            <span className="text-zinc-400">Platform Share</span>
+                                                                            <span className="font-mono text-zinc-300">{(currentPlatformBps / 100).toFixed(2)}%</span>
+                                                                        </div>
+                                                                        {currentAgents.length > 0 && (
+                                                                            <div className="flex justify-between text-xs">
+                                                                                <span className="text-zinc-400">Agents Share</span>
+                                                                                <span className="font-mono text-zinc-300">{(agentsBps / 100).toFixed(2)}%</span>
+                                                                            </div>
+                                                                        )}
+                                                                    </>
+                                                                ) : unifiedFeeEnabled ? (
                                                                     <>
                                                                         <div className="flex justify-between text-xs">
                                                                             <span className="text-zinc-400">Service Fee</span>
@@ -3079,6 +3187,7 @@ export default function ClientRequestsPanel() {
                                                         </div>
                                                     </div>
                                                 </div>
+                                            </div>
                                             )}
                                         </div>
                                     )}

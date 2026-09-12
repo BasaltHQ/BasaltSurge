@@ -190,3 +190,64 @@ Health check and system diagnostics endpoint requiring API Key authentication.
     "message": "Valid x-api-key header, Bearer token, or apiKey query parameter required."
   }
   ```
+
+### F. Merchant Identification & Plugin Auto-Population (`GET /api/merchant/identify`)
+Resolves merchant wallet, brand details, shop configurations, and suggested gateway settings using a single API key to enable 1-click WooCommerce/Shopify setup.
+* **Endpoint**: `/api/merchant/identify`
+* **Headers**:
+  `x-api-key: sk_live_...` (or `Authorization: Bearer <key>`, or `Ocp-Apim-Subscription-Key: ...`)
+* **Query Parameter Fallback**: `?apiKey=sk_live_...`
+* **Response (HTTP 200)**:
+  ```json
+  {
+    "ok": true,
+    "identified": true,
+    "merchant": {
+      "wallet_address": "0x...",
+      "slug": "merchant-shop-slug",
+      "name": "Merchant Business Name",
+      "logo_url": "https://...",
+      "symbol_url": "https://...",
+      "colors": {
+        "primary": "#35ff7c",
+        "secondary": "#16a34a",
+        "accent": "#ff6b35",
+        "text": "#ffffff"
+      },
+      "custom_domain": "checkout.merchant.com"
+    },
+    "partner": {
+      "deployment_mode": "platform",
+      "brand_key": "basaltsurge",
+      "brand_name": "BasaltSurge",
+      "portal_url": "https://surge.basalthq.com",
+      "logo_url": "https://surge.basalthq.com/BasaltSurgeWideD.png",
+      "symbol_url": "https://surge.basalthq.com/Surge.png"
+    },
+    "all_shops": [
+      {
+        "slug": "merchant-shop-slug",
+        "name": "Merchant Business Name",
+        "brandKey": "basaltsurge",
+        "logo_url": "https://..."
+      }
+    ],
+    "suggested_gateway_settings": {
+      "deployment_mode": "platform",
+      "partner_portal_url": "https://surge.basalthq.com",
+      "partner_brand_name": "Merchant Business Name",
+      "partner_brand_key": "merchant-shop-slug",
+      "wallet_address": "0x...",
+      "partner_logo_url": "https://...",
+      "gateway_icon_display": "custom",
+      "custom_icon_url": "https://...",
+      "brand_colors": {
+        "primary": "#35ff7c",
+        "secondary": "#16a34a",
+        "accent": "#ff6b35",
+        "text": "#ffffff"
+      }
+    }
+  }
+  ```
+
