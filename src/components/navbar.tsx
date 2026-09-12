@@ -24,6 +24,7 @@ import { getAllComparisons } from "@/lib/landing-pages/comparisons";
 import { getAllLocations } from "@/lib/landing-pages/locations";
 import { useThirdwebClient } from "@/hooks/useThirdwebClient";
 import landingNavStyles from "./landing/landing-navbar.module.css";
+import { ACCESS_STATUS_ERROR, fetchMerchantAccessStatus } from "@/lib/merchant-access-status";
 
 type SeoPageCategory = 'industries' | 'comparisons' | 'locations';
 
@@ -64,6 +65,8 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
     const [authed, setAuthed] = useState(false);
     const [showAccessPending, setShowAccessPending] = useState(false);
     const [hasPendingApplication, setHasPendingApplication] = useState(false);
+    const [accessStatusError, setAccessStatusError] = useState("");
+    const [checkingAccessStatus, setCheckingAccessStatus] = useState(false);
     const [authCheckTrigger, setAuthCheckTrigger] = useState(0);
     const [pendingAdminNav, setPendingAdminNav] = useState(false);
     const router = useRouter();
@@ -299,25 +302,24 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
             window.location.pathname.startsWith('/legal') ||
             window.location.pathname.startsWith('/apply')
         );
-        if (!w || checkingAuth.current || showSignupWizard || isLegalReviewTab || isSuppressedRoute) {
+        if (!w || showSignupWizard || isLegalReviewTab || isSuppressedRoute) {
             return;
         }
 
         checkingAuth.current = true;
+        let cancelled = false;
+        let promptTimer: ReturnType<typeof setTimeout> | undefined;
+        const controller = new AbortController();
+        setCheckingAccessStatus(true);
 
         (async () => {
             try {
                 // Check if already authenticated (Passing x - wallet to detect approved but unauthenticated users)
                 console.log("[Navbar] Checking Auth:", { wallet: w, brandKey: (brand as any)?.key });
-                const me = await fetch('/api/auth/me', {
-                    cache: 'no-store',
-                    headers: {
-                        'x-wallet': w,
-                        'x-brand-key': (brand as any)?.key || ""
-                    }
-                })
-                    .then(r => r.ok ? r.json() : { authed: false })
-                    .catch(() => ({ authed: false }));
+                const me = await fetchMerchantAccessStatus(w, (brand as any)?.key || "", controller.signal);
+                if (cancelled) return;
+                setAccessStatusError("");
+                setCheckingAccessStatus(false);
 
                 // Detect Platform Admin (Pre-calculation for access gating)
                 const platformWallet = (process.env.NEXT_PUBLIC_PLATFORM_WALLET || "").toLowerCase();
@@ -330,7 +332,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
 
                 // Access Control Gating — Approval is only mandatory on partner containers for now
                 // The platform container uses the registration regime only if the env var is set.
-                const isApproved = (!isPartner && !isRegistrationRegime) || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin || !!me?.isTeamMember;
+                const isApproved = !me?.blocked && ((!isPartner && !isRegistrationRegime) || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin || !!me?.isTeamMember);
                 const blocked = !isApproved;
 
                 if (me?.authed && !blocked && me?.wallet && String(me.wallet).toLowerCase() === w) {
@@ -354,9 +356,9 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
 
                 // Show authentication modal for both social and external wallets (or pending modal if blocked)
                 setAuthed(false);
-                setTimeout(() => {
+                promptTimer = setTimeout(() => {
                     // Safety check: if wizard is open, do absolutely nothing
-                    if (showSignupWizard) {
+                    if (cancelled || showSignupWizard) {
                         checkingAuth.current = false;
                         return;
                     }
@@ -377,6 +379,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                         fetch(`/api/legal-read-status?wallet=${encodeURIComponent(w)}`)
                             .then(r => r.ok ? r.json() : null)
                             .then(async (legal) => {
+                                if (cancelled) return;
                                 if (legal?.termsReadAt && legal?.privacyReadAt && legal?.aidpaReadAt) {
                                     // They have already accepted everything in the past!
                                     // Auto-login them directly without showing any modal or signing message!
@@ -386,6 +389,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                                             headers: { 'Content-Type': 'application/json' },
                                             body: JSON.stringify({ wallet: w })
                                         });
+                                        if (cancelled) return;
                                         if (autoLoginResponse.ok) {
                                             setAuthed(true);
                                             // Broadcast login event
@@ -405,10 +409,12 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                                     }
                                 }
                                 // Fallback to showing modal if not accepted or auto-login failed
+                                if (cancelled) return;
                                 setIsSocialLogin(isEmbeddedWallet);
                                 setShowAuthModal(true);
                             })
                             .catch(() => {
+                                if (cancelled) return;
                                 setIsSocialLogin(isEmbeddedWallet);
                                 setShowAuthModal(true);
                             });
@@ -416,10 +422,21 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                     checkingAuth.current = false;
                 }, 800);
             } catch {
+                if (cancelled) return;
                 checkingAuth.current = false;
+                setCheckingAccessStatus(false);
+                setAccessStatusError(ACCESS_STATUS_ERROR);
+                setShowAuthModal(false);
+                setShowAccessPending(true);
             }
         })();
-    }, [account, account?.address, activeWallet?.id, brand, container, showSignupWizard, authCheckTrigger]);
+        return () => {
+            cancelled = true;
+            controller.abort();
+            if (promptTimer) clearTimeout(promptTimer);
+            checkingAuth.current = false;
+        };
+    }, [account?.address, activeWallet?.id, brand?.key, container.containerType, showSignupWizard, authCheckTrigger, pathname]);
 
     // Broadcast login/logout so ThemeLoader can immediately apply merchant-scoped theme
     useEffect(() => {
@@ -1409,6 +1426,8 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
             />
             <AccessPendingModal
                 isOpen={showAccessPending && !showSignupWizard}
+                statusError={accessStatusError}
+                isCheckingStatus={checkingAccessStatus}
                 wallet={account?.address || ""}
                 onCheckStatus={async () => {
                     checkingAuth.current = false;

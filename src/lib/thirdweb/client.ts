@@ -41,6 +41,10 @@ export function getClient() {
         "www.pay.lucky13marketing.com": "lucky13",
         "canyapay.com": "canyapay",
         "www.canyapay.com": "canyapay",
+        "pay.data-opt.com": "data-opt",
+        "www.pay.data-opt.com": "data-opt",
+        "data-opt.com": "data-opt",
+        "www.data-opt.com": "data-opt",
         "digital.tnpsettle.com": "tnp"
       };
       if (KNOWN_PARTNER_DOMAINS[hostLower]) {
@@ -62,6 +66,8 @@ export function getClient() {
           lucky13marketing: "lucky13",
           canyapay: "canyapay",
           tnp: "tnp",
+          "data-opt": "data-opt",
+          dataopt: "data-opt",
         };
         brandKey = KNOWN_PARTNER_PATTERNS[candidate] || candidate;
       }
@@ -80,6 +86,8 @@ export function getClient() {
           lucky13: "lucky13",
           canyapay: "canyapay",
           tnp: "tnp",
+          "data-opt": "data-opt",
+          dataopt: "data-opt",
         };
         if (KNOWN_PARTNER_PATTERNS[candidate]) {
           brandKey = KNOWN_PARTNER_PATTERNS[candidate];
@@ -91,6 +99,10 @@ export function getClient() {
           }
         }
       }
+    }
+
+    if (!brandKey && (hostLower.includes("data-opt") || hostLower.includes("dataopt"))) {
+      brandKey = "data-opt";
     }
 
     // 5. Fallback to reading DOM attribute

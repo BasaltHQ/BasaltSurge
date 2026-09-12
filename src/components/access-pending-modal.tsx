@@ -1,10 +1,13 @@
 "use client";
 
+import modalStyles from "./landing/landing-modal.module.css";
+
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useBrand } from "@/contexts/BrandContext";
 import Image from "next/image";
-import { Copy, Check, Users, RefreshCw, ChevronDown, Key } from "lucide-react";
+import { Copy, Check, Users, RefreshCw, ChevronDown, Key, Hourglass } from "lucide-react";
 import { useActiveAccount } from "thirdweb/react";
 
 interface AccessPendingModalProps {
@@ -14,6 +17,8 @@ interface AccessPendingModalProps {
     hasPendingApplication?: boolean;
     wallet?: string;
     onCheckStatus?: () => Promise<void> | void;
+    statusError?: string;
+    isCheckingStatus?: boolean;
 }
 
 export function AccessPendingModal({
@@ -22,7 +27,9 @@ export function AccessPendingModal({
     onOpenApplication,
     hasPendingApplication = false,
     wallet: propWallet,
-    onCheckStatus
+    onCheckStatus,
+    statusError,
+    isCheckingStatus = false
 }: AccessPendingModalProps) {
     const brand = useBrand();
     const activeAccount = useActiveAccount();
@@ -58,25 +65,27 @@ export function AccessPendingModal({
         }
     };
 
-    if (!isOpen) return null;
+    if (!isOpen || typeof document === "undefined") return null;
 
-    return (
+    return createPortal(
         <AnimatePresence>
             <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="fixed inset-0 z-[12000] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+                className={`${modalStyles.backdrop} fixed inset-0 z-[12000] bg-black/80 backdrop-blur-md flex items-center justify-center p-4`}
                 onClick={onClose}
             >
                 <div
-                    className="relative w-full max-w-md bg-black/90 border border-white/10 rounded-2xl p-6 shadow-2xl overflow-hidden"
+                    className={`${modalStyles.surface} relative w-full max-w-md max-h-[calc(100dvh-2rem)] bg-black/90 border border-white/10 rounded-2xl p-6 shadow-2xl overflow-y-auto overscroll-contain`}
                     onClick={e => e.stopPropagation()}
                 >
                     <div className="flex flex-col items-center text-center">
                         <div className={`w-16 h-16 rounded-full ${hasPendingApplication ? 'bg-amber-500/10 border-amber-500/20' : 'bg-yellow-500/10 border-yellow-500/20'} border flex items-center justify-center mb-4`}>
-                            {hasPendingApplication ? (
-                                <span className="text-3xl">⏳</span>
+                            {statusError ? (
+                                <RefreshCw size={30} className="text-gray-300" aria-hidden="true" />
+                            ) : hasPendingApplication ? (
+                                <Hourglass size={30} className="text-amber-400" aria-hidden="true" />
                             ) : (
                                 <div className="relative w-8 h-8 opacity-80">
                                     <Image src={brandLogo} alt={brandName} fill className="object-contain" />
@@ -85,10 +94,10 @@ export function AccessPendingModal({
                         </div>
 
                         <h2 className="text-xl font-bold text-white mb-2">
-                            {hasPendingApplication ? "Application Pending" : "Access Restricted"}
+                            {statusError ? "Unable to check access" : hasPendingApplication ? "Application Pending" : "Access Restricted"}
                         </h2>
                         <p className="text-sm text-gray-400 mb-5">
-                            {hasPendingApplication ? (
+                            {statusError ? statusError : hasPendingApplication ? (
                                 <>
                                     Your application to join <span className="text-white font-medium">{brandName}</span> has been submitted and is currently under review.
                                     <br /><br />
@@ -104,11 +113,11 @@ export function AccessPendingModal({
                         </p>
 
                         {/* Team Member Bypass / Helper Accordion */}
-                        <div className="w-full mb-5 text-left">
+                        {!statusError && <div className="w-full mb-5 text-left">
                             <button
                                 type="button"
                                 onClick={() => setShowTeamHelper(!showTeamHelper)}
-                                className="w-full flex items-center justify-between p-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/25 text-purple-300 transition-colors text-xs font-medium"
+                                className={`${modalStyles.team} w-full flex items-center justify-between p-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/25 text-purple-300 transition-colors text-xs font-medium`}
                             >
                                 <span className="flex items-center gap-2">
                                     <Users className="w-4 h-4 text-purple-400 flex-shrink-0" />
@@ -126,7 +135,7 @@ export function AccessPendingModal({
                                         transition={{ duration: 0.2 }}
                                         className="overflow-hidden"
                                     >
-                                        <div className="mt-2.5 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200/90 space-y-3">
+                                        <div className={`${modalStyles.team} mt-2.5 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200/90 space-y-3`}>
                                             <p className="leading-relaxed">
                                                 If you are joining an existing merchant&apos;s team, you do <strong className="text-white">not</strong> need to register a new store. Give your wallet address to the store owner or manager so they can add you to their team roster.
                                             </p>
@@ -144,7 +153,7 @@ export function AccessPendingModal({
                                                         <button
                                                             type="button"
                                                             onClick={handleCopy}
-                                                            className="px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-[11px] font-medium transition-colors flex items-center gap-1 flex-shrink-0 border border-purple-500/40"
+                                                            className={`${modalStyles.team} px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-[11px] font-medium transition-colors flex items-center gap-1 flex-shrink-0 border border-purple-500/40`}
                                                         >
                                                             {copied ? (
                                                                 <>
@@ -167,7 +176,7 @@ export function AccessPendingModal({
                                                     type="button"
                                                     onClick={handleCheckStatus}
                                                     disabled={isChecking}
-                                                    className="w-full py-2 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 active:scale-[0.98] text-purple-200 text-xs font-semibold transition-all border border-purple-500/30 flex items-center justify-center gap-1.5"
+                                                    className={`${modalStyles.team} w-full py-2 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 active:scale-[0.98] text-purple-200 text-xs font-semibold transition-all border border-purple-500/30 flex items-center justify-center gap-1.5`}
                                                 >
                                                     <RefreshCw className={`w-3.5 h-3.5 ${isChecking ? 'animate-spin' : ''}`} />
                                                     <span>{isChecking ? "Checking Team Status..." : "Check Team Access"}</span>
@@ -177,20 +186,26 @@ export function AccessPendingModal({
                                     </motion.div>
                                 )}
                             </AnimatePresence>
-                        </div>
+                        </div>}
 
                         <div className="flex flex-col gap-3 w-full">
-                            {!hasPendingApplication && (
+                            {statusError && onCheckStatus && (
+                                <button onClick={handleCheckStatus} disabled={isChecking || isCheckingStatus}
+                                    className={`${modalStyles.primary} w-full py-3 rounded-xl bg-white text-black font-semibold disabled:opacity-50`}>
+                                    {isChecking || isCheckingStatus ? "Checking access..." : "Try again"}
+                                </button>
+                            )}
+                            {!statusError && !hasPendingApplication && (
                                 <button
                                     onClick={onOpenApplication}
-                                    className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-95"
+                                    className={`${modalStyles.primary} w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-95`}
                                 >
                                     Apply for Access
                                 </button>
                             )}
                             <button
                                 onClick={onClose}
-                                className="w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors border border-white/5"
+                                className={`${modalStyles.secondary} w-full py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors border border-white/5`}
                             >
                                 Close
                             </button>
@@ -198,7 +213,8 @@ export function AccessPendingModal({
                     </div>
                 </div>
             </motion.div>
-        </AnimatePresence>
+        </AnimatePresence>,
+        document.body
     );
 }
 

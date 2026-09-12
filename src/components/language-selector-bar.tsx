@@ -1,6 +1,9 @@
 "use client";
 
+import modalStyles from "./landing/landing-modal.module.css";
+
 import { useState, useEffect, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { Globe, Search } from "lucide-react";
 import Link from "next/link";
 import { GROUPS, LANGS_BY_REGION_OR_GROUP, FICTIONAL_LANG_ICONS } from "@/lib/master-langs";
@@ -183,9 +186,9 @@ export function LanguageSelectorBar({ className = "" }: LanguageSelectorBarProps
   return (
     <>
       {/* Unsupported Language Modal */}
-      {showUnsupportedModal && (
-        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-background border rounded-lg shadow-xl p-6 max-w-md mx-4">
+      {showUnsupportedModal && typeof document !== "undefined" && createPortal(
+        <div className={`${modalStyles.backdrop} fixed inset-0 z-[12000] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4`}>
+          <div className={`${modalStyles.surface} bg-background border rounded-lg shadow-xl p-6 w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain`}>
             <h3 className="text-lg font-semibold mb-2">Language Not Yet Supported</h3>
             <p className="text-sm text-muted-foreground mb-4">
               {unsupportedLanguageName} translation is coming soon! We're working on adding support for more languages.
@@ -195,12 +198,13 @@ export function LanguageSelectorBar({ className = "" }: LanguageSelectorBarProps
             </p>
             <button
               onClick={() => setShowUnsupportedModal(false)}
-              className="w-full px-4 py-2 bg-foreground text-background rounded hover:opacity-90 transition-opacity"
+              className={`${modalStyles.primary} w-full px-4 py-2 bg-foreground text-background rounded hover:opacity-90 transition-opacity`}
             >
               Got it
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       <div

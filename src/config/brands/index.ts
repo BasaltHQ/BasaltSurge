@@ -1,4 +1,4 @@
-import { NextRequest } from "next/server";
+import type { NextRequest } from "next/server";
 
 export type BrandColors = {
   primary: string;
@@ -133,6 +133,34 @@ export const BRANDS: Record<string, BrandConfig> = {
     thirdwebClientId: "5a28aaabe04858e99f3f53813e40b8f3",
     apimCatalog: [],
   },
+  "data-opt": {
+    key: "data-opt",
+    name: "Data-Opt",
+    colors: { primary: "#10b981", accent: "#059669" },
+    logos: { app: "/ppsymbol.png", favicon: "/api/favicon", symbol: "/ppsymbol.png" },
+    meta: { ogTitle: "Data-Opt", ogDescription: "Data-Opt Payments & Portals" },
+    platformFeeBps: 50,
+    partnerFeeBps: 0,
+    defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
+    feeMinusEnabled: false,
+    appUrl: "https://pay.data-opt.com",
+    apimCatalog: [],
+  },
+  dataopt: {
+    key: "data-opt",
+    name: "Data-Opt",
+    colors: { primary: "#10b981", accent: "#059669" },
+    logos: { app: "/ppsymbol.png", favicon: "/api/favicon", symbol: "/ppsymbol.png" },
+    meta: { ogTitle: "Data-Opt", ogDescription: "Data-Opt Payments & Portals" },
+    platformFeeBps: 50,
+    partnerFeeBps: 0,
+    defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
+    feeMinusEnabled: false,
+    appUrl: "https://pay.data-opt.com",
+    apimCatalog: [],
+  },
 };
 
 import { isPlatformContext, isPartnerContext, getSanitizedSplitBps } from "@/lib/env";
@@ -177,6 +205,7 @@ export function getBrandKey(req?: NextRequest): string {
     if (hostLower.includes("icunow")) return "icunow-store";
     if (hostLower.includes("aipowerpay")) return "aipowerpay";
     if (hostLower.includes("canyapay")) return "canyapay";
+    if (hostLower.includes("data-opt") || hostLower.includes("dataopt")) return "data-opt";
     if (hostLower === "digital.tnpsettle.com") return "tnp";
     
     // Check localhost subdomains or Azure/PayPortal subdomains
@@ -219,7 +248,10 @@ export function getBrandKey(req?: NextRequest): string {
   // 1. Explicit header (passed from API routes)
   if (req) {
     const header = req.headers.get("x-brand-key");
-    if (header) return header.toLowerCase().trim();
+    if (header) {
+      const hk = header.toLowerCase().trim();
+      return hk === "dataopt" ? "data-opt" : hk;
+    }
 
     // 2. Hostname-based resolution on server
     const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || "";

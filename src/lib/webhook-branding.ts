@@ -3,6 +3,8 @@ const WEBHOOK_BRAND_NAMES: Record<string, string> = {
   basaltsurge: "BasaltSurge",
   paynex: "Paynex",
   xoinpay: "Xoinpay",
+  "data-opt": "Data-Opt",
+  dataopt: "Data-Opt",
 };
 
 /**

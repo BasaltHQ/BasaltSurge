@@ -79,6 +79,7 @@ export async function GET(req: NextRequest) {
           hostname.includes("vercel.app") ||
           hostname.includes("xpaypass.com") ||
           hostname.includes("canyapay.com") ||
+          hostname.includes("data-opt.com") ||
           hostname === "digital.tnpsettle.com" ||
           hostname.includes("vps.ovh.us");
 

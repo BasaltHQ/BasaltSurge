@@ -1,5 +1,7 @@
 "use client";
 
+import modalStyles from "./landing/landing-modal.module.css";
+
 import { useState, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
@@ -10,8 +12,9 @@ import { useActiveAccount } from "thirdweb/react";
 import { client, chain, getWallets, getPrivateWallets } from "@/lib/thirdweb/client";
 import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
 import { useBrand } from "@/contexts/BrandContext";
+import { ACCESS_STATUS_ERROR, fetchMerchantAccessStatus } from "@/lib/merchant-access-status";
 import ImageUploadField from "./forms/ImageUploadField";
-import { Eye, EyeOff, ChevronDown, Copy, Check, Users, RefreshCw, Key } from "lucide-react";
+import { Eye, EyeOff, ChevronDown, Copy, Check, Users, RefreshCw, Key, Zap, LockKeyhole, Gem, CreditCard, ScrollText, Wallet, Ban, Hourglass, PartyPopper } from "lucide-react";
 
 interface SignupWizardProps {
     isOpen: boolean;
@@ -29,7 +32,7 @@ const WIZARD_STEPS = [
         content: (
             <div className="space-y-4">
                 {/* FREE Banner — front and center */}
-                <div className="relative p-5 rounded-xl bg-gradient-to-br from-emerald-500/15 via-emerald-600/10 to-cyan-500/10 border border-emerald-500/30 overflow-hidden">
+                <div className={`${modalStyles.panel} relative p-5 rounded-xl bg-gradient-to-br from-emerald-500/15 via-emerald-600/10 to-cyan-500/10 border border-emerald-500/30 overflow-hidden`}>
                     <div className="absolute top-2 right-3 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">FOREVER FREE</div>
                     <div className="text-3xl font-black text-white mb-1">$0<span className="text-lg text-gray-400 font-normal">/mo</span></div>
                     <p className="text-sm text-gray-300 leading-relaxed">
@@ -44,7 +47,7 @@ const WIZARD_STEPS = [
                     <div className="grid grid-cols-3 gap-1.5">
                         {["Restaurant", "Retail", "Cannabis", "Hotel", "Freelancer", "E-Commerce"].map((pack) => (
                             <div key={pack} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-white/5 border border-white/5">
-                                <span className="text-emerald-400 text-[10px]">✓</span>
+                                <Check size={10} className="text-emerald-400 shrink-0" aria-hidden="true" />
                                 <span className="text-[10px] text-gray-300 font-medium">{pack}</span>
                             </div>
                         ))}
@@ -54,15 +57,15 @@ const WIZARD_STEPS = [
                 {/* Feature pills */}
                 <div className="grid grid-cols-3 gap-2">
                     <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                        <div className="text-xl mb-1">⚡</div>
+                        <Zap size={20} className="mx-auto mb-1" aria-hidden="true" />
                         <div className="text-[10px] font-mono text-gray-400 uppercase">Instant</div>
                     </div>
                     <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                        <div className="text-xl mb-1">🔒</div>
+                        <LockKeyhole size={20} className="mx-auto mb-1" aria-hidden="true" />
                         <div className="text-[10px] font-mono text-gray-400 uppercase">Secure</div>
                     </div>
                     <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                        <div className="text-xl mb-1">💎</div>
+                        <Gem size={20} className="mx-auto mb-1" aria-hidden="true" />
                         <div className="text-[10px] font-mono text-gray-400 uppercase">Trustless</div>
                     </div>
                 </div>
@@ -79,11 +82,11 @@ const WIZARD_STEPS = [
                     Our <span className="text-cyan-400 font-semibold">Split Contract</span> automatically handles every transaction,
                     separating platform fees from your earnings in a single atomic operation.
                 </p>
-                <div className="relative p-4 rounded-xl bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 border border-white/10 mt-4">
+                <div className={`${modalStyles.panel} relative p-4 rounded-xl bg-gradient-to-br from-emerald-500/10 to-cyan-500/10 border border-white/10 mt-4`}>
                     <div className="flex items-center justify-between text-center">
                         <div className="flex-1">
                             <div className="w-10 h-10 mx-auto rounded-full bg-blue-500/20 border border-blue-500/30 flex items-center justify-center mb-1.5">
-                                <span className="text-sm">💳</span>
+                                <CreditCard size={14} aria-hidden="true" />
                             </div>
                             <div className="text-[10px] font-mono text-blue-400">Customer</div>
                         </div>
@@ -92,7 +95,7 @@ const WIZARD_STEPS = [
                         </div>
                         <div className="flex-1">
                             <div className="w-10 h-10 mx-auto rounded-full bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center mb-1.5">
-                                <span className="text-sm">📜</span>
+                                <ScrollText size={14} aria-hidden="true" />
                             </div>
                             <div className="text-[10px] font-mono text-emerald-400">Split Contract</div>
                         </div>
@@ -101,7 +104,7 @@ const WIZARD_STEPS = [
                         </div>
                         <div className="flex-1">
                             <div className="w-10 h-10 mx-auto rounded-full bg-cyan-500/20 border border-cyan-500/30 flex items-center justify-center mb-1.5">
-                                <span className="text-sm">💰</span>
+                                <Wallet size={14} aria-hidden="true" />
                             </div>
                             <div className="text-[10px] font-mono text-cyan-400">Your Wallet</div>
                         </div>
@@ -112,15 +115,15 @@ const WIZARD_STEPS = [
                 </div>
                 <ul className="space-y-1.5 text-xs text-gray-400 mt-3">
                     <li className="flex items-start gap-2">
-                        <span className="text-emerald-400 mt-0.5">✓</span>
+                        <Check size={14} className="text-emerald-400 mt-0.5 shrink-0" aria-hidden="true" />
                         <span>All earnings held in your smart contract</span>
                     </li>
                     <li className="flex items-start gap-2">
-                        <span className="text-emerald-400 mt-0.5">✓</span>
+                        <Check size={14} className="text-emerald-400 mt-0.5 shrink-0" aria-hidden="true" />
                         <span>Withdraw to your wallet anytime</span>
                     </li>
                     <li className="flex items-start gap-2">
-                        <span className="text-emerald-400 mt-0.5">✓</span>
+                        <Check size={14} className="text-emerald-400 mt-0.5 shrink-0" aria-hidden="true" />
                         <span>Fully audited and transparent on-chain</span>
                     </li>
                 </ul>
@@ -169,7 +172,7 @@ function getWizardSteps(brandName: string, isPlatform: boolean) {
                 content: isPlatform ? (
                     <div className="space-y-4">
                         {/* FREE Banner — front and center */}
-                        <div className="relative p-5 rounded-xl bg-gradient-to-br from-emerald-500/15 via-emerald-600/10 to-cyan-500/10 border border-emerald-500/30 overflow-hidden">
+                        <div className={`${modalStyles.panel} relative p-5 rounded-xl bg-gradient-to-br from-emerald-500/15 via-emerald-600/10 to-cyan-500/10 border border-emerald-500/30 overflow-hidden`}>
                             <div className="absolute top-2 right-3 px-2 py-0.5 rounded text-[10px] font-bold tracking-widest bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-mono">FOREVER FREE</div>
                             <div className="text-3xl font-black text-white mb-1">$0<span className="text-lg text-gray-400 font-normal">/mo</span></div>
                             <p className="text-sm text-gray-300 leading-relaxed">
@@ -184,7 +187,7 @@ function getWizardSteps(brandName: string, isPlatform: boolean) {
                             <div className="grid grid-cols-3 gap-1.5">
                                 {["Restaurant", "Retail", "Cannabis", "Hotel", "Freelancer", "E-Commerce"].map((pack) => (
                                     <div key={pack} className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg bg-white/5 border border-white/5">
-                                        <span className="text-emerald-400 text-[10px]">✓</span>
+                                        <Check size={10} className="text-emerald-400 shrink-0" aria-hidden="true" />
                                         <span className="text-[10px] text-gray-300 font-medium">{pack}</span>
                                     </div>
                                 ))}
@@ -194,15 +197,15 @@ function getWizardSteps(brandName: string, isPlatform: boolean) {
                         {/* Feature pills */}
                         <div className="grid grid-cols-3 gap-2">
                             <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                                <div className="text-xl mb-1">⚡</div>
+                                <Zap size={20} className="mx-auto mb-1" aria-hidden="true" />
                                 <div className="text-[10px] font-mono text-gray-400 uppercase">Instant</div>
                             </div>
                             <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                                <div className="text-xl mb-1">🔒</div>
+                                <LockKeyhole size={20} className="mx-auto mb-1" aria-hidden="true" />
                                 <div className="text-[10px] font-mono text-gray-400 uppercase">Secure</div>
                             </div>
                             <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                                <div className="text-xl mb-1">💎</div>
+                                <Gem size={20} className="mx-auto mb-1" aria-hidden="true" />
                                 <div className="text-[10px] font-mono text-gray-400 uppercase">Trustless</div>
                             </div>
                         </div>
@@ -215,15 +218,15 @@ function getWizardSteps(brandName: string, isPlatform: boolean) {
                         </p>
                         <div className="grid grid-cols-3 gap-2 mt-6">
                             <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                                <div className="text-xl mb-1">⚡</div>
+                                <Zap size={20} className="mx-auto mb-1" aria-hidden="true" />
                                 <div className="text-[10px] font-mono text-gray-400 uppercase">Instant</div>
                             </div>
                             <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                                <div className="text-xl mb-1">🔒</div>
+                                <LockKeyhole size={20} className="mx-auto mb-1" aria-hidden="true" />
                                 <div className="text-[10px] font-mono text-gray-400 uppercase">Secure</div>
                             </div>
                             <div className="p-3 rounded-xl bg-white/5 border border-white/10 text-center">
-                                <div className="text-xl mb-1">💎</div>
+                                <Gem size={20} className="mx-auto mb-1" aria-hidden="true" />
                                 <div className="text-[10px] font-mono text-gray-400 uppercase">Trustless</div>
                             </div>
                         </div>
@@ -262,6 +265,8 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
     const [showTeamHelper, setShowTeamHelper] = useState(false);
     const [walletCopied, setWalletCopied] = useState(false);
     const [isCheckingTeam, setIsCheckingTeam] = useState(false);
+    const [accessStatusError, setAccessStatusError] = useState("");
+    const [checkingAccess, setCheckingAccess] = useState(false);
 
     // Referral State
     const [referralAgent, setReferralAgent] = useState("");
@@ -387,6 +392,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
             // Do not reset application status if we are already dealing with a connected wallet in this session
             // forcing re-check will be handled by handleWalletConnected
             setApplicationStatus("none");
+            setAccessStatusError("");
 
             // Extract referral parameters
             if (typeof window !== "undefined") {
@@ -414,23 +420,21 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
     // Handle Wallet Connection in Private Mode
     async function handleWalletConnected(wallet: string) {
         setConnectedWallet(wallet);
+        setAccessStatusError("");
+        setCheckingAccess(true);
 
         // All merchants must go through the application and approval process
         try {
             // Check if user is already approved or blocked
-            const res = await fetch("/api/auth/me", {
-                cache: "no-store",
-                headers: { "x-wallet": wallet } // Send wallet for public status check
-            });
-            const me = await res.json().catch(() => ({}));
+            const me = await fetchMerchantAccessStatus(wallet, brand?.key || "");
 
             // If already approved, allow login (skip application)
             // Note: me.approved is legacy, me.shopStatus is current
-            if (me?.authed || me?.approved || me?.shopStatus === "approved" || me?.isTeamMember) {
-                onComplete();
-            } else if (me?.blocked) {
+            if (me?.blocked) {
                 // User is blocked - show blocked alert
                 setApplicationStatus("blocked");
+            } else if (me?.approved || me?.shopStatus === "approved" || me?.isTeamMember || me?.isPlatformAdmin) {
+                onComplete();
             } else if (me?.shopStatus === "pending") {
                 // Application already submitted, awaiting approval
                 setApplicationStatus("awaiting_approval");
@@ -440,8 +444,10 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                 setApplicationStatus("pending");
             }
         } catch {
-            // Fallback: Assume not approved
-            setApplicationStatus("pending");
+            setApplicationStatus("none");
+            setAccessStatusError(ACCESS_STATUS_ERROR);
+        } finally {
+            setCheckingAccess(false);
         }
     }
 
@@ -587,27 +593,27 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    className="fixed inset-0 z-[11000] bg-black/90 backdrop-blur-md"
+                    className={`${modalStyles.backdrop} fixed inset-0 z-[11000] bg-black/90 backdrop-blur-md`}
                     onClick={onClose}
                 />
             )}
 
             {/* Modal Container - Fixed if modal, Relative if inline */}
-            <div className={`${inline ? 'relative z-10 w-full flex items-center justify-center p-0' : 'fixed inset-0 z-[11001] flex items-center justify-center pointer-events-none p-0 sm:p-4 pt-[safe-area-inset-top] sm:pt-20'}`}>
+            <div className={`${inline ? 'relative z-10 w-full flex items-center justify-center p-0' : 'fixed inset-0 z-[11001] flex items-center justify-center pointer-events-none p-0 sm:p-4'}`}>
                 <motion.div
                     initial={{ opacity: 0, scale: 0.95, y: 20 }}
                     animate={{ opacity: 1, scale: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.95, y: 20 }}
                     transition={{ type: "spring", damping: 25, stiffness: 300 }}
                     // WIDER LAYOUT: Changed max-w-[480px] to max-w-3xl
-                    className={`relative w-full ${inline ? 'max-h-[90dvh] max-w-3xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden bg-black/80 backdrop-blur-xl flex flex-col' : 'h-full sm:h-auto sm:max-h-[85vh] sm:max-w-3xl sm:rounded-2xl border-0 sm:border border-white/10 shadow-2xl overflow-hidden pointer-events-auto flex flex-col bg-black/95 sm:bg-black/90'}`}
+                    className={`${!inline ? `${modalStyles.surface} ${modalStyles.fullscreen}` : ""} relative w-full ${inline ? 'max-h-[90dvh] max-w-3xl rounded-2xl border border-white/10 shadow-2xl overflow-hidden bg-black/80 backdrop-blur-xl flex flex-col' : 'h-full max-h-[100dvh] sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-3xl sm:rounded-2xl border-0 sm:border border-white/10 shadow-2xl overflow-hidden pointer-events-auto flex flex-col bg-black/95 sm:bg-black/90'}`}
                     style={{
                         background: inline ? 'rgba(0,0,0,0.6)' : 'linear-gradient(180deg, rgba(10,10,10,1) 0%, rgba(5,5,5,1) 100%)',
                         backdropFilter: inline ? 'blur(20px)' : undefined
                     }}
                 >
                     {/* Header - Sticky */}
-                    <div className={`relative p-6 pb-4 border-b border-white/10 shrink-0 z-10 pt-safe-top ${inline ? 'bg-white/5' : 'bg-black/50 backdrop-blur-sm'}`}>
+                    <div className={`${modalStyles.header} relative p-6 pb-4 border-b border-white/10 shrink-0 z-10 pt-safe-top ${inline ? 'bg-white/5' : 'bg-black/50 backdrop-blur-sm'}`}>
                         <div className="flex items-center justify-between mb-4 mt-2 sm:mt-0">
                             <div className="flex items-center gap-3">
                                 <div className="relative w-10 h-10 shrink-0">
@@ -620,7 +626,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                     <div className="text-white font-semibold text-sm">{brandName}</div>
                                 </div>
                             </div>
-                            <button onClick={onClose} className="w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors">
+                            <button onClick={onClose} className={`${modalStyles.close} w-8 h-8 rounded-full bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors`}>
                                 <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                                 </svg>
@@ -648,7 +654,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                     className="text-center py-8"
                                 >
                                     <div className="w-16 h-16 mx-auto bg-red-500/10 rounded-full flex items-center justify-center mb-4 border border-red-500/20">
-                                        <span className="text-3xl">🚫</span>
+                                        <Ban size={30} className="text-red-400" aria-hidden="true" />
                                     </div>
                                     <h2 className="text-xl font-bold text-white mb-2">Account Blocked</h2>
                                     <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
@@ -658,7 +664,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                         <div className="text-[10px] font-mono text-gray-500 uppercase">Wallet</div>
                                         <div className="text-xs font-mono text-red-400 truncate">{connectedWallet}</div>
                                     </div>
-                                    <button onClick={onClose} className="w-full max-w-xs mx-auto py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors block">
+                                    <button onClick={onClose} className={`${modalStyles.secondary} w-full max-w-xs mx-auto py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors block`}>
                                         Close
                                     </button>
                                 </motion.div>
@@ -670,7 +676,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                     className="text-center py-8"
                                 >
                                     <div className="w-16 h-16 mx-auto bg-amber-500/10 rounded-full flex items-center justify-center mb-4 border border-amber-500/20">
-                                        <span className="text-3xl">⏳</span>
+                                        <Hourglass size={30} className="text-amber-400" aria-hidden="true" />
                                     </div>
                                     <h2 className="text-xl font-bold text-white mb-2">Application Pending</h2>
                                     <p className="text-sm text-gray-400 mb-6 max-w-md mx-auto">
@@ -686,7 +692,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                         <button
                                             type="button"
                                             onClick={() => setShowTeamHelper(!showTeamHelper)}
-                                            className="w-full flex items-center justify-between p-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/25 text-purple-300 transition-colors text-xs font-medium"
+                                            className={`${modalStyles.team} w-full flex items-center justify-between p-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/25 text-purple-300 transition-colors text-xs font-medium`}
                                         >
                                             <span className="flex items-center gap-2">
                                                 <Users className="w-4 h-4 text-purple-400 flex-shrink-0" />
@@ -704,7 +710,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                     transition={{ duration: 0.2 }}
                                                     className="overflow-hidden"
                                                 >
-                                                    <div className="mt-2.5 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200/90 space-y-3">
+                                                    <div className={`${modalStyles.team} mt-2.5 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200/90 space-y-3`}>
                                                         <p className="leading-relaxed">
                                                             If you were invited as a team member by an existing merchant, give them your wallet address so they can add you to their team roster.
                                                         </p>
@@ -726,7 +732,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                                             setWalletCopied(true);
                                                                             setTimeout(() => setWalletCopied(false), 2000);
                                                                         }}
-                                                                        className="px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-[11px] font-medium transition-colors flex items-center gap-1 flex-shrink-0 border border-purple-500/40"
+                                                                        className={`${modalStyles.team} px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-[11px] font-medium transition-colors flex items-center gap-1 flex-shrink-0 border border-purple-500/40`}
                                                                     >
                                                                         {walletCopied ? (
                                                                             <>
@@ -755,7 +761,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                                     setIsCheckingTeam(false);
                                                                 }
                                                             }}
-                                                            className="w-full py-2 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 active:scale-[0.98] text-purple-200 text-xs font-semibold transition-all border border-purple-500/30 flex items-center justify-center gap-1.5"
+                                                            className={`${modalStyles.team} w-full py-2 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 active:scale-[0.98] text-purple-200 text-xs font-semibold transition-all border border-purple-500/30 flex items-center justify-center gap-1.5`}
                                                         >
                                                             <RefreshCw className={`w-3.5 h-3.5 ${isCheckingTeam ? 'animate-spin' : ''}`} />
                                                             <span>{isCheckingTeam ? "Checking Team Status..." : "Check Team Access"}</span>
@@ -765,7 +771,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             )}
                                         </AnimatePresence>
                                     </div>
-                                    <button onClick={onClose} className="w-full max-w-xs mx-auto py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors block">
+                                    <button onClick={onClose} className={`${modalStyles.secondary} w-full max-w-xs mx-auto py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors block`}>
                                         Close
                                     </button>
                                 </motion.div>
@@ -777,7 +783,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                     className="text-center py-8"
                                 >
                                     <div className="w-16 h-16 mx-auto bg-emerald-500/10 rounded-full flex items-center justify-center mb-4 border border-emerald-500/20">
-                                        <span className="text-3xl">🎉</span>
+                                        <PartyPopper size={30} className="text-emerald-400" aria-hidden="true" />
                                     </div>
                                     <h2 className="text-xl font-bold text-white mb-2">Application Received</h2>
                                     <p className="text-sm text-gray-400 mb-6">
@@ -787,7 +793,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                         <div className="text-[10px] font-mono text-gray-500 uppercase">Wallet</div>
                                         <div className="text-xs font-mono text-emerald-400 truncate">{connectedWallet}</div>
                                     </div>
-                                    <button onClick={onClose} className="w-full max-w-xs mx-auto py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors block">
+                                    <button onClick={onClose} className={`${modalStyles.secondary} w-full max-w-xs mx-auto py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold transition-colors block`}>
                                         Close
                                     </button>
                                 </motion.div>
@@ -835,7 +841,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                         <button
                                             type="button"
                                             onClick={() => setShowTeamHelper(!showTeamHelper)}
-                                            className="w-full flex items-center justify-between p-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/25 text-purple-300 transition-colors text-xs font-medium text-left"
+                                            className={`${modalStyles.team} w-full flex items-center justify-between p-3 rounded-xl bg-purple-500/10 hover:bg-purple-500/15 border border-purple-500/25 text-purple-300 transition-colors text-xs font-medium text-left`}
                                         >
                                             <span className="flex items-center gap-2">
                                                 <Users className="w-4 h-4 text-purple-400 flex-shrink-0" />
@@ -853,7 +859,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                     transition={{ duration: 0.2 }}
                                                     className="overflow-hidden"
                                                 >
-                                                    <div className="mt-2 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200/90 space-y-3">
+                                                    <div className={`${modalStyles.team} mt-2 p-3.5 rounded-xl bg-purple-950/30 border border-purple-500/20 text-xs text-purple-200/90 space-y-3`}>
                                                         <p className="leading-relaxed">
                                                             Team members do not need to register a new store. Share your wallet address with your store owner or manager so they can add you to their team roster.
                                                         </p>
@@ -875,7 +881,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                                             setWalletCopied(true);
                                                                             setTimeout(() => setWalletCopied(false), 2000);
                                                                         }}
-                                                                        className="px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-[11px] font-medium transition-colors flex items-center gap-1 flex-shrink-0 border border-purple-500/40"
+                                                                        className={`${modalStyles.team} px-2.5 py-1 rounded bg-purple-500/20 hover:bg-purple-500/30 text-purple-200 text-[11px] font-medium transition-colors flex items-center gap-1 flex-shrink-0 border border-purple-500/40`}
                                                                     >
                                                                         {walletCopied ? (
                                                                             <>
@@ -904,7 +910,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                                     setIsCheckingTeam(false);
                                                                 }
                                                             }}
-                                                            className="w-full py-2 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 active:scale-[0.98] text-purple-200 text-xs font-semibold transition-all border border-purple-500/30 flex items-center justify-center gap-1.5"
+                                                            className={`${modalStyles.team} w-full py-2 px-3 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 active:scale-[0.98] text-purple-200 text-xs font-semibold transition-all border border-purple-500/30 flex items-center justify-center gap-1.5`}
                                                         >
                                                             <RefreshCw className={`w-3.5 h-3.5 ${isCheckingTeam ? 'animate-spin' : ''}`} />
                                                             <span>{isCheckingTeam ? "Checking Team Status..." : "Check Team Access"}</span>
@@ -987,7 +993,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                 </div>
                                                 {businessType === "sole_prop" && (
                                                     <div className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1">
-                                                        🔒 Securely encrypted
+                                                        <LockKeyhole size={10} aria-hidden="true" /> Securely encrypted
                                                     </div>
                                                 )}
                                             </div>
@@ -1274,7 +1280,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                         {formStep === 1 ? (
                                             <button
                                                 onClick={() => setFormStep(2)}
-                                                className="px-6 py-2.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-mono uppercase tracking-wider transition-all border border-white/10"
+                                                className={`${modalStyles.primary} px-6 py-2.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-mono uppercase tracking-wider transition-all border border-white/10`}
                                             >
                                                 Continue →
                                             </button>
@@ -1282,7 +1288,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             <button
                                                 onClick={submitApplication}
                                                 disabled={submitting}
-                                                className="px-8 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100"
+                                                className={`${modalStyles.primary} px-8 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-95 disabled:opacity-50 disabled:active:scale-100`}
                                             >
                                                 {submitting ? "Submitting Application..." : "Submit Application"}
                                             </button>
@@ -1325,23 +1331,25 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             <div className="p-4 rounded-xl bg-white/5 border border-white/10">
                                                 <ul className="space-y-2 text-xs text-gray-400">
                                                     <li className="flex items-start gap-2">
-                                                        <span className="text-emerald-400 mt-0.5">✓</span>
+                                                        <Check size={14} className="text-emerald-400 mt-0.5 shrink-0" aria-hidden="true" />
                                                         <span>No email or password required</span>
                                                     </li>
                                                     <li className="flex items-start gap-2">
-                                                        <span className="text-emerald-400 mt-0.5">✓</span>
+                                                        <Check size={14} className="text-emerald-400 mt-0.5 shrink-0" aria-hidden="true" />
                                                         <span>Your keys, your crypto, your control</span>
                                                     </li>
                                                 </ul>
                                             </div>
 
                                             <div className="pt-2">
+                                                {accessStatusError && <p role="alert" className="mb-3 text-sm text-amber-300">{accessStatusError}</p>}
                                                 {account?.address ? (
                                                     <button
                                                         onClick={() => handleWalletConnected(account.address)}
-                                                        className="w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-xs font-mono uppercase tracking-wider"
+                                                        disabled={checkingAccess}
+                                                        className={`${modalStyles.primary} w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-xs font-mono uppercase tracking-wider`}
                                                     >
-                                                        {isPrivate ? "Continue to Application" : "Get Started"}
+                                                        {checkingAccess ? "Checking access..." : accessStatusError ? "Try again" : isPrivate ? "Continue to Application" : "Get Started"}
                                                     </button>
                                                 ) : wallets.length > 0 ? (
                                                     <ConnectButton
@@ -1400,7 +1408,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                 {!isLastStep && (
                                     <button
                                         onClick={handleNext}
-                                        className="px-6 py-2.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-mono uppercase tracking-wider transition-all border border-white/10"
+                                        className={`${modalStyles.primary} px-6 py-2.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-mono uppercase tracking-wider transition-all border border-white/10`}
                                     >
                                         Continue →
                                     </button>

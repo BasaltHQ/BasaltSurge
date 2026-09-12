@@ -17,6 +17,8 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   lucky13marketing: "lucky13",
   canyapay: "canyapay",
   tnp: "tnp",
+  "data-opt": "data-opt",
+  dataopt: "data-opt",
   // Add more partner brands here as needed
 };
 
@@ -35,6 +37,10 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "www.pay.lucky13marketing.com": "lucky13",
   "canyapay.com": "canyapay",
   "www.canyapay.com": "canyapay",
+  "pay.data-opt.com": "data-opt",
+  "www.pay.data-opt.com": "data-opt",
+  "data-opt.com": "data-opt",
+  "www.data-opt.com": "data-opt",
   "digital.tnpsettle.com": "tnp"
 };
 
@@ -388,6 +394,7 @@ export async function deriveContainerIdentityFromHostname(host: string, cookieHe
   if (hostLower.includes("aipowerpay")) return { brandKey: "aipowerpay", containerType: "partner" };
   if (hostLower.includes("lucky13")) return { brandKey: "lucky13", containerType: "partner" };
   if (hostLower.includes("canyapay")) return { brandKey: "canyapay", containerType: "partner" };
+  if (hostLower.includes("data-opt") || hostLower.includes("dataopt")) return { brandKey: "data-opt", containerType: "partner" };
 
   return null;
 }
@@ -447,6 +454,8 @@ export async function readBrandOverridesFromCosmos(brandKey: string): Promise<Br
       basaltsurge: "portalpay",
       portalpay: "basaltsurge",
       "lucky13-marketing": "lucky13",
+      "data-opt": "dataopt",
+      dataopt: "data-opt",
     };
     const fallbackKey = PLATFORM_ALIASES[key];
     if (fallbackKey) {
@@ -456,9 +465,13 @@ export async function readBrandOverridesFromCosmos(brandKey: string): Promise<Br
 
     // Secondary fallback: query by case-insensitive wallet/brandKey in case of partition key casing or id variance
     try {
+      const altKey = fallbackKey || key;
       const query = {
-        query: "SELECT * FROM c WHERE (c.id = 'brand:config' OR c.type = 'brand_config') AND (LOWER(c.wallet) = @k OR LOWER(c.brandKey) = @k)",
-        parameters: [{ name: "@k", value: key }],
+        query: "SELECT * FROM c WHERE (c.id = 'brand:config' OR c.type = 'brand_config') AND (LOWER(c.wallet) = @k OR LOWER(c.brandKey) = @k OR LOWER(c.wallet) = @altK OR LOWER(c.brandKey) = @altK)",
+        parameters: [
+          { name: "@k", value: key },
+          { name: "@altK", value: altKey },
+        ],
       };
       const { resources } = await c.items.query<BrandConfigDoc>(query).fetchAll();
       if (resources && resources.length > 0) {

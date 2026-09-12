@@ -56,6 +56,8 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   lucky13marketing: "lucky13",
   canyapay: "canyapay",
   tnp: "tnp",
+  "data-opt": "data-opt",
+  dataopt: "data-opt",
   // Add more partner brands here as needed
 };
 
@@ -74,6 +76,10 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "www.canyapay.com": "canyapay",
   "canyapay.azurewebsites.net": "canyapay",
   "canyapay.payportal.co": "canyapay",
+  "pay.data-opt.com": "data-opt",
+  "www.pay.data-opt.com": "data-opt",
+  "data-opt.com": "data-opt",
+  "www.data-opt.com": "data-opt",
   "digital.tnpsettle.com": "tnp"
   // Add more custom partner domains here as needed
 };
@@ -151,6 +157,22 @@ function deriveBrandKeyFromHostname(host: string): { brandKey: string; container
       }
     }
   }
+
+  // Fallback: Check if any segment of the host matches a known partner pattern
+  for (const part of parts) {
+    if (KNOWN_PARTNER_PATTERNS[part]) {
+      return { brandKey: KNOWN_PARTNER_PATTERNS[part], containerType: "partner" };
+    }
+  }
+
+  // Substring match fallback
+  if (hostLower.includes("paynex")) return { brandKey: "paynex", containerType: "partner" };
+  if (hostLower.includes("xpaypass") || hostLower.includes("xoinpay")) return { brandKey: "xoinpay", containerType: "partner" };
+  if (hostLower.includes("icunow")) return { brandKey: "icunow-store", containerType: "partner" };
+  if (hostLower.includes("aipowerpay")) return { brandKey: "aipowerpay", containerType: "partner" };
+  if (hostLower.includes("lucky13")) return { brandKey: "lucky13", containerType: "partner" };
+  if (hostLower.includes("canyapay")) return { brandKey: "canyapay", containerType: "partner" };
+  if (hostLower.includes("data-opt") || hostLower.includes("dataopt")) return { brandKey: "data-opt", containerType: "partner" };
 
   return null;
 }

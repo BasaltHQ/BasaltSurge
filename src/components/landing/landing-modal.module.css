@@ -1,0 +1,169 @@
+/* Body scope also reaches portaled dialogs, without restyling application routes. */
+:global(body.with-landing-navbar) .backdrop {
+  background: #05080c80;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+:global(body.with-landing-navbar) .surface {
+  color-scheme: dark;
+  color: #f3f4f5;
+  font-family: var(--font-geist-sans), Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* Overrides the wizard's legacy inline opaque background. */
+  background: linear-gradient(145deg, #26303ce8, #111419e8 70%) !important;
+  border: 1px solid #ffffff30;
+  border-radius: 20px;
+  backdrop-filter: blur(24px) saturate(135%);
+  -webkit-backdrop-filter: blur(24px) saturate(135%);
+  box-shadow: 0 32px 100px #0008, inset 0 1px 0 #ffffff12, 0 0 0 6px #ffffff03;
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff30 transparent;
+}
+
+:global(body.with-landing-navbar) .surface :is(h2, h3) {
+  font-family: inherit;
+  font-weight: 550;
+  text-transform: none;
+  letter-spacing: -.035em;
+  line-height: 1.2;
+}
+
+:global(body.with-landing-navbar) .surface h2 {
+  font-size: clamp(24px, 3vw, 30px);
+}
+
+:global(body.with-landing-navbar) .surface p {
+  line-height: 1.7;
+}
+
+:global(body.with-landing-navbar) .surface * {
+  scrollbar-width: thin;
+  scrollbar-color: #ffffff30 transparent;
+}
+
+:global(body.with-landing-navbar) .surface :global(.microtext),
+:global(body.with-landing-navbar) .surface :is(button, label, input, select, textarea) {
+  font-family: inherit;
+}
+
+:global(body.with-landing-navbar) .surface :global(.microtext):not(h2):not(h3) {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: .01em;
+}
+
+:global(body.with-landing-navbar) .surface :global(.text-muted-foreground) {
+  color: #adb5bf;
+}
+
+:global(body.with-landing-navbar) .surface :global(.text-foreground) {
+  color: #f3f4f5;
+}
+
+:global(body.with-landing-navbar) .surface label {
+  letter-spacing: .01em;
+  text-transform: none;
+  line-height: 1.5;
+}
+
+:global(body.with-landing-navbar) .surface :is(input:not([type="checkbox"]):not([type="color"]):not([type="file"]), select, textarea) {
+  background: #090c1073;
+  border-radius: 8px;
+  color: #f3f4f5;
+}
+
+:global(body.with-landing-navbar) .surface :is(input, select, textarea):focus-visible {
+  outline: 2px solid var(--pp-primary, #ff8157);
+  outline-offset: 2px;
+}
+
+:global(body.with-landing-navbar) .surface :is(button, a):focus-visible {
+  outline: 2px solid #f3f4f5;
+  outline-offset: 3px;
+}
+
+:global(body.with-landing-navbar) .surface button {
+  letter-spacing: .01em;
+  text-transform: none;
+}
+
+:global(body.with-landing-navbar) .surface .primary,
+:global(body.with-landing-navbar) .surface .contactAction {
+  background: #f3f4f5 !important;
+  color: #111316;
+  border: 1px solid #ffffff50;
+  border-radius: 8px;
+  min-height: 46px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px #0002;
+}
+
+:global(body.with-landing-navbar) .surface .primary:not(:disabled):hover,
+:global(body.with-landing-navbar) .surface .contactAction:not(:disabled):hover {
+  background: #fff !important;
+}
+
+:global(body.with-landing-navbar) .surface .secondary {
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid #ffffff24;
+  background: #ffffff06;
+  color: #d4dae1;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+:global(body.with-landing-navbar) .surface .secondary:not(:disabled):hover {
+  background: #ffffff10;
+}
+
+:global(body.with-landing-navbar) .surface .header {
+  background: #ffffff03;
+  border-color: #ffffff14;
+  backdrop-filter: none;
+}
+
+:global(body.with-landing-navbar) .surface .panel {
+  background: linear-gradient(135deg, #ffffff09, #ffffff03);
+  border-color: #ffffff20;
+}
+
+:global(body.with-landing-navbar) .surface .team {
+  background: #ffffff06;
+  border-color: #ffffff24;
+  color: #c7cfd8;
+}
+
+:global(body.with-landing-navbar) .surface button.team:hover {
+  background: #ffffff10;
+}
+
+:global(body.with-landing-navbar) .surface .team svg {
+  color: inherit;
+}
+
+:global(body.with-landing-navbar) .surface .close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #ffffff1a;
+  border-radius: 50%;
+  background: #ffffff08;
+  color: #c7cfd8;
+}
+
+:global(body.with-landing-navbar) .surface .close:hover {
+  background: #ffffff16;
+  color: #fff;
+}
+
+@media (max-width: 639px) {
+  :global(body.with-landing-navbar) .fullscreen {
+    border: 0;
+    border-radius: 0;
+  }
+}

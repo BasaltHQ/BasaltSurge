@@ -7,6 +7,7 @@ import * as kycTracking from "./stripe-kyc-tracking.ts";
 const {
   deriveKycCompletedDuringTransaction,
   deriveStripeKycSnapshot,
+  hasReachedStripeKycVerificationAttemptLimit,
   highestKycTier,
   isValidIsoCountryCode,
   normalizeMicaIdentifier,
@@ -105,4 +106,10 @@ test("validates nationality and birth-country ISO codes without limiting them to
   assert.equal(isValidIsoCountryCode("ca"), true);
   assert.equal(isValidIsoCountryCode("EE"), true);
   assert.equal(isValidIsoCountryCode("ZZ"), false);
+});
+
+test("recognizes Stripe's documented maximum verification-attempt error", () => {
+  assert.equal(hasReachedStripeKycVerificationAttemptLimit(["user_has_reached_max_verification_attempt"]), true);
+  assert.equal(hasReachedStripeKycVerificationAttemptLimit(["user_has_reached_max_verification_attempts"]), true);
+  assert.equal(hasReachedStripeKycVerificationAttemptLimit(["id_document_verification_failed"]), false);
 });

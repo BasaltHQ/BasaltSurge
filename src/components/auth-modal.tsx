@@ -1,5 +1,7 @@
 "use client";
 
+import modalStyles from "./landing/landing-modal.module.css";
+
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useActiveAccount, useActiveWallet } from "thirdweb/react";
@@ -202,20 +204,20 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
     <>
       {/* Backdrop (lower z-index so thirdweb connect modal can appear above) */}
       <div
-        className="fixed inset-0 z-[12000] bg-black/60 backdrop-blur-sm"
+        className={`${modalStyles.backdrop} fixed inset-0 z-[12000] bg-black/60 backdrop-blur-sm`}
         onClick={!signing ? onClose : undefined}
       />
 
       {/* Modal (lower z-index so thirdweb connect modal can appear above) */}
       <div
-        className="fixed z-[12001] glass-float rounded-xl border p-6 shadow-2xl overflow-y-auto"
+        className={`${modalStyles.surface} fixed z-[12001] glass-float rounded-xl border p-6 shadow-2xl overflow-y-auto`}
         style={{
           left: '50%',
           top: '50%',
           transform: 'translate(-50%, -50%)',
           width: '90vw',
           maxWidth: '440px',
-          maxHeight: '90vh',
+          maxHeight: 'calc(100dvh - 2rem)',
         }}
       >
         <div className="mb-5">
@@ -309,7 +311,7 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
               <button
                 onClick={handleSign}
                 disabled={signing || !allLegalRead || legalLoading}
-                className="w-full h-11 rounded-lg bg-[var(--pp-secondary)] text-primary-foreground microtext text-xs font-bold uppercase tracking-wide hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed shadow-md"
+                className={`${modalStyles.primary} w-full h-11 rounded-lg bg-[var(--pp-secondary)] text-primary-foreground microtext text-xs font-bold uppercase tracking-wide hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed shadow-md`}
               >
                 {signing ? (
                   <span className="flex items-center justify-center gap-2">
@@ -346,7 +348,7 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
               {!signing && (
                 <button
                   onClick={onClose}
-                  className="w-full h-11 rounded-lg border hover:bg-foreground/5 transition-colors microtext text-xs font-semibold uppercase tracking-wide"
+                  className={`${modalStyles.secondary} w-full h-11 rounded-lg border hover:bg-foreground/5 transition-colors microtext text-xs font-semibold uppercase tracking-wide`}
                 >
                   Cancel
                 </button>
@@ -394,7 +396,7 @@ export function AuthModal({ isOpen, onClose, onSuccess, onError, isSocialLogin =
               </div>
               <button
                 onClick={onClose}
-                className="w-full h-11 rounded-lg border hover:bg-foreground/5 transition-colors microtext text-xs font-semibold uppercase tracking-wide"
+                className={`${modalStyles.secondary} w-full h-11 rounded-lg border hover:bg-foreground/5 transition-colors microtext text-xs font-semibold uppercase tracking-wide`}
               >
                 Cancel
               </button>

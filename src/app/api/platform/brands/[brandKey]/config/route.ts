@@ -386,7 +386,7 @@ async function readBrandOverrides(brandKey: string): Promise<BrandConfigDoc | nu
     if (resource) return resource;
 
     // Fallback: try the legacy platform alias (basaltsurge ↔ portalpay share the same brand config)
-    const PLATFORM_ALIASES: Record<string, string> = { basaltsurge: "portalpay", portalpay: "basaltsurge", "lucky13-marketing": "lucky13" };
+    const PLATFORM_ALIASES: Record<string, string> = { basaltsurge: "portalpay", portalpay: "basaltsurge", "lucky13-marketing": "lucky13", "data-opt": "dataopt", dataopt: "data-opt" };
     const fallbackKey = PLATFORM_ALIASES[key];
     if (fallbackKey) {
       const { resource: fb } = await c.item("brand:config", fallbackKey).read<BrandConfigDoc>();
@@ -395,9 +395,13 @@ async function readBrandOverrides(brandKey: string): Promise<BrandConfigDoc | nu
 
     // Secondary fallback: query by case-insensitive wallet/brandKey in case of partition key casing or id variance
     try {
+      const altKey = fallbackKey || key;
       const query = {
-        query: "SELECT * FROM c WHERE (c.id = 'brand:config' OR c.type = 'brand_config') AND (LOWER(c.wallet) = @k OR LOWER(c.brandKey) = @k)",
-        parameters: [{ name: "@k", value: key }],
+        query: "SELECT * FROM c WHERE (c.id = 'brand:config' OR c.type = 'brand_config') AND (LOWER(c.wallet) = @k OR LOWER(c.brandKey) = @k OR LOWER(c.wallet) = @altK OR LOWER(c.brandKey) = @altK)",
+        parameters: [
+          { name: "@k", value: key },
+          { name: "@altK", value: altKey },
+        ],
       };
       const { resources } = await c.items.query<BrandConfigDoc>(query).fetchAll();
       if (resources && resources.length > 0) {

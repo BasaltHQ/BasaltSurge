@@ -16,6 +16,7 @@ import {
 } from "@/lib/stripe-onramp-status";
 import {
   deriveStripeKycSnapshot,
+  hasReachedStripeKycVerificationAttemptLimit,
   isStripeKycTierSatisfied,
   resolveUsStripeKycRecovery,
   isValidIsoCountryCode,
@@ -1496,7 +1497,7 @@ export function useStripeEmbeddedOnramp({
             return true;
           }
         } else {
-          if (res.status === 403 || res.status === 409 || res.status === 429) {
+          if (res.status === 409 || res.status === 429) {
             console.log(`[EMBEDDED ONRAMP] Transient status ${res.status} during KYC poll (Stripe verification processing lock). Retrying after backoff...`);
             await new Promise(resolve => setTimeout(resolve, 2500));
             continue;
@@ -1518,8 +1519,11 @@ export function useStripeEmbeddedOnramp({
             })
           }).catch(() => { });
 
-          if (res.status === 401) {
-            throw new Error("Stripe authentication token has expired. Please refresh the page.");
+          if (res.status === 401 || res.status === 403) {
+            throw Object.assign(
+              new Error("Stripe authentication required. Please sign in again."),
+              { code: "stripe_reauthentication_required" }
+            );
           }
           consecutiveErrors++;
           if (consecutiveErrors >= 5) {
@@ -1530,7 +1534,12 @@ export function useStripeEmbeddedOnramp({
         if (typeof timeoutId !== "undefined") clearTimeout(timeoutId);
         if (err?.code === "kyc_observation_pending") throw err;
         console.warn("[EMBEDDED ONRAMP] Error polling KYC status:", err);
-        if (err?.message?.includes("expired") || err?.message?.includes("repeatedly")) {
+        if (
+          err?.code === "stripe_reauthentication_required"
+          || err?.message?.includes("expired")
+          || err?.message?.includes("authentication required")
+          || err?.message?.includes("repeatedly")
+        ) {
           throw err;
         }
         consecutiveErrors++;
@@ -2999,7 +3008,7 @@ export function useStripeEmbeddedOnramp({
     const currentL2 = latestKycSnapshotRef.current?.tiers.find((tier) => tier.tier === "l2");
     if (
       currentL2?.verification_status === "rejected"
-      && currentL2.verification_errors.includes("user_has_reached_max_verification_attempts")
+      && hasReachedStripeKycVerificationAttemptLimit(currentL2.verification_errors)
     ) {
       reportKycEvent("documents_retry_exhausted", "l2");
       throw new Error("Stripe has reached the maximum identity verification attempts. Please contact Stripe support.");
@@ -3040,7 +3049,7 @@ export function useStripeEmbeddedOnramp({
     const approved = customerId ? await pollKycStatus(customerId, "l2") : false;
     if (!approved) {
       const refreshedL2 = latestKycSnapshotRef.current?.tiers.find((tier) => tier.tier === "l2");
-      if (refreshedL2?.verification_errors.includes("user_has_reached_max_verification_attempts")) {
+      if (hasReachedStripeKycVerificationAttemptLimit(refreshedL2?.verification_errors)) {
         reportKycEvent("documents_retry_exhausted", "l2");
         throw new Error("Stripe has reached the maximum identity verification attempts. Please contact Stripe support.");
       }

@@ -32,6 +32,7 @@ export async function GET(req: NextRequest) {
       const host = req.headers.get("host") || "";
       if (host.includes("paynex")) brandKey = "paynex";
       else if (host.includes("xoinpay")) brandKey = "xoinpay";
+      else if (host.includes("data-opt") || host.includes("dataopt")) brandKey = "data-opt";
       else if (host.toLowerCase().split(":")[0] === "digital.tnpsettle.com") brandKey = "tnp";
       else brandKey = "basaltsurge";
     }
