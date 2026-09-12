@@ -33,6 +33,47 @@ export const revalidate = 0;
 // Partner-aware overrides: in partner containers, prefer container brand name and base URL
 // REFACTORED: Uses direct function calls instead of HTTP fetches to avoid cascading API calls
 async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
+  let brandFeesConfig: {
+    platformFeeBps?: number;
+    partnerFeeBps?: number;
+    presentedFeeBps?: number;
+    creditPresentedFeeBps?: number;
+    creditPlatformFeeBps?: number;
+    dualSplitEnabled?: boolean;
+    unifiedFeeEnabled?: boolean;
+    feeMinusEnabled?: boolean;
+    achEnabled?: boolean;
+    stripeOnrampV2Enabled?: boolean;
+    v2CheckoutEnabled?: boolean;
+    stripeOnrampEnabled?: boolean;
+  } = {};
+
+  const finalizeFlags = (c: any) => {
+    if (!c) return c;
+    if (brandFeesConfig.dualSplitEnabled !== undefined) {
+      c.dualSplitEnabled = typeof c.dualSplitEnabled === "boolean" ? c.dualSplitEnabled : brandFeesConfig.dualSplitEnabled;
+    }
+    if (brandFeesConfig.unifiedFeeEnabled !== undefined) {
+      c.unifiedFeeEnabled = typeof c.unifiedFeeEnabled === "boolean" ? c.unifiedFeeEnabled : brandFeesConfig.unifiedFeeEnabled;
+    }
+    if (brandFeesConfig.feeMinusEnabled !== undefined && c.feeMinusEnabled === undefined) {
+      c.feeMinusEnabled = brandFeesConfig.feeMinusEnabled;
+    }
+    if (brandFeesConfig.achEnabled !== undefined && c.achEnabled === undefined) {
+      c.achEnabled = brandFeesConfig.achEnabled;
+    }
+    if (brandFeesConfig.v2CheckoutEnabled !== undefined && c.v2CheckoutEnabled === undefined) {
+      c.v2CheckoutEnabled = brandFeesConfig.v2CheckoutEnabled;
+      c.stripeOnrampV2Enabled = brandFeesConfig.v2CheckoutEnabled;
+    }
+    if (brandFeesConfig.stripeOnrampEnabled !== undefined && c.stripeOnrampEnabled === undefined) {
+      c.stripeOnrampEnabled = brandFeesConfig.stripeOnrampEnabled;
+    }
+    if (c.feeMinusEnabled === undefined) c.feeMinusEnabled = false;
+    if (c.achEnabled === undefined) c.achEnabled = false;
+    return c;
+  };
+
   try {
     const u = new URL(req.url);
     const host = req.headers.get("host") || u.hostname || "";
@@ -52,7 +93,6 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     // NOTE: basaltsurge is now its own platform brand, no longer aliased to portalpay
 
     // Pre-fetch brand config for fees (will be used at the end regardless of merchant vs global config)
-    let brandFeesConfig: { platformFeeBps?: number; partnerFeeBps?: number; presentedFeeBps?: number; creditPresentedFeeBps?: number; creditPlatformFeeBps?: number } = {};
     try {
       if (brandKeyForFees) {
         const { brand: fetchedBrand, overrides: fetchedOverrides } = await getBrandConfigFromCosmos(brandKeyForFees);
@@ -69,6 +109,18 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
           : (typeof (fb as any)?.creditPresentedFeeBps === "number" ? (fb as any).creditPresentedFeeBps : undefined);
         brandFeesConfig.creditPlatformFeeBps = typeof ov?.creditPlatformFeeBps === "number" ? ov.creditPlatformFeeBps
           : (typeof (fb as any)?.creditPlatformFeeBps === "number" ? (fb as any).creditPlatformFeeBps : 125);
+        brandFeesConfig.dualSplitEnabled = typeof ov?.dualSplitEnabled === "boolean" ? ov.dualSplitEnabled
+          : (typeof (fb as any)?.dualSplitEnabled === "boolean" ? (fb as any).dualSplitEnabled : undefined);
+        brandFeesConfig.unifiedFeeEnabled = typeof ov?.unifiedFeeEnabled === "boolean" ? ov.unifiedFeeEnabled
+          : (typeof (fb as any)?.unifiedFeeEnabled === "boolean" ? (fb as any).unifiedFeeEnabled : undefined);
+        brandFeesConfig.feeMinusEnabled = typeof ov?.feeMinusEnabled === "boolean" ? ov.feeMinusEnabled
+          : (typeof (fb as any)?.feeMinusEnabled === "boolean" ? (fb as any).feeMinusEnabled : undefined);
+        brandFeesConfig.achEnabled = typeof ov?.achEnabled === "boolean" ? ov.achEnabled
+          : (typeof (fb as any)?.achEnabled === "boolean" ? (fb as any).achEnabled : undefined);
+        brandFeesConfig.stripeOnrampV2Enabled = (fb as any)?.stripeOnrampV2Enabled ?? (fb as any)?.v2CheckoutEnabled ?? ov?.stripeOnrampV2Enabled ?? ov?.v2CheckoutEnabled ?? undefined;
+        brandFeesConfig.v2CheckoutEnabled = brandFeesConfig.stripeOnrampV2Enabled;
+        brandFeesConfig.stripeOnrampEnabled = typeof ov?.stripeOnrampEnabled === "boolean" ? ov.stripeOnrampEnabled
+          : (typeof (fb as any)?.stripeOnrampEnabled === "boolean" ? (fb as any).stripeOnrampEnabled : undefined);
       } else {
         brandFeesConfig = { platformFeeBps: 50, partnerFeeBps: 0, creditPlatformFeeBps: 125 };
       }
@@ -196,14 +248,14 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
         }
 
 
-        return cfg;
+        return finalizeFlags(cfg);
       } else {
         // Merchant has customized their theme OR is on main platform - return AS-IS
         // Use saved brandKey if present, otherwise use containerBrandKey (no forced default)
         // This allows legacy merchants to have no brandKey so the correct config loads
         (cfg.theme as any).brandKey = savedBrandKey || containerBrandKey || "";
 
-        return cfg;
+        return finalizeFlags(cfg);
       }
     }
 
@@ -521,9 +573,15 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
           cfg.rampnowOnrampEnabled = fetchedBrand.rampnowOnrampEnabled ?? false;
 
           if (isPlatformBrand) {
-            cfg.achEnabled = cfg.achEnabled !== undefined ? !!cfg.achEnabled : true;
+            cfg.achEnabled = cfg.achEnabled !== undefined ? !!cfg.achEnabled : (fetchedBrand.achEnabled ?? true);
           } else {
             cfg.achEnabled = fetchedBrand.achEnabled ? (cfg.achEnabled !== undefined ? !!cfg.achEnabled : false) : false;
+          }
+          if (fetchedBrand.dualSplitEnabled !== undefined && cfg.dualSplitEnabled === undefined) {
+            cfg.dualSplitEnabled = fetchedBrand.dualSplitEnabled;
+          }
+          if (fetchedBrand.unifiedFeeEnabled !== undefined && cfg.unifiedFeeEnabled === undefined) {
+            cfg.unifiedFeeEnabled = fetchedBrand.unifiedFeeEnabled;
           }
         } else {
           cfg.achEnabled = isPlatformBrand ? (cfg.achEnabled !== undefined ? !!cfg.achEnabled : true) : false;
@@ -561,9 +619,9 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
       cfg.feeMinusEnabled = false;
     }
 
-    return cfg;
+    return finalizeFlags(cfg);
   } catch {
-    return cfg;
+    return finalizeFlags(cfg);
   }
 }
 
@@ -1058,11 +1116,11 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
     config.tipConfig = out;
   })();
 
-  config.feeMinusEnabled = typeof config.feeMinusEnabled === "boolean" ? config.feeMinusEnabled : false;
+  config.feeMinusEnabled = typeof config.feeMinusEnabled === "boolean" ? config.feeMinusEnabled : undefined;
   config.currencySelectionEnabled = typeof config.currencySelectionEnabled === "boolean" ? config.currencySelectionEnabled : true;
   config.discretePayWithCrypto = typeof config.discretePayWithCrypto === "boolean" ? config.discretePayWithCrypto : (typeof config.theme?.discretePayWithCrypto === "boolean" ? config.theme.discretePayWithCrypto : false);
   config.trackTransactionLimits = typeof config.trackTransactionLimits === "boolean" ? config.trackTransactionLimits : true;
-  config.achEnabled = typeof config.achEnabled === "boolean" ? config.achEnabled : false;
+  config.achEnabled = typeof config.achEnabled === "boolean" ? config.achEnabled : undefined;
 
   // Do not apply environment defaults; rely solely on live brand config or persisted config
   try { /* no-op */ } catch { }

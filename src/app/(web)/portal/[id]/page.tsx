@@ -1360,7 +1360,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         const ct = String(ci?.containerType || "").toLowerCase();
         const isPartner = ct === "partner";
 
-        if (bk && isPartner) {
+        if (bk) {
           const pj = await fetch(`/api/platform/brands/${encodeURIComponent(bk)}/config`, { cache: "no-store" }).then(r => r.json()).catch(() => ({} as any));
           const bc = (pj?.brand?.colors || {}) as any;
           const logos = (pj?.brand?.logos || {}) as any;
@@ -1380,17 +1380,19 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             const isGenericName = !rawBrandName || /^(ledger\d*|partner\d*|default|portalpay|basaltsurge)$/i.test(rawBrandName);
             const partnerName = isGenericName ? titleizedKey : rawBrandName;
 
-            console.log("[PORTAL] Partner brand fetched:", { bk, primary, accent, partnerName, logoApp, logoSymbol, logoFavicon });
-            setPartnerBrandColors({ primary, accent });
-            setPartnerLogoApp(logoApp);
-            setPartnerLogoSymbol(logoSymbol);
-            setPartnerLogoFavicon(logoFavicon);
-            setPartnerBrandName(partnerName);
-            setPartnerAchEnabled(pj?.brand?.achEnabled !== undefined ? !!pj?.brand?.achEnabled : false);
+            console.log("[PORTAL] Brand config fetched:", { bk, primary, accent, partnerName, isPartner });
+            if (isPartner) {
+              setPartnerBrandColors({ primary, accent });
+              setPartnerLogoApp(logoApp);
+              setPartnerLogoSymbol(logoSymbol);
+              setPartnerLogoFavicon(logoFavicon);
+              setPartnerBrandName(partnerName);
+            }
+            setPartnerAchEnabled(pj?.brand?.achEnabled !== undefined ? !!pj?.brand?.achEnabled : (!isPartner ? true : false));
             setPartnerStripeV2Enabled(!!(pj?.brand?.v2CheckoutEnabled ?? pj?.brand?.stripeOnrampV2Enabled ?? pj?.overrides?.v2CheckoutEnabled ?? pj?.overrides?.stripeOnrampV2Enabled));
 
-            // If no merchant theme is expected, apply partner colors and brand name
-            if (!hasMerchantForTheme && !forcePortalTheme) {
+            // If no merchant theme is expected, apply partner colors and brand name (partners only)
+            if (isPartner && !hasMerchantForTheme && !forcePortalTheme) {
               // Update theme state with partner brand name and logos
               setTheme((prev) => ({
                 ...prev,

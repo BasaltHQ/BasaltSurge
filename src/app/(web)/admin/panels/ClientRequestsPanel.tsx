@@ -505,6 +505,7 @@ export default function ClientRequestsPanel() {
     console.log("[ClientRequestsPanel] Render cycle. confirmState =", confirmState);
 
     const isPlatformContainer = process.env.NEXT_PUBLIC_CONTAINER_TYPE !== "partner" && (!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge");
+    const isDualSplitActive = serverIsDualSplit || !!(fetchedBrand as any)?.dualSplitEnabled || !!(brand as any)?.dualSplitEnabled;
     const [platformBps, setPlatformBps] = useState(125); // Default platform fee (will be dynamically overwritten by backend/effect)
     const [historyViewerId, setHistoryViewerId] = useState<string | null>(null);
     const [activeTabs, setActiveTabs] = useState<Record<string, string>>({});
@@ -522,7 +523,8 @@ export default function ClientRequestsPanel() {
                 const j = await r.json().catch(() => ({}));
                 const b = j?.brand as any;
 
-                if (serverIsDualSplit) {
+                const isDual = serverIsDualSplit || !!b?.dualSplitEnabled || !!(brand as any)?.dualSplitEnabled;
+                if (isDual) {
                     if (b && typeof b.creditPlatformFeeBps === "number") {
                         setPlatformBps(Math.max(0, Math.min(10000, b.creditPlatformFeeBps)));
                     } else if (typeof (brand as any)?.creditPlatformFeeBps === "number") {
@@ -549,7 +551,8 @@ export default function ClientRequestsPanel() {
                     setCreditPresentedFeeBps((brand as any)?.creditPresentedFeeBps);
                 }
             } catch {
-                if (serverIsDualSplit) {
+                const isDual = serverIsDualSplit || !!(fetchedBrand as any)?.dualSplitEnabled || !!(brand as any)?.dualSplitEnabled;
+                if (isDual) {
                     if (typeof (brand as any)?.creditPlatformFeeBps === "number") {
                         setPlatformBps((brand as any).creditPlatformFeeBps);
                     } else {
@@ -925,19 +928,21 @@ export default function ClientRequestsPanel() {
         const resolvedDebitAgents = existingDebitAgents.length > 0 ? existingDebitAgents 
                                      : (existingCreditAgents.length > 0 ? existingCreditAgents : baseAgents);
 
+        const isDualModal = isDualSplitActive || !!(targetBrand as any)?.dualSplitEnabled;
+
         // Initialize Credit Split States
         if (existingSplit) {
             setPartnerBps(existingSplit.partnerBps ?? (isPlatformContainer ? 0 : 50));
             if (existingSplit.platformBps !== undefined && isPlatformContainer) {
                 setPlatformBps(existingSplit.platformBps);
             } else {
-                const dbVal = (targetBrand as any)?.creditPlatformFeeBps !== undefined ? (targetBrand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
+                const dbVal = (targetBrand as any)?.creditPlatformFeeBps !== undefined ? (targetBrand as any).creditPlatformFeeBps : (isDualModal ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
                 setPlatformBps(dbVal);
             }
             setAgents(mergeAgents(resolvedCreditAgents, false));
         } else {
             setPartnerBps(isPlatformContainer ? 0 : 50); // Reset to default
-            const dbVal = (targetBrand as any)?.creditPlatformFeeBps !== undefined ? (targetBrand as any).creditPlatformFeeBps : (serverIsDualSplit ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
+            const dbVal = (targetBrand as any)?.creditPlatformFeeBps !== undefined ? (targetBrand as any).creditPlatformFeeBps : (isDualModal ? getCreditPlatformBps() : (isPlatformContainer ? getDebitPlatformBps() : 50));
             setPlatformBps(dbVal);
             setAgents(mergeAgents(resolvedCreditAgents, false));
             setLastVerifiedConfig(null); // No verified config for new splits
@@ -949,13 +954,13 @@ export default function ClientRequestsPanel() {
             if (existingSplitCredit.platformBps !== undefined && isPlatformContainer) {
                 setPlatformBpsDebit(existingSplitCredit.platformBps);
             } else {
-                const dbVal = (targetBrand as any)?.platformFeeBps !== undefined ? (targetBrand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
+                const dbVal = (targetBrand as any)?.platformFeeBps !== undefined ? (targetBrand as any).platformFeeBps : (isDualModal ? getDebitPlatformBps() : getCreditPlatformBps());
                 setPlatformBpsDebit(dbVal);
             }
             setAgentsDebit(mergeAgents(resolvedDebitAgents, true));
         } else {
             setPartnerBpsDebit(0);
-            const dbVal = (targetBrand as any)?.platformFeeBps !== undefined ? (targetBrand as any).platformFeeBps : (serverIsDualSplit ? getDebitPlatformBps() : getCreditPlatformBps());
+            const dbVal = (targetBrand as any)?.platformFeeBps !== undefined ? (targetBrand as any).platformFeeBps : (isDualModal ? getDebitPlatformBps() : getCreditPlatformBps());
             setPlatformBpsDebit(dbVal);
             setAgentsDebit(mergeAgents(resolvedDebitAgents, true));
         }
@@ -1046,12 +1051,13 @@ export default function ClientRequestsPanel() {
 
             if (creditVerified && creditConfig && creditConfig.recipients) {
                 let foundPartnerBps = 0;
+                let foundPlatformBps = platformBps;
                 const foundAgents: { wallet: string; bps: number }[] = [];
 
                 creditConfig.recipients.forEach(r => {
                     const w = r.address.toLowerCase();
                     if (w === platformW) {
-                        // Platform fee
+                        foundPlatformBps = r.bps;
                     } else if (w === merchantW) {
                         // Merchant share
                     } else if (w === partnerW && partnerW) {
@@ -1078,15 +1084,19 @@ export default function ClientRequestsPanel() {
 
                 setLastVerifiedConfig({ partnerBps: foundPartnerBps, agents: mergedAgents });
 
+                if (isPlatformContainer) {
+                    setPlatformBps(foundPlatformBps);
+                }
                 setPartnerBps(foundPartnerBps);
                 setAgents(mergedAgents);
+                const effectivePlat = isPlatformContainer ? foundPlatformBps : platformBps;
                 const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
-                const verifiedMerchantBps = 10000 - platformBps - foundPartnerBps - verifiedAgentsBps;
+                const verifiedMerchantBps = 10000 - effectivePlat - foundPartnerBps - verifiedAgentsBps;
                 nextConfig = {
                     ...nextConfig,
                     partnerBps: foundPartnerBps,
                     merchantBps: verifiedMerchantBps,
-                    platformBps: platformBps,
+                    platformBps: effectivePlat,
                     agents: mergedAgents
                 };
             } else {
@@ -1101,12 +1111,13 @@ export default function ClientRequestsPanel() {
 
             if (debitVerified && debitConfig && debitConfig.recipients) {
                 let foundPartnerBps = 0;
+                let foundPlatformBps = platformBpsDebit;
                 const foundAgents: { wallet: string; bps: number }[] = [];
 
                 debitConfig.recipients.forEach(r => {
                     const w = r.address.toLowerCase();
                     if (w === platformW) {
-                        // Platform fee
+                        foundPlatformBps = r.bps;
                     } else if (w === merchantW) {
                         // Merchant share
                     } else if (w === partnerW && partnerW) {
@@ -1133,14 +1144,18 @@ export default function ClientRequestsPanel() {
 
                 setLastVerifiedConfigDebit({ partnerBps: foundPartnerBps, agents: mergedAgents });
 
+                if (isPlatformContainer) {
+                    setPlatformBpsDebit(foundPlatformBps);
+                }
                 setPartnerBpsDebit(foundPartnerBps);
                 setAgentsDebit(mergedAgents);
+                const effectivePlatDebit = isPlatformContainer ? foundPlatformBps : platformBpsDebit;
                 const verifiedAgentsBps = mergedAgents.reduce((sum, a) => sum + (Number(a.bps) || 0), 0);
-                const verifiedMerchantBps = 10000 - platformBpsDebit - foundPartnerBps - verifiedAgentsBps;
+                const verifiedMerchantBps = 10000 - effectivePlatDebit - foundPartnerBps - verifiedAgentsBps;
                 nextConfig.splitConfigCredit = {
                     partnerBps: foundPartnerBps,
                     merchantBps: verifiedMerchantBps,
-                    platformBps: platformBpsDebit,
+                    platformBps: effectivePlatDebit,
                     agents: mergedAgents
                 };
             } else {
@@ -1186,7 +1201,7 @@ export default function ClientRequestsPanel() {
         setDeployResultDebit("");
 
         try {
-            const isDual = serverIsDualSplit;
+            const isDual = isDualSplitActive;
             const creditAddr = req.deployedSplitAddress || (req.splitHistory && req.splitHistory.length > 0 ? req.splitHistory.find(x => !x.isCredit)?.address : "");
             const debitAddr = req.deployedSplitAddressCredit || (req.splitHistory && req.splitHistory.length > 0 ? req.splitHistory.find(x => x.isCredit)?.address : "");
 
@@ -1232,7 +1247,7 @@ export default function ClientRequestsPanel() {
         } catch (e: any) {
             console.error(e);
             const errMsg = "Error: " + (e?.message || "Verification failed");
-            if (serverIsDualSplit) {
+            if (isDualSplitActive) {
                 setDeployResult(errMsg);
                 setDeployResultDebit(errMsg);
             } else if (isDebitTab) {
@@ -1265,7 +1280,7 @@ export default function ClientRequestsPanel() {
         };
         await updateStatus(req.id, req.status as any, { ...creditConfig, splitConfigCredit: debitConfig }, false);
 
-        const isDual = serverIsDualSplit;
+        const isDual = isDualSplitActive;
         const shouldDeployCredit = deployMode === "both" || (deployMode === "active" && !isDebitTab);
         const shouldDeployDebit = isDual && (deployMode === "both" || (deployMode === "active" && isDebitTab));
 
@@ -1762,7 +1777,7 @@ export default function ClientRequestsPanel() {
                                                                 <span>
                                                                     {req.splitConfig || req.splitConfigCredit ? (
                                                                         <span className="flex items-center gap-2">
-                                                                            {serverIsDualSplit ? (
+                                                                            {isDualSplitActive ? (
                                                                                 <>
                                                                                     <span className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/10 text-emerald-400 font-mono text-[10px] tracking-tight">
                                                                                         Cr: {(() => {
@@ -2004,8 +2019,20 @@ export default function ClientRequestsPanel() {
                                                                 merchantWallet={req.wallet}
                                                                 adminWallet={account?.address || ""}
                                                                 brandKey={brandKey}
-                                                                partnerFeeMinusEnabled={(!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : (fetchedBrand ? !!fetchedBrand.feeMinusEnabled : !!brand?.feeMinusEnabled)}
-                                                                partnerAchEnabled={(!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : (fetchedBrand ? !!fetchedBrand.achEnabled : !!brand?.achEnabled)}
+                                                                partnerFeeMinusEnabled={
+                                                                    (fetchedBrand && typeof fetchedBrand.feeMinusEnabled === "boolean")
+                                                                        ? fetchedBrand.feeMinusEnabled
+                                                                        : (typeof (brand as any)?.feeMinusEnabled === "boolean"
+                                                                            ? (brand as any).feeMinusEnabled
+                                                                            : ((!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : false))
+                                                                }
+                                                                partnerAchEnabled={
+                                                                    (fetchedBrand && typeof fetchedBrand.achEnabled === "boolean")
+                                                                        ? fetchedBrand.achEnabled
+                                                                        : (typeof (brand as any)?.achEnabled === "boolean"
+                                                                            ? (brand as any).achEnabled
+                                                                            : ((!brandKey || brandKey === "portalpay" || brandKey === "basaltsurge") ? true : false))
+                                                                }
                                                             />
                                                         ) : (activeTabs[req.id] === "themes") ? (
                                                             <TouchpointThemesTab
@@ -2153,7 +2180,7 @@ export default function ClientRequestsPanel() {
                                         </div>
                                     ) : (
                                         <div className="space-y-6">
-                                            {serverIsDualSplit && (
+                                            {isDualSplitActive && (
                                                 <div className="flex gap-2 p-1 rounded-xl bg-black/40 border border-white/5 w-fit">
                                                     <button
                                                         type="button"
@@ -3036,7 +3063,7 @@ export default function ClientRequestsPanel() {
                                                                 </div>
 
                                                                 {/* Deploy Both Splits Button */}
-                                                                {serverIsDualSplit && (
+                                                                {isDualSplitActive && (
                                                                     <button
                                                                         onClick={() => {
                                                                             setConfirmState({ type: "deploy", mode: "both" });

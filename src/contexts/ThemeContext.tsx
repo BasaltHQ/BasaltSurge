@@ -142,23 +142,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(true);
       try {
         const headers: Record<string, string> = {};
-        const recipientEnv = String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || "").toLowerCase();
-        // Prefer active wallet for personal whitelabel post-login
-        // For partner containers, fall back to RECIPIENT env to load default merchant theme
-        // For platform container, DO NOT fall back to RECIPIENT env so platform theme is used when logged out
-        let isPartner = false;
-        try {
-          const ct = typeof document !== "undefined"
-            ? (document.documentElement.getAttribute('data-pp-container-type') || '').toLowerCase()
-            : '';
-          isPartner = ct === 'partner';
-        } catch { }
-        if (!isPartner) {
-          try {
-            const bk = String((brand as any)?.key || '').toLowerCase();
-            isPartner = !!bk && bk !== 'portalpay' && bk !== 'basaltsurge';
-          } catch { }
-        }
         // Check URL for wallet/recipient param to override context
         let urlWallet = "";
         let isDevOrDocs = false;
@@ -169,7 +152,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           isDevOrDocs = path.startsWith("/developers") || path.startsWith("/docs");
         } catch { }
 
-        const useWallet = isDevOrDocs ? "" : (wallet || urlWallet || (isPartner ? recipientEnv : ''));
+        // Only load a shop theme for an active account or an explicit URL wallet.
+        // The container's payment recipient is not a visitor's merchant context:
+        // using it here replaces public partner branding with shop API defaults.
+        // Without a wallet, site/config resolves the host's partner brand, as ThemeLoader does.
+        const useWallet = isDevOrDocs ? "" : (wallet || urlWallet);
         if (useWallet) headers['x-wallet'] = useWallet;
         headers['x-theme-caller'] = 'ThemeContext:fetchTheme';
 
