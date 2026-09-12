@@ -396,6 +396,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           x.symbolLogoUrl = resolveBrandSymbol(x.symbolLogoUrl || x.brandLogoUrl || effectiveDefaultSymbol, brandKeyFinal);
           x.brandFaviconUrl = x.brandFaviconUrl || effectiveDefaultFavicon || theme.brandFaviconUrl;
 
+          // Match the initial symbol + name presentation when the API omits a mode.
+          // An absent field must not inherit defaultTheme's full-logo mode after fetching.
+          x.navbarMode = [x.navbarMode, x.logos?.navbarMode, brand.logos?.navbarMode]
+            .find(mode => mode === 'logo' || mode === 'symbol') || 'symbol';
 
           // Ensure favicon is sanitized against malicious URLs
           if (x.brandFaviconUrl) {
@@ -408,6 +412,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           if (x.logos) {
             x.logos.symbol = x.symbolLogoUrl;
             x.logos.app = x.brandLogoUrl;
+            x.logos.navbarMode = x.navbarMode;
           }
 
           // Clamp legacy teal defaults if they are still present
@@ -475,8 +480,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           brandLogoUrl: t.brandLogoUrl || effectiveFallbackLogo,
           symbolLogoUrl: t.symbolLogoUrl || effectiveFallbackSymbol,
           brandName: t.brandName || effectiveFallbackName,
-          // Preserve container-specifics if needed, or re-calculate?
-          // navbarMode and footerLogoUrl are in t or defaultTheme
         });
 
         if (typeof window !== 'undefined') {
