@@ -17,6 +17,8 @@ interface AccessPendingModalProps {
     hasPendingApplication?: boolean;
     wallet?: string;
     onCheckStatus?: () => Promise<void> | void;
+    statusError?: string;
+    isCheckingStatus?: boolean;
 }
 
 export function AccessPendingModal({
@@ -25,7 +27,9 @@ export function AccessPendingModal({
     onOpenApplication,
     hasPendingApplication = false,
     wallet: propWallet,
-    onCheckStatus
+    onCheckStatus,
+    statusError,
+    isCheckingStatus = false
 }: AccessPendingModalProps) {
     const brand = useBrand();
     const activeAccount = useActiveAccount();
@@ -78,7 +82,9 @@ export function AccessPendingModal({
                 >
                     <div className="flex flex-col items-center text-center">
                         <div className={`w-16 h-16 rounded-full ${hasPendingApplication ? 'bg-amber-500/10 border-amber-500/20' : 'bg-yellow-500/10 border-yellow-500/20'} border flex items-center justify-center mb-4`}>
-                            {hasPendingApplication ? (
+                            {statusError ? (
+                                <RefreshCw size={30} className="text-gray-300" aria-hidden="true" />
+                            ) : hasPendingApplication ? (
                                 <Hourglass size={30} className="text-amber-400" aria-hidden="true" />
                             ) : (
                                 <div className="relative w-8 h-8 opacity-80">
@@ -88,10 +94,10 @@ export function AccessPendingModal({
                         </div>
 
                         <h2 className="text-xl font-bold text-white mb-2">
-                            {hasPendingApplication ? "Application Pending" : "Access Restricted"}
+                            {statusError ? "Unable to check access" : hasPendingApplication ? "Application Pending" : "Access Restricted"}
                         </h2>
                         <p className="text-sm text-gray-400 mb-5">
-                            {hasPendingApplication ? (
+                            {statusError ? statusError : hasPendingApplication ? (
                                 <>
                                     Your application to join <span className="text-white font-medium">{brandName}</span> has been submitted and is currently under review.
                                     <br /><br />
@@ -107,7 +113,7 @@ export function AccessPendingModal({
                         </p>
 
                         {/* Team Member Bypass / Helper Accordion */}
-                        <div className="w-full mb-5 text-left">
+                        {!statusError && <div className="w-full mb-5 text-left">
                             <button
                                 type="button"
                                 onClick={() => setShowTeamHelper(!showTeamHelper)}
@@ -180,10 +186,16 @@ export function AccessPendingModal({
                                     </motion.div>
                                 )}
                             </AnimatePresence>
-                        </div>
+                        </div>}
 
                         <div className="flex flex-col gap-3 w-full">
-                            {!hasPendingApplication && (
+                            {statusError && onCheckStatus && (
+                                <button onClick={handleCheckStatus} disabled={isChecking || isCheckingStatus}
+                                    className={`${modalStyles.primary} w-full py-3 rounded-xl bg-white text-black font-semibold disabled:opacity-50`}>
+                                    {isChecking || isCheckingStatus ? "Checking access..." : "Try again"}
+                                </button>
+                            )}
+                            {!statusError && !hasPendingApplication && (
                                 <button
                                     onClick={onOpenApplication}
                                     className={`${modalStyles.primary} w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-95`}

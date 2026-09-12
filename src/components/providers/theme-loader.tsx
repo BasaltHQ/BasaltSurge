@@ -2,6 +2,7 @@
 
 import React, { useEffect } from "react";
 import { cachedFetch, cachedContainerIdentity, cachedBrandConfig } from "@/lib/client-api-cache";
+import { isMainDomainHost } from "@/lib/routing";
 
 type SiteTheme = {
   primaryColor?: string;
@@ -53,17 +54,9 @@ export function ThemeLoader() {
         return;
       }
 
-      // Detect custom domain shops - if hostname is not a main platform domain, skip ThemeLoader
+      // Detect custom domain shops - if hostname is not a main platform or partner domain, skip ThemeLoader
       const hostname = (url.hostname || "").toLowerCase();
-      const isMainDomain =
-        hostname.endsWith("ledger1.ai") ||
-        hostname.endsWith("portalpay.io") ||
-        hostname.endsWith("basalthq.com") ||
-        hostname.includes("localhost") ||
-        hostname === "127.0.0.1" ||
-        hostname === "0.0.0.0" ||
-        hostname.includes("azurewebsites.net") ||
-        hostname.includes("vercel.app");
+      const isMainDomain = isMainDomainHost(hostname);
 
       if (!isMainDomain && path === "/") {
         // Custom domain root - this is a shop page, let it handle its own theme/favicon
@@ -553,14 +546,7 @@ export function ThemeLoader() {
 
       // Detect custom domain shops
       const hostname = (url.hostname || "").toLowerCase();
-      const isMainDomain =
-        hostname.endsWith("ledger1.ai") ||
-        hostname.endsWith("portalpay.io") ||
-        hostname.includes("localhost") ||
-        hostname === "127.0.0.1" ||
-        hostname === "0.0.0.0" ||
-        hostname.includes("azurewebsites.net") ||
-        hostname.includes("vercel.app");
+      const isMainDomain = isMainDomainHost(hostname);
 
       if (!isMainDomain) {
         return; // Custom domain - shop page handles its own theme/favicon
@@ -699,14 +685,7 @@ export function ThemeLoader() {
 
       // Detect custom domain shops
       const hostname = (url.hostname || "").toLowerCase();
-      const isMainDomain =
-        hostname.endsWith("ledger1.ai") ||
-        hostname.endsWith("portalpay.io") ||
-        hostname.includes("localhost") ||
-        hostname === "127.0.0.1" ||
-        hostname === "0.0.0.0" ||
-        hostname.includes("azurewebsites.net") ||
-        hostname.includes("vercel.app");
+      const isMainDomain = isMainDomainHost(hostname);
 
       if (!isMainDomain) {
         return; // Custom domain - shop page handles its own theme/favicon

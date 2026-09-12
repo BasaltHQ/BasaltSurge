@@ -248,10 +248,26 @@ export async function GET(
       }
     }
 
+    // Stripe documents a CryptoCustomer 403 as an OAuth scope, Link-user,
+    // livemode, or feature-access failure. If refreshing did not resolve it,
+    // do not mislabel it as a processing lock and leave KYC polling spinning.
+    if (response.status === 403) {
+      return NextResponse.json({
+        ok: false,
+        error: "stripe_customer_reauthentication_required",
+        customerId: id,
+        reauthenticate: true,
+        ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
+      }, {
+        status: 403,
+        headers: { "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate" },
+      });
+    }
+
     // A transport/processing lock is not a KYC tier. Return a retryable status
     // instead of fabricating pending L0/L1/L2 rows that pollute initial-tier
     // tracking and route customers to the wrong form.
-    if (response.status === 403 || response.status === 409 || response.status === 429) {
+    if (response.status === 409 || response.status === 429) {
       console.log(`[CRYPTO CUSTOMER] Stripe transient processing lock (${response.status}), requesting retry...`);
       return NextResponse.json({
         ok: false,
@@ -290,6 +306,7 @@ export async function GET(
     const derivedIdDocStatus = idDocVerified?.status ?? (l2Tier?.verification_status ?? "not_started");
     const kycSnapshot = deriveStripeKycSnapshot(customer);
     let persistedTracking: any = null;
+    let trackingWarning: string | null = null;
 
     if (receiptId && merchantWallet) {
       try {
@@ -305,16 +322,15 @@ export async function GET(
       } catch (trackingError: any) {
         const code = String(trackingError?.message || "kyc_tracking_failed");
         console.error("[CRYPTO CUSTOMER] Provider KYC tracking failed:", code);
-        if (code.includes("mismatch")) {
-          return NextResponse.json({ ok: false, error: code }, { status: 409 });
-        }
-        if (code === "receipt_not_found") {
-          return NextResponse.json({ ok: false, error: code }, { status: 404 });
-        }
-        return NextResponse.json(
-          { ok: false, error: "kyc_tracking_unavailable" },
-          { status: 503, headers: { "Retry-After": "2" } }
-        );
+        // Stripe's CryptoCustomer is the authority for whether L0/L1/L2 is
+        // pending, verified, or rejected. Receipt analytics are best-effort:
+        // a missing/racing receipt must never hide an already-received Stripe
+        // result from the checkout poller and strand the customer in KYC.
+        trackingWarning = code.includes("mismatch")
+          ? "receipt_crypto_customer_mismatch"
+          : code === "receipt_not_found"
+            ? "receipt_not_found"
+            : "kyc_tracking_unavailable";
       }
     }
 
@@ -329,6 +345,7 @@ export async function GET(
       idDocStatus: derivedIdDocStatus,
       kycTiers: kycTiers,
       kycSnapshot,
+      ...(trackingWarning ? { trackingWarning } : {}),
       ...(persistedTracking ? {
         tracking: {
           initialLevel: persistedTracking.kycInitialLevel,

@@ -16,6 +16,8 @@ test("uses the documented Xoinpay webhook identifiers", () => {
 test("preserves known brand capitalization", () => {
   assert.equal(getWebhookBrandProtocol("basaltsurge").headerPrefix, "X-BasaltSurge");
   assert.equal(getWebhookBrandProtocol("paynex").userAgent, "Paynex-Webhook/1.0");
+  assert.equal(getWebhookBrandProtocol("data-opt").name, "Data-Opt");
+  assert.equal(getWebhookBrandProtocol("dataopt").name, "Data-Opt");
 });
 
 test("creates HTTP-safe identifiers for dynamic partner keys", () => {

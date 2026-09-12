@@ -238,6 +238,9 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
       if (state.hangCustomer) return new Promise((_, reject) => {
         options.signal.addEventListener('abort', () => reject(new Error('customer_request_aborted')), { once: true });
       });
+      if (state.customerStatus && state.customerStatus !== 200) {
+        return { ok: false, status: state.customerStatus, json: async () => ({ error: 'stripe_customer_reauthentication_required' }) };
+      }
       if (state.customerOutage) return { ok: false, status: 503, json: async () => ({}) };
       if (state.customerData) return jsonResponse(state.customerData);
       if (state.hangFinalKyc && String(url).includes("trackingPhase=final")) return new Promise(() => {});
@@ -886,6 +889,26 @@ test('L0 rejection followed by L1 approval advances to payment without repeating
   assert.equal(h.calls.kycSubmissions.length, 1);
   assert.equal(h.calls.verifyDocuments, 0);
   h.state.paymentCompletion({});
+});
+
+test('an L1 status authorization failure reauthenticates instead of polling as pending', async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usRejectedL0('not_started');
+  await h.render().startOnramp();
+  assert.equal(h.render().kycTierRequired, 'l1');
+
+  h.state.customerStatus = 403;
+  h.state.deferAuthentication = true;
+  await h.render().submitKycInfo({
+    date_of_birth: { year: 1990, month: 1, day: 1 },
+    id_number: { type: 'us_ssn', value: '000000000' },
+  });
+  await settleUntil(() => Boolean(h.state.authenticationCompletion));
+
+  assert.equal(h.render().step, 'authenticating');
+  assert.equal(h.calls.authenticate, 2);
+  assert.equal(h.calls.kycSubmissions.length, 1);
+  assert.notEqual(h.render().step, 'kyc_pending');
 });
 
 for (const sdkError of [

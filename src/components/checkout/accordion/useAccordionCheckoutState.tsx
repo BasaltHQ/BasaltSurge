@@ -977,7 +977,7 @@ export function useAccordionCheckoutState(
       setIsSubmittingIdentity(true);
       setLocalError(null);
       const res = await onVerifyDocuments();
-      if (res || res === undefined) {
+      if (res === true) {
         setDocVerificationSuccess(true);
         transitionToStep(3, "Document verification completed", isSimulationMode ? "simulation" : "submission");
       }

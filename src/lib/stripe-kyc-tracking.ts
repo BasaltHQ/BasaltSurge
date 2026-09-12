@@ -46,6 +46,12 @@ const ACTIVE_TIER_STATUSES = new Set<StripeKycVerificationStatus>([
   "rejected",
   "verified",
 ]);
+const MAX_VERIFICATION_ATTEMPT_ERRORS = new Set([
+  // Current Stripe Embedded Components documentation uses the singular form.
+  "user_has_reached_max_verification_attempt",
+  // Preserve compatibility with earlier preview responses/documentation.
+  "user_has_reached_max_verification_attempts",
+]);
 
 function normalizeStatus(value: unknown): StripeKycVerificationStatus {
   const normalized = String(value || "").trim().toLowerCase();
@@ -118,6 +124,12 @@ export function sanitizeKycTierSnapshots(value: unknown): StripeKycTierSnapshot[
   }
 
   return TIER_ORDER.map((tier) => byTier.get(tier)).filter(Boolean) as StripeKycTierSnapshot[];
+}
+
+export function hasReachedStripeKycVerificationAttemptLimit(errors: unknown): boolean {
+  return Array.isArray(errors) && errors.some((error) =>
+    MAX_VERIFICATION_ATTEMPT_ERRORS.has(String(error || "").trim().toLowerCase())
+  );
 }
 
 function verificationStatus(customer: any, name: string): StripeKycVerificationStatus {

@@ -47,6 +47,12 @@
   font-family: inherit;
 }
 
+:global(body.with-landing-navbar) .surface :global(.microtext):not(h2):not(h3) {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: .01em;
+}
+
 :global(body.with-landing-navbar) .surface :global(.text-muted-foreground) {
   color: #adb5bf;
 }

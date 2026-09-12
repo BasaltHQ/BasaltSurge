@@ -3,6 +3,7 @@ import { getAuthenticatedWallet, requireThirdwebAuth } from "@/lib/auth";
 import { getContainer } from "@/lib/cosmos";
 import { getBrandKey } from "@/config/brands";
 import { getMerchantBrandScope } from "@/lib/merchant-team-access";
+import { resolveAccessStatusWallet } from "@/lib/merchant-access-status";
 
 export const dynamic = "force-dynamic";
 
@@ -17,17 +18,9 @@ export async function GET(req: NextRequest) {
     }
 
     // Validate auth via cookie/JWT
-    let wallet = await getAuthenticatedWallet(req);
-    let sessionAuthed = !!wallet;
-
-    if (!wallet) {
-      // Check for x-wallet header (Public status check for onboarding)
-      // Allow any reasonable variation of a wallet address to avoid blocking status checks (strict auth happens later)
-      const headerWallet = (req.headers.get("x-wallet") || "").trim();
-      if (headerWallet && headerWallet.length >= 40) {
-        wallet = headerWallet.toLowerCase();
-      }
-    }
+    let { wallet, sessionAuthed } = resolveAccessStatusWallet(
+      await getAuthenticatedWallet(req), req.headers.get("x-wallet")
+    );
 
     if (!wallet) {
       // Only 401 if we truly cannot identify the user at all
@@ -43,7 +36,8 @@ export async function GET(req: NextRequest) {
     // Try to enrich with roles (non-fatal if unavailable)
     let roles: string[] = [];
     try {
-      const authz = await requireThirdwebAuth(req);
+      // Never attach another wallet's session roles to a public status lookup.
+      const authz = sessionAuthed ? await requireThirdwebAuth(req) : null;
       if (authz && Array.isArray(authz.roles)) {
         roles = authz.roles;
       }
@@ -68,15 +62,30 @@ export async function GET(req: NextRequest) {
 
     try {
       const brandKey = getBrandKey(req);
-      const container = await getContainer();
+      const altBrandKey = brandKey === "data-opt" ? "dataopt" : (brandKey === "dataopt" ? "data-opt" : (brandKey === "portalpay" ? "basaltsurge" : (brandKey === "basaltsurge" ? "portalpay" : "")));
+      const container = await getContainer(undefined, undefined, { profile: "critical" });
 
       // AUTHORITATIVE: Check client_request status FIRST
-      // This is the source of truth for approval/pending/blocked/rejected status
-      const clientRequestQuery = "SELECT top 1 c.status FROM c WHERE c.type = 'client_request' AND c.wallet = @w AND c.brandKey = @b";
-      console.log("[AuthMe] Checking Access:", { wallet, brandKey, isPlatformAdmin });
+      // This is the source of truth for approval/pending/blocked/rejected status.
+      // Use StringEquals for case-insensitive matching on both wallet and brandKey, and check alias if present.
+      const brandClause = altBrandKey
+        ? "(c.brandKey = @b OR StringEquals(c.brandKey, @b, true) OR c.brandKey = @altB OR StringEquals(c.brandKey, @altB, true))"
+        : "(c.brandKey = @b OR StringEquals(c.brandKey, @b, true))";
+
+      const clientRequestQuery = `SELECT top 1 c.status FROM c WHERE c.type = 'client_request' AND (c.wallet = @w OR StringEquals(c.wallet, @w, true)) AND ${brandClause}`;
+
+      const queryParams: any[] = [
+        { name: "@w", value: wallet.toLowerCase() },
+        { name: "@b", value: brandKey }
+      ];
+      if (altBrandKey) {
+        queryParams.push({ name: "@altB", value: altBrandKey });
+      }
+
+      console.log("[AuthMe] Checking Access:", { wallet, brandKey, altBrandKey, isPlatformAdmin });
       const { resources: clientRequestResources } = await container.items.query({
         query: clientRequestQuery,
-        parameters: [{ name: "@w", value: wallet.toLowerCase() }, { name: "@b", value: brandKey }]
+        parameters: queryParams
       }).fetchAll();
       console.log("[AuthMe] ClientRequest Result:", clientRequestResources);
 
@@ -91,6 +100,31 @@ export async function GET(req: NextRequest) {
           blocked = true;
         } else if (requestStatus === "rejected") {
           shopStatus = "rejected";
+        }
+      }
+
+      // CONFIG FALLBACK: If client_request not found or returned none, check if an approved
+      // shop_config or site_config exists for this merchant on this brand.
+      if (shopStatus === "none" && !blocked) {
+        const configQuery = `SELECT top 1 c.id, c.status FROM c WHERE (c.type = 'shop_config' OR c.type = 'site_config') AND (c.wallet = @w OR StringEquals(c.wallet, @w, true)) AND ${brandClause}`;
+        const { resources: configResources } = await container.items.query({
+          query: configQuery,
+          parameters: queryParams
+        }).fetchAll();
+        console.log("[AuthMe] Config Fallback Result:", configResources);
+
+        if (configResources.length > 0) {
+          const cfg = configResources[0];
+          if (cfg.status === "approved" || !cfg.status) {
+            shopStatus = "approved";
+            hasOwnShop = true;
+          } else if (cfg.status === "pending") {
+            shopStatus = "pending";
+          } else if (cfg.status === "blocked") {
+            blocked = true;
+          } else if (cfg.status === "rejected") {
+            shopStatus = "rejected";
+          }
         }
       }
 
@@ -163,7 +197,10 @@ export async function GET(req: NextRequest) {
         }
       }
     } catch (e) {
-      // ignore, default to none or admin state
+      console.error("[AuthMe] Access status lookup failed:", e);
+      // Unknown is not unapproved. Let clients offer a retry without asking
+      // existing merchants to submit duplicate applications during an outage.
+      return NextResponse.json({ authed: sessionAuthed, wallet, error: "access_status_unavailable" }, { status: 503 });
     }
 
     // Platform Admin Bypass: If they are a platform admin, they should never be blocked

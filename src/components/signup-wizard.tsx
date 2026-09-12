@@ -12,6 +12,7 @@ import { useActiveAccount } from "thirdweb/react";
 import { client, chain, getWallets, getPrivateWallets } from "@/lib/thirdweb/client";
 import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
 import { useBrand } from "@/contexts/BrandContext";
+import { ACCESS_STATUS_ERROR, fetchMerchantAccessStatus } from "@/lib/merchant-access-status";
 import ImageUploadField from "./forms/ImageUploadField";
 import { Eye, EyeOff, ChevronDown, Copy, Check, Users, RefreshCw, Key, Zap, LockKeyhole, Gem, CreditCard, ScrollText, Wallet, Ban, Hourglass, PartyPopper } from "lucide-react";
 
@@ -264,6 +265,8 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
     const [showTeamHelper, setShowTeamHelper] = useState(false);
     const [walletCopied, setWalletCopied] = useState(false);
     const [isCheckingTeam, setIsCheckingTeam] = useState(false);
+    const [accessStatusError, setAccessStatusError] = useState("");
+    const [checkingAccess, setCheckingAccess] = useState(false);
 
     // Referral State
     const [referralAgent, setReferralAgent] = useState("");
@@ -389,6 +392,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
             // Do not reset application status if we are already dealing with a connected wallet in this session
             // forcing re-check will be handled by handleWalletConnected
             setApplicationStatus("none");
+            setAccessStatusError("");
 
             // Extract referral parameters
             if (typeof window !== "undefined") {
@@ -416,23 +420,21 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
     // Handle Wallet Connection in Private Mode
     async function handleWalletConnected(wallet: string) {
         setConnectedWallet(wallet);
+        setAccessStatusError("");
+        setCheckingAccess(true);
 
         // All merchants must go through the application and approval process
         try {
             // Check if user is already approved or blocked
-            const res = await fetch("/api/auth/me", {
-                cache: "no-store",
-                headers: { "x-wallet": wallet } // Send wallet for public status check
-            });
-            const me = await res.json().catch(() => ({}));
+            const me = await fetchMerchantAccessStatus(wallet, brand?.key || "");
 
             // If already approved, allow login (skip application)
             // Note: me.approved is legacy, me.shopStatus is current
-            if (me?.authed || me?.approved || me?.shopStatus === "approved" || me?.isTeamMember) {
-                onComplete();
-            } else if (me?.blocked) {
+            if (me?.blocked) {
                 // User is blocked - show blocked alert
                 setApplicationStatus("blocked");
+            } else if (me?.approved || me?.shopStatus === "approved" || me?.isTeamMember || me?.isPlatformAdmin) {
+                onComplete();
             } else if (me?.shopStatus === "pending") {
                 // Application already submitted, awaiting approval
                 setApplicationStatus("awaiting_approval");
@@ -442,8 +444,10 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                 setApplicationStatus("pending");
             }
         } catch {
-            // Fallback: Assume not approved
-            setApplicationStatus("pending");
+            setApplicationStatus("none");
+            setAccessStatusError(ACCESS_STATUS_ERROR);
+        } finally {
+            setCheckingAccess(false);
         }
     }
 
@@ -1338,12 +1342,14 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             </div>
 
                                             <div className="pt-2">
+                                                {accessStatusError && <p role="alert" className="mb-3 text-sm text-amber-300">{accessStatusError}</p>}
                                                 {account?.address ? (
                                                     <button
                                                         onClick={() => handleWalletConnected(account.address)}
+                                                        disabled={checkingAccess}
                                                         className={`${modalStyles.primary} w-full py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-black font-bold shadow-lg shadow-emerald-500/20 transition-all active:scale-95 text-xs font-mono uppercase tracking-wider`}
                                                     >
-                                                        {isPrivate ? "Continue to Application" : "Get Started"}
+                                                        {checkingAccess ? "Checking access..." : accessStatusError ? "Try again" : isPrivate ? "Continue to Application" : "Get Started"}
                                                     </button>
                                                 ) : wallets.length > 0 ? (
                                                     <ConnectButton
