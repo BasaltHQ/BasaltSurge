@@ -35,7 +35,7 @@ export function onrampRecovery(error: unknown, message = ""): OnrampRecovery {
   const detail = normalized.message.toLowerCase();
   if (["session_verification_unavailable", "receipt_session_superseded", "stripe_session_receipt_attachment_failed",
     "checkout_not_submitted", "stripe_not_configured", "missing_oauth_token", "customer_ip_unavailable",
-    "attestation_unavailable", "verification_recovery_exhausted"].includes(code)) return "stop";
+    "attestation_unavailable", "verification_recovery_exhausted", "kyc_verification_attempts_exhausted"].includes(code)) return "stop";
   if (["card_declined", "payment_method_authentication_failed", "bank_institution_block", "invalid_payment_method",
     "insufficient_funds", "expired_card", "incorrect_cvc"].includes(code)) return "payment_method";
   if (code === "missing_minimum_identity_verification" || code === "unsupported_region") return "kyc_l0";

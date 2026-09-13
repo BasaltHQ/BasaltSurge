@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getPublicClientIp } from "@/lib/request-client-ip";
 import { getContainer } from "@/lib/cosmos";
 import { assertStripeReceiptUnpaid, assertStripeSessionRecoveryAllowed, readStripeReceiptForPayment, claimStripeReceiptCheckout, finishStripeReceiptCheckout } from "@/lib/stripe-receipt-session";
+import { onrampErrorDetails } from "@/lib/stripe-onramp-errors";
+import { maskSensitiveData } from "@/lib/sanitize-logs";
 import { isStripePaymentAcceptedStatus } from "@/lib/stripe-onramp-status";
 import { randomUUID } from "node:crypto";
 
@@ -177,9 +179,12 @@ export async function POST(
     // Stripe can return a payment-method failure in a successful HTTP response.
     // Preserve that server evidence even if a later session GET clears it.
     definitiveDecline = data.error || data.transaction_details?.last_error;
+    const providerErrorDetails = onrampErrorDetails(definitiveDecline);
     diagnostic = { requestId: response.headers.get("request-id"), httpStatus: response.status,
-      code: data.error?.code || data.transaction_details?.last_error?.code ||
-        (typeof data.transaction_details?.last_error === "string" ? data.transaction_details.last_error : null),
+      code: providerErrorDetails.code || null,
+      message: providerErrorDetails.message
+        ? String(maskSensitiveData(providerErrorDetails.message)).slice(0, 500)
+        : null,
       declineCode: data.error?.decline_code || data.transaction_details?.last_error?.decline_code || null,
       sessionId, at: Date.now() };
     // 200 or 202 are both valid responses — check for last_error
