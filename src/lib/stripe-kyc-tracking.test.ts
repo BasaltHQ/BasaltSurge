@@ -13,6 +13,7 @@ const {
   normalizeMicaIdentifier,
   validateMicaIdentifier,
   isStripeKycTierSatisfied,
+  isStripeDocumentReviewPending,
   resolveUsStripeKycRecovery,
 } = kycTracking;
 
@@ -51,7 +52,29 @@ test("L2 challenges preserve US prerequisites and require documents when explici
   const complete = usTiers("rejected", "verified", "verified");
   assert.deepEqual(resolveUsStripeKycRecovery(complete, "l2"), {kind: "ready"});
   assert.deepEqual(resolveUsStripeKycRecovery(complete, "l2", true), {kind: "collect", tier: "l2"});
-  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("verified", "verified", "rejected")), {kind: "collect", tier: "l2"});
+  assert.deepEqual(resolveUsStripeKycRecovery(usTiers("verified", "verified", "rejected"), "l2"), {kind: "collect", tier: "l2"});
+});
+
+test("failed US L2 retains L1 eligibility without satisfying a purchase's L2 challenge", () => {
+  const snapshot = usTiers("verified", "verified", "rejected");
+  assert.deepEqual(resolveUsStripeKycRecovery(snapshot), { kind: "ready" });
+  assert.deepEqual(resolveUsStripeKycRecovery(snapshot, "l1"), { kind: "ready" });
+  assert.deepEqual(resolveUsStripeKycRecovery(snapshot, undefined, true), { kind: "collect", tier: "l2" });
+  assert.equal(isStripeKycTierSatisfied(snapshot, "l1"), true);
+  assert.equal(isStripeKycTierSatisfied(snapshot, "l2"), false);
+  assert.equal(snapshot.currentStatus, "rejected");
+  assert.equal(isStripeKycTierSatisfied({ ...snapshot, region: "eu" }, "l1"), false);
+  assert.equal(isStripeKycTierSatisfied(usTiers("verified", "rejected", "rejected"), "l0"), false);
+});
+
+test("EU L2 pending needs document submission evidence, not just basic KYC or MiCA fields", () => {
+  const snapshot = deriveStripeKycSnapshot({ kyc_region: "eu", provided_fields: ["identifiers", "attestation"],
+    kyc_tiers: [{ tier: "l2", verification_status: "pending" }] });
+  assert.equal(isStripeDocumentReviewPending(snapshot), false);
+  assert.equal(isStripeDocumentReviewPending(snapshot, true), true);
+  assert.equal(isStripeDocumentReviewPending({ ...snapshot, providedFields: ["id_document"] }), false);
+  assert.equal(isStripeDocumentReviewPending({ ...snapshot, providedFields: ["id_document", "selfie"] }), true);
+  assert.equal(isStripeDocumentReviewPending({ ...snapshot, tiers: [{ tier: "l2", verification_status: "rejected", verification_errors: [] }] }, true), false);
 });
 
 test("derives current attempted tier separately from highest verified tier", () => {

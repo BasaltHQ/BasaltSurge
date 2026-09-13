@@ -36,6 +36,12 @@ test("terminal errors and unknown provider codes cannot expose a restart action"
   assert.equal(isTerminalOnrampError({ code: "crypto_onramp_verification_error", message: "We couldn't verify your identity. Contact support." }), true);
 });
 
+test("exhausted KYC attempts cannot expose an unchanged checkout restart", () => {
+  const policy = resolveOnrampError({ code: "kyc_verification_attempts_exhausted", message: "Contact Stripe support." });
+  assert.equal(policy.action, "stop");
+  assert.equal(policy.canRestart, false);
+});
+
 test("diagnostics normalize actual provider request IDs without retaining secret fields", () => {
   assert.deepEqual(onrampErrorDetails({ error: { code: "card_declined", message: "Declined" }, requestId: "req_123", client_secret: "secret", oauthToken: "token" }), { code: "card_declined", message: "Declined", requestId: "req_123" });
   assert.equal(onrampErrorDetails({ code: "card_declined", requestId: "not-a-request-id" }).requestId, undefined);

@@ -226,11 +226,17 @@ export function deriveKycCompletedDuringTransaction(
 }
 
 /** A higher verified US tier supersedes historical lower-tier rejection.
- * Pending verification and a rejected current tier still block progression.
+ * Pending verification and failed L1 block progression; failed L2 can retain
+ * verified L1 eligibility when the purchase does not require L2.
  * Keep raw tier statuses intact for diagnostics and Stripe's next requirements.
  */
 export function isStripeKycTierSatisfied(snapshot: StripeKycSnapshot, tier: StripeKycTierLower): boolean {
-  return snapshot.currentStatus === "verified"
+  // A failed US L2 upgrade does not revoke a verified L1. The purchase must
+  // still enforce its own tier requirement and Stripe's current limits.
+  const l1AfterL2Failure = snapshot.region !== "eu" && tier !== "l2"
+    && snapshot.currentTier === "L2" && snapshot.currentStatus === "rejected"
+    && snapshot.tiers.some(entry => entry.tier === "l1" && entry.verification_status === "verified");
+  return (snapshot.currentStatus === "verified" || l1AfterL2Failure)
     && !snapshot.tiers.some(entry => entry.verification_status === "pending")
     && kycTierRank(snapshot.verifiedTier) >= kycTierRank(tier);
 }
@@ -251,6 +257,8 @@ export function resolveUsStripeKycRecovery(
   if (pending) return { kind: "pending", tier: pending.tier };
   const current = normalizeKycTierLower(snapshot.currentTier);
   if (snapshot.currentStatus === "rejected" && current) {
+    if (current === "l2" && requestedTier !== "l2" && !forceDocuments
+      && isStripeKycTierSatisfied(snapshot, "l1")) return { kind: "ready" };
     return { kind: "collect", tier: current === "l0" ? "l1" : current };
   }
   if (requestedTier === "l2") {
@@ -262,6 +270,12 @@ export function resolveUsStripeKycRecovery(
   if (requestedTier) return { kind: "collect", tier: requestedTier };
   if (snapshot.tiers.length && !snapshot.verifiedTier) return { kind: "collect", tier: "l0" };
   return { kind: "unavailable" };
+}
+
+/** EU L2 becomes pending after basic KYC, before the document flow starts. */
+export function isStripeDocumentReviewPending(snapshot: StripeKycSnapshot, documentFlowSubmitted = false): boolean {
+  return snapshot.tiers.some(tier => tier.tier === "l2" && tier.verification_status === "pending")
+    && (documentFlowSubmitted || (snapshot.providedFields.includes("id_document") && snapshot.providedFields.includes("selfie")));
 }
 
 export function normalizeMicaIdentifier(type: string, value: string): string {

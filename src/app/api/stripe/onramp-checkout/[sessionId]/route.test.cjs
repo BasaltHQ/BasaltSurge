@@ -185,6 +185,7 @@ for (const status of [200, 202, 402]) {
     assert.equal(h.receipt.stripeCheckoutRequestId, null);
     assert.equal(h.receipt.stripeCheckoutDeclineCode, 'payment_method_authentication_failed');
     assert.equal(h.receipt.stripeCheckoutDiagnostic.requestId, 'req_provider_test');
+    assert.equal(h.receipt.stripeCheckoutDiagnostic.message, 'Authentication failed');
     assert.equal(JSON.stringify(h.receipt).includes('cos_mock_secret_test'), false);
   });
 }

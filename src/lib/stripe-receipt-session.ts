@@ -245,7 +245,7 @@ export async function claimStripeReceiptCheckout(container: any, receipt: any, s
 
 /** Clear only a completed HTTP call; keep the session reserved through 3DS. */
 export async function finishStripeReceiptCheckout(container: any, receipt: any, requestId: string, decline?: unknown,
-  diagnostic?: { requestId: string | null; httpStatus: number; code: string | null; declineCode: string | null; sessionId: string; at: number }): Promise<void> {
+  diagnostic?: { requestId: string | null; httpStatus: number; code: string | null; message: string | null; declineCode: string | null; sessionId: string; at: number }): Promise<void> {
   const item = container.item(receipt.id, receipt.wallet);
   for (let attempt = 0; attempt < 3; attempt++) {
     const { resource: current } = await item.read();

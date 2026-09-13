@@ -90,6 +90,7 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
   const state = { kycVerified: false, paymentCompletion: null, sessionFailure: null, walletVerified: false };
   const timers = new Map();
   const listeners = new Map();
+  const documentListeners = new Map();
   let timerId = 0;
   let sdkAuthenticated = false;
   const localStorage = storage || createStorage({
@@ -116,12 +117,23 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
       calls.verifyDocuments++;
       state.onDocuments?.();
       state.kycVerified = true;
-      return { result: "success" };
+      return { result: state.documentResult || "success" };
+    },
+    getMissingIdentifiers: async () => {
+      (calls.euOrder ??= []).push('discover');
+      return state.missingIdentifiers || { identifiers: [], alternatives: [] };
+    },
+    updateKycInfo: async identifiers => {
+      (calls.euOrder ??= []).push('identifiers');
+      (calls.identifiers ??= []).push(JSON.parse(JSON.stringify(identifiers)));
+      state.onIdentifiers?.();
+      return state.identifierResult || { completed: true, identifiers: [], alternatives: [] };
     },
     submitKycInfo: async payload => {
       calls.kycSubmissions ??= [];
       calls.kycSubmissions.push(JSON.parse(JSON.stringify(payload)));
       state.onKycSubmission?.();
+      if (state.hangKycSubmission) return new Promise(() => {});
     },
     registerWalletAddress: async (walletAddress, network) => {
       calls.walletRegistrations = (calls.walletRegistrations || 0) + 1;
@@ -129,6 +141,7 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
       return { id: "ccw_test", wallet_address: walletAddress, network };
     },
     promptUserAttestation: async (regulation, complete) => {
+      (calls.euOrder ??= []).push('attestation');
       assert.equal(regulation, 'eu_carf');
       calls.attestations = (calls.attestations || 0) + 1;
       state.attestationComplete = complete;
@@ -235,6 +248,7 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
       return jsonResponse({ ok: true, stripeStatus: state.backgroundStatus || "fulfillment_processing" });
     }
     if (pathname === `/api/stripe/crypto-customer/${customerId}`) {
+      if (state.deferCustomer) return new Promise(resolve => { state.resolveCustomer = value => resolve(jsonResponse(value)); });
       if (state.hangCustomer) return new Promise((_, reject) => {
         options.signal.addEventListener('abort', () => reject(new Error('customer_request_aborted')), { once: true });
       });
@@ -242,6 +256,9 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
         return { ok: false, status: state.customerStatus, json: async () => ({ error: 'stripe_customer_reauthentication_required' }) };
       }
       if (state.customerOutage) return { ok: false, status: 503, json: async () => ({}) };
+      if (state.hangCustomerBody) return { ok: true, status: 200, json: () => new Promise((_, reject) => {
+        options.signal.addEventListener('abort', () => reject(new Error('customer_body_aborted')), { once: true });
+      }) };
       if (state.customerData) return jsonResponse(state.customerData);
       if (state.hangFinalKyc && String(url).includes("trackingPhase=final")) return new Promise(() => {});
       const verificationStatus = state.kycStatusOverride || (state.kycVerified ? "verified" : "not_started");
@@ -261,7 +278,7 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
           verifiedTier: verificationStatus === "verified" ? "L2" : null,
           region: "eu",
           tiers,
-          providedFields: [],
+          providedFields: ['identifiers', 'attestation', ...(state.documentsSubmitted ? ['id_document', 'selfie'] : [])],
           identifiersSatisfied: true,
           attestationAccepted: true,
           euFullyVerified: verificationStatus === "verified",
@@ -279,10 +296,15 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
       addEventListener(name, listener) { listeners.set(name, listener); },
       removeEventListener(name) { listeners.delete(name); },
       location: { search: "", host: "checkout.example.test" },
-      navigator: { userAgent: "node-test" },
+      navigator: { userAgent: "node-test", onLine: true },
       document: { cookie: "pp_sandbox_split_mode=single" },
     },
-    document: { documentElement: { getAttribute: () => null } },
+    document: {
+      documentElement: { getAttribute: () => null },
+      visibilityState: "visible",
+      addEventListener(name, listener) { documentListeners.set(name, listener); },
+      removeEventListener(name) { documentListeners.delete(name); },
+    },
     HTMLElement: Element,
     console: { log() {}, warn() {}, error() {} },
     Promise,
@@ -355,6 +377,13 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
     calls, state, env, localStorage, paymentElement,
     setCookie: value => { context.window.document.cookie = value; },
     hasTimer: delay => [...timers.values()].some(timer => timer.delay === delay),
+    emitWindow: name => listeners.get(name)?.(),
+    setOnline: value => { context.window.navigator.onLine = value; },
+    setVisibility: value => {
+      context.document.visibilityState = value;
+      documentListeners.get("visibilitychange")?.();
+    },
+    hasRecoveryListeners: () => listeners.has("focus") || listeners.has("online") || documentListeners.has("visibilitychange"),
     rejectGlobally(reason) {
       let prevented = false;
       listeners.get("unhandledrejection")?.({ reason, preventDefault() { prevented = true; } });
@@ -723,6 +752,23 @@ function usCustomer(l1 = 'not_started', l2 = 'not_started') {
       verifiedTier, tiers, providedFields: [], identifiersSatisfied: true, attestationAccepted: false, euFullyVerified: false } };
 }
 
+function euCustomer(status = 'pending', fields = []) {
+  const tiers = ['l0', 'l1', 'l2'].map(tier => ({ tier, verification_status: tier === 'l2' ? status : 'not_available', verification_errors: [] }));
+  const identifiersSatisfied = fields.includes('identifiers');
+  const attestationAccepted = fields.includes('attestation');
+  return { kycRegion: 'eu', kycStatus: status, idDocStatus: status, kycTiers: tiers,
+    kycSnapshot: { region: 'eu', currentTier: 'L2', currentStatus: status, verifiedTier: status === 'verified' ? 'L2' : null,
+      tiers, providedFields: fields, identifiersSatisfied, attestationAccepted,
+      euFullyVerified: status === 'verified' && identifiersSatisfied && attestationAccepted } };
+}
+
+function usUnverifiedCustomer() {
+  const tiers = ['l0', 'l1', 'l2'].map(tier => ({ tier, verification_status: 'not_started', verification_errors: [] }));
+  return { kycRegion: 'us', kycStatus: 'not_started', idDocStatus: 'not_started', kycTiers: tiers,
+    kycSnapshot: { region: 'us', currentTier: null, currentStatus: 'not_started', verifiedTier: null,
+      tiers, providedFields: [], identifiersSatisfied: true, attestationAccepted: false, euFullyVerified: false } };
+}
+
 function usRejectedL0(l1 = 'verified', l2 = 'not_started') {
   const customer = usCustomer(l1, l2);
   customer.kycTiers[0].verification_status = 'rejected';
@@ -881,14 +927,61 @@ test('L0 rejection followed by L1 approval advances to payment without repeating
   await h.render().startOnramp();
   assert.equal(h.render().kycTierRequired, 'l1');
   h.state.onKycSubmission = () => { h.state.customerData = usRejectedL0(); };
-  await h.render().submitKycInfo({date_of_birth: {year: 1990, month: 1, day: 1}, id_number: {type: 'us_ssn', value: '000000000'}});
+  await h.render().submitKycInfo({date_of_birth: {year: 1990, month: 1, day: 1}, id_number: {value: '000-00-0000'}});
   h.runResumeTimer();
   await settleUntil(() => h.calls.paymentOptions.length === 1);
   assert.equal(h.render().step, 'collecting_payment');
   assert.equal(h.render().kycLevel, 'L1');
   assert.equal(h.calls.kycSubmissions.length, 1);
+  assert.deepEqual(h.calls.kycSubmissions[0].id_number, { type: 'us_ssn', value: '000000000' });
   assert.equal(h.calls.verifyDocuments, 0);
   h.state.paymentCompletion({});
+});
+
+test('direct US L1 is blocked at the SDK boundary without full L0 data and normalizes SSN type when complete', async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usUnverifiedCustomer();
+  await h.render().startOnramp();
+
+  await h.render().submitKycInfo({
+    date_of_birth: { year: 1990, month: 1, day: 1 },
+    id_number: { value: '123-45-6789' },
+  });
+  assert.equal(h.calls.kycSubmissions?.length || 0, 0);
+  assert.match(h.render().error, /verify your home address/i);
+
+  h.state.onKycSubmission = () => { h.state.customerData = usCustomer('verified'); };
+  await h.render().submitKycInfo({
+    given_name: 'New', surname: 'Buyer',
+    address: { line1: '123 Main St', city: 'Denver', state: 'CO', postal_code: '80202', country: 'US' },
+    date_of_birth: { year: 1990, month: 1, day: 1 },
+    id_number: { type: 'incorrect_type', value: '123-45-6789' },
+  });
+  assert.equal(h.calls.kycSubmissions.length, 1);
+  assert.deepEqual(h.calls.kycSubmissions[0].id_number, { type: 'us_ssn', value: '123456789' });
+  assert.equal(h.calls.kycSubmissions[0].given_name, 'New');
+  assert.equal(h.calls.kycSubmissions[0].address.country, 'US');
+});
+
+test('lost US KYC submission acknowledgement reconciles the customer tier without resubmitting identity data', async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usRejectedL0('not_started');
+  await h.render().startOnramp();
+  h.state.hangKycSubmission = true;
+  h.state.onKycSubmission = () => { h.state.customerData = usRejectedL0('verified'); };
+
+  const submission = h.render().submitKycInfo({
+    date_of_birth: { year: 1990, month: 1, day: 1 },
+    id_number: { type: 'us_ssn', value: '123456789' },
+  });
+  await h.runTimer(45000);
+  await submission;
+
+  const hook = h.render();
+  assert.equal(h.calls.kycSubmissions.length, 1, 'an uncertain acknowledgement must never resubmit SSN/DOB');
+  assert.equal(hook.kycLevel, 'L1');
+  assert.equal(hook.error, null);
+  assert.equal(hook.step, 'checking_kyc');
 });
 
 test('an L1 status authorization failure reauthenticates instead of polling as pending', async t => {
@@ -971,6 +1064,7 @@ test('pending L1 after failed L0 resumes the original checkout when L1 is verifi
   h.state.walletVerified = true;
   h.state.customerData = usRejectedL0();
   await h.runTimer(2000);
+  await h.runTimer(3000);
   assert.equal((await flow).step, 'completed');
   assert.equal(h.calls.verifyDocuments, 0);
   assert.equal(h.calls.paymentOptions.length, 1);
@@ -1047,6 +1141,7 @@ for (const [required, l1, l2, step, tier] of [
   ['L1', 'not_started', 'not_started', 'collecting_kyc', 'l1'],
   ['L2', 'not_started', 'not_started', 'collecting_kyc', 'l1'],
   ['L2', 'verified', 'not_started', 'collecting_kyc', 'l2'],
+  ['L2', 'verified', 'rejected', 'collecting_kyc', 'l2'],
   ['L2', 'pending', 'not_started', 'kyc_pending', 'l1'],
   ['L2', 'verified', 'pending', 'kyc_pending', 'l2'],
   ['L1', 'rejected', 'not_started', 'collecting_kyc', 'l1'],
@@ -1175,6 +1270,56 @@ test('US L0 to L2 shows L1 fields and submits only DOB and SSN before any docume
   });
   assert.equal(documents, 0, 'the UI must not assume submission approval or use stale props to start L2');
   assert.equal(h.render().activeStep, 2);
+});
+
+test('authoritative verified L0 overrides a stale REQUIRES_KYC label for incremental US L1', async t => {
+  const h = createHarness({ accordion: true }); t.after(h.unmount);
+  const submissions = [];
+  let state = h.render({ country: 'US', headlessStep: 'collecting_kyc', kycLevel: 'REQUIRES_KYC',
+    kycTierRequired: 'l1', kycTiers: usCustomer().kycTiers,
+    firstName: 'Existing', lastName: 'Buyer', line1: '123 Main St', city: 'Denver', stateCode: 'CO', zipCode: '80202',
+    onSubmitKycInfo: async payload => submissions.push(payload),
+  });
+  assert.equal(state.step2Props.showFullForm, false);
+  assert.equal(state.step2Props.showStepUpForm, true);
+  state.step2Props.setDob('1990-05-12'); state.step2Props.setSsn('123-45-6789');
+  state = h.render();
+  await state.step2Props.onSubmit();
+  assert.deepEqual(JSON.parse(JSON.stringify(submissions[0])), {
+    date_of_birth: { year: 1990, month: 5, day: 12 },
+    id_number: { type: 'us_ssn', value: '123456789' },
+  });
+});
+
+test('direct US L1 enrolment submits the complete L0 and L1 payload', async t => {
+  const h = createHarness({ accordion: true }); t.after(h.unmount);
+  const submissions = [];
+  let state = h.render({ country: 'US', headlessStep: 'collecting_kyc', kycLevel: 'REQUIRES_KYC',
+    kycTierRequired: 'l1', kycTiers: [],
+    firstName: 'New', lastName: 'Buyer', line1: '123 Main St', city: 'Denver', stateCode: 'CO', zipCode: '80202',
+    onSubmitKycInfo: async payload => submissions.push(payload),
+  });
+  assert.equal(state.step2Props.showFullForm, true);
+  assert.equal(state.step2Props.showStepUpForm, false);
+  state.step2Props.setDob('1990-05-12'); state.step2Props.setSsn('123-45-6789');
+  state = h.render();
+  await state.step2Props.onSubmit();
+  assert.deepEqual(JSON.parse(JSON.stringify(submissions[0])), {
+    given_name: 'New', surname: 'Buyer',
+    address: { line1: '123 Main St', city: 'Denver', state: 'CO', postal_code: '80202', country: 'US' },
+    date_of_birth: { year: 1990, month: 5, day: 12 },
+    id_number: { type: 'us_ssn', value: '123456789' },
+  });
+});
+
+test('rejected US L0 follows Stripe guidance and collects only the incremental L1 fields', t => {
+  const h = createHarness({ accordion: true }); t.after(h.unmount);
+  const state = h.render({ country: 'US', headlessStep: 'collecting_kyc', kycLevel: 'REJECTED',
+    kycTierRequired: 'l1', kycTiers: usRejectedL0('not_started').kycTiers,
+  });
+  assert.equal(state.step2Props.showFullForm, false);
+  assert.equal(state.step2Props.showStepUpForm, true);
+  assert.deepEqual(JSON.parse(JSON.stringify(state.step2Props.missingIdentityFields.map(field => field.key))), ['dob', 'ssn']);
 });
 
 test('rejected US L1 requires full legal details plus DOB and SSN, while verified L1 goes directly to documents', async t => {
@@ -1349,9 +1494,10 @@ test("provider acceptance stays pending until the receipt write succeeds, withou
   assert.equal(h.calls.performCheckout, attempts);
 });
 
-test("KYC review exhaustion stays at identity and can resume after later approval", { timeout: 10000 }, async t => {
+test("KYC review exhaustion stays at identity and automatically resumes after later approval", { timeout: 10000 }, async t => {
   const h = createHarness(); t.after(h.unmount);
   h.state.kycStatusOverride = "pending";
+  h.state.documentsSubmitted = true;
   const initial = h.render().startOnramp();
   // EU compliance is already submitted in this fixture; only Stripe review is outstanding.
   for (let i = 0; i < 90; i++) await h.runTimer(2000);
@@ -1360,12 +1506,279 @@ test("KYC review exhaustion stays at identity and can resume after later approva
   assert.equal(h.calls.errors.length, 0);
   assert.equal(h.calls.paymentOptions.length, 0);
   h.state.kycStatusOverride = "verified";
-  await h.render().checkKycStatus();
+  await h.runTimer(15000);
   h.runResumeTimer();
   await settleUntil(() => h.calls.paymentOptions.length === 1);
   assert.equal(h.calls.authenticate, 1);
   assert.equal(h.calls.verifyDocuments, 0);
 });
+
+test('delayed L0 rejection automatically steps up to L1 without restarting authentication', { timeout: 10000 }, async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = usUnverifiedCustomer();
+  await h.render().startOnramp();
+  h.state.onKycSubmission = () => {
+    const customer = usUnverifiedCustomer();
+    customer.kycTiers[0].verification_status = 'pending';
+    customer.kycSnapshot.currentTier = 'L0';
+    customer.kycSnapshot.currentStatus = 'pending';
+    h.state.customerData = customer;
+  };
+  const submission = h.render().submitKycInfo({ given_name: 'Test', surname: 'Buyer',
+    address: { line1: '123 Main St', city: 'Denver', state: 'CO', postal_code: '80202', country: 'US' } });
+  for (let i = 0; i < 90; i++) await h.runTimer(2000);
+  await submission;
+  assert.equal(h.render().step, 'kyc_pending');
+  h.state.customerData = usRejectedL0('not_started');
+  await h.runTimer(15000);
+  assert.equal(h.render().step, 'collecting_kyc');
+  assert.equal(h.render().kycTierRequired, 'l1');
+  assert.equal(h.calls.kycSubmissions.length, 1);
+  assert.equal(h.calls.destroy, 0);
+});
+
+test('EU basic L2 pending with MiCA and attestation complete opens documents instead of polling forever', { timeout: 5000 }, async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.kycStatusOverride = 'pending';
+  h.state.onDocuments = () => { h.state.kycStatusOverride = 'verified'; };
+  await h.render().startOnramp();
+  assert.equal(h.calls.verifyDocuments, 1);
+  h.runResumeTimer();
+  await settleUntil(() => h.calls.paymentOptions.length === 1);
+  assert.equal(h.render().step, 'collecting_payment');
+  assert.equal(h.calls.destroy, 0);
+  h.state.paymentCompletion({});
+});
+
+test('a failed US L2 upgrade retains verified L1 checkout eligibility and refreshes limits', { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified', 'rejected');
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'completed');
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.requests.filter(r => r.pathname === '/api/stripe/onramp-limits').length, 1);
+});
+
+for (const delayed of [false, true]) {
+test(`US document rejection ${delayed ? 'after automatic recheck' : 'immediately'} retains a retryable L2 challenge on the same session`, { timeout: 10000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  await usL2StepUp(h);
+  h.state.customerData = usCustomer('verified');
+  h.state.onDocuments = () => { h.state.customerData = usCustomer('verified', delayed ? 'pending' : 'rejected'); };
+  const verification = h.render().verifyDocuments();
+  if (delayed) for (let i = 0; i < 90; i++) await h.runTimer(2000);
+  assert.equal(await verification, false);
+  if (delayed) {
+    assert.equal(h.render().step, 'kyc_pending');
+    h.state.customerData = usCustomer('verified', 'rejected');
+    await h.runTimer(15000);
+  }
+  assert.equal(h.render().step, 'collecting_kyc');
+  assert.equal(h.render().kycTierRequired, 'l2');
+  assert.equal(h.calls.destroy, 0);
+  assert.equal(h.calls.performCheckout, 1);
+  h.state.onDocuments = () => { h.state.customerData = usCustomer('verified', 'verified'); };
+  h.state.sdkUnsuccessful = false; h.state.providerData = {}; h.state.walletVerified = true;
+  assert.equal(await h.render().verifyDocuments(), true);
+  await settleUntil(() => h.calls.successes.length === 1);
+  assert.equal(h.calls.verifyDocuments, 2);
+  assert.equal(h.calls.paymentOptions.length, 1);
+  assert.ok(h.calls.checkoutSessions.every(id => id === 'cos_test_ownership'));
+});
+}
+
+test('direct US document retry observes an existing review without reopening documents', { timeout: 10000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  await usL2StepUp(h);
+  h.state.customerData = usCustomer('verified', 'pending');
+  const verification = h.render().verifyDocuments();
+  for (let i = 0; i < 90; i++) await h.runTimer(2000);
+  assert.equal(await verification, false);
+  assert.equal(h.render().step, 'kyc_pending');
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.performCheckout, 1);
+});
+
+test('fresh Stripe attempt exhaustion prevents another document submission and checkout restart', async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  await usL2StepUp(h);
+  const customer = usCustomer('verified', 'rejected');
+  customer.kycTiers[2].verification_errors = ['user_has_reached_max_verification_attempt'];
+  h.state.customerData = customer;
+  assert.equal(await h.render().verifyDocuments(), false);
+  assert.equal(h.render().step, 'error');
+  assert.equal(h.calls.verifyDocuments, 0);
+  await h.render().startOnramp(undefined, undefined, undefined, true);
+  assert.equal(h.calls.performCheckout, 1);
+});
+
+for (const needsIdentifier of [false, true]) {
+test(`EU ${needsIdentifier ? 'required' : 'empty'} MiCA identifiers complete before attestation and documents`, { timeout: 5000 }, async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = euCustomer();
+  h.state.onIdentifiers = () => { h.state.customerData = euCustomer('pending', ['identifiers']); };
+  h.state.onDocuments = () => {
+    h.calls.euOrder.push('documents');
+    h.state.customerData = euCustomer('verified', ['identifiers', 'attestation', 'id_document', 'selfie']);
+  };
+  let flow;
+  if (needsIdentifier) {
+    h.state.missingIdentifiers = { identifiers: [{ type: 'es_nif', regulation: 'mica' }], alternatives: [] };
+    await h.render().startOnramp();
+    assert.equal(h.render().step, 'collecting_identifiers');
+    assert.equal(h.calls.attestations || 0, 0);
+    flow = h.render().submitKycIdentifiers({ es_nif: '12345678Z' });
+  } else {
+    flow = h.render().startOnramp();
+  }
+  await settleUntil(() => h.state.attestationComplete);
+  assert.equal(h.render().step, 'accepting_terms');
+  assert.equal(h.calls.verifyDocuments, 0);
+  h.state.attestationComplete({ result: 'confirmed' });
+  await flow;
+  assert.deepEqual(h.calls.euOrder, ['discover', 'identifiers', 'attestation', 'documents']);
+  assert.deepEqual(h.calls.identifiers[0], needsIdentifier ? [{ type: 'es_nif', value: '12345678Z' }] : []);
+  h.runResumeTimer();
+  await settleUntil(() => h.calls.paymentOptions.length === 1);
+  assert.equal(h.calls.verifyDocuments, 1);
+  h.state.paymentCompletion({});
+});
+}
+
+test('incomplete MiCA confirmation cannot advance to attestation or documents', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = euCustomer();
+  h.state.identifierResult = { completed: false, identifiers: [{ type: 'es_nif', regulation: 'mica' }] };
+  await h.render().startOnramp();
+  assert.equal(h.render().step, 'collecting_identifiers');
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.attestations || 0, 0);
+  assert.equal(h.calls.paymentOptions.length, 0);
+  assert.equal(h.calls.destroy, 0);
+});
+
+for (const abandoned of ['attestation', 'documents']) {
+test(`EU abandoned ${abandoned} is retryable without destroying the authenticated coordinator`, { timeout: 5000 }, async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = euCustomer('pending', abandoned === 'attestation' ? ['identifiers'] : ['identifiers', 'attestation']);
+  h.state.documentResult = abandoned === 'documents' ? 'abandoned' : 'success';
+  const flow = h.render().startOnramp();
+  if (abandoned === 'attestation') {
+    await settleUntil(() => h.state.attestationComplete);
+    h.state.attestationComplete({ result: 'abandoned' });
+  }
+  await flow;
+  assert.equal(h.render().step, 'collecting_kyc');
+  assert.equal(h.calls.destroy, 0);
+  h.state.customerData = euCustomer('pending', ['identifiers', 'attestation']);
+  h.state.documentResult = 'success';
+  h.state.onDocuments = () => { h.state.customerData = euCustomer('verified', ['identifiers', 'attestation']); };
+  const retry = h.render().verifyDocuments();
+  if (abandoned === 'attestation') {
+    await settleUntil(() => h.calls.attestations === 2);
+    h.state.attestationComplete({ result: 'confirmed' });
+  }
+  assert.equal(await retry, true);
+  assert.equal(h.calls.authenticate, 1);
+});
+}
+
+test('EU verification attempt exhaustion stops without opening documents or permitting restart', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  const customer = euCustomer('rejected', ['identifiers', 'attestation']);
+  customer.kycTiers[2].verification_errors = ['user_has_reached_max_verification_attempt'];
+  h.state.customerData = customer;
+  await h.render().startOnramp();
+  assert.equal(h.render().step, 'error');
+  assert.equal(h.calls.verifyDocuments, 0);
+  await h.render().startOnramp(undefined, undefined, undefined, true);
+  assert.equal(h.calls.verifyDocuments, 0);
+});
+
+test('stalled KYC response bodies time out and return to automatic observation without resubmitting identity', { timeout: 10000 }, async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = usUnverifiedCustomer();
+  await h.render().startOnramp();
+  h.state.onKycSubmission = () => { h.state.hangCustomerBody = true; };
+  const submission = h.render().submitKycInfo({ given_name: 'Test', surname: 'Buyer',
+    address: { line1: '123 Main St', city: 'Denver', state: 'CO', postal_code: '80202', country: 'US' } });
+  for (let i = 0; i < 5; i++) {
+    await h.runTimer(10000);
+    if (i < 4) await h.runTimer(2000);
+  }
+  await submission;
+  assert.equal(h.render().step, 'kyc_pending');
+  assert.equal(h.calls.kycSubmissions.length, 1);
+  assert.equal(h.calls.destroy, 0);
+  assert.equal(h.hasTimer(15000), true);
+});
+
+test('EU document submission survives remount without duplicating review and remains receipt-scoped', { timeout: 10000 }, async t => {
+  const first = createHarness();
+  first.state.customerData = euCustomer('pending', ['identifiers', 'attestation']);
+  const submission = first.render().startOnramp();
+  for (let i = 0; i < 90; i++) await first.runTimer(2000);
+  await submission;
+  assert.equal(first.calls.verifyDocuments, 1);
+  const storage = createStorage(first.localStorage.snapshot());
+  first.unmount();
+  const resumed = createHarness({ storage }); t.after(resumed.unmount);
+  resumed.state.customerData = euCustomer('pending', ['identifiers', 'attestation']);
+  const review = resumed.render().startOnramp();
+  for (let i = 0; i < 90; i++) await resumed.runTimer(2000);
+  await review;
+  assert.equal(resumed.calls.verifyDocuments, 0);
+  assert.equal(resumed.render().step, 'kyc_pending');
+  const other = createHarness({ storage }); t.after(other.unmount);
+  other.state.customerData = euCustomer('pending', ['identifiers', 'attestation']);
+  other.state.onDocuments = () => { other.state.customerData = euCustomer('verified', ['identifiers', 'attestation']); };
+  await other.render({ receiptId: 'R-OTHER-RECEIPT' }).startOnramp();
+  assert.equal(other.calls.verifyDocuments, 1, 'another receipt cannot inherit local submission evidence');
+});
+
+test('EU verification recovery after checkout completes missing documents instead of polling basic KYC indefinitely', { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.onCheckout = () => {
+    h.state.sdkError = { code: 'crypto_onramp_verification_error', message: 'Consumer person verification is still processing. Try again shortly.' };
+    h.state.customerData = euCustomer('pending', ['identifiers', 'attestation']);
+  };
+  h.state.onDocuments = () => {
+    h.state.customerData = euCustomer('verified', ['identifiers', 'attestation']);
+    h.state.onCheckout = null; h.state.sdkError = null; h.state.walletVerified = true;
+  };
+  assert.equal((await completeOwnershipCheckout(h)).step, 'completed');
+  assert.equal(h.calls.verifyDocuments, 1);
+  assert.equal(h.calls.paymentOptions.length, 1);
+  assert.equal(h.calls.destroy, 0);
+  assert.ok(h.calls.checkoutSessions.every(id => id === 'cos_test_ownership'));
+});
+
+for (const result of ['rejected', 'pending', 'abandoned', 'exhausted']) {
+test(`ACH L2 ${result} preserves the correct verification recovery without restarting payment`, { timeout: 10000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified');
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  if (result === 'exhausted') {
+    const customer = usCustomer('verified', 'rejected');
+    customer.kycTiers[2].verification_errors = ['user_has_reached_max_verification_attempts'];
+    h.state.customerData = customer;
+  } else {
+    h.state.onDocuments = () => { h.state.customerData = usCustomer('verified', result === 'pending' ? 'pending' : 'rejected'); };
+    if (result === 'abandoned') h.state.documentResult = 'abandoned';
+  }
+  h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_bank', paymentMethodDetails: { type: 'us_bank_account' } });
+  if (result === 'pending') for (let i = 0; i < 90; i++) await h.runTimer(2000);
+  await flow;
+  const hook = h.render();
+  assert.equal(hook.step, result === 'pending' ? 'kyc_pending' : result === 'exhausted' ? 'error' : 'collecting_kyc');
+  assert.equal(hook.kycTierRequired, 'l2');
+  assert.equal(h.calls.performCheckout, 0);
+  assert.equal(h.calls.paymentOptions.length, 1);
+  assert.equal(h.calls.verifyDocuments, result === 'exhausted' ? 0 : 1);
+  if (result !== 'exhausted') assert.equal(h.calls.destroy, 0);
+});
+}
 
 test("pending KYC keeps Step 2 open despite a retained payment element and stale verified details", t => {
   const h = createHarness({ accordion: true }); t.after(h.unmount);
@@ -1461,8 +1874,8 @@ test("permanent identity failure during creation never prompts repeated KYC", { 
   assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 1);
 });
 
-for (const [code, tier] of [["missing_kyc", "l1"], ["crypto_onramp_missing_minimum_identity_verification", "l0"], ["missing_document_verification", "l2"]]) {
-  test(`unsuccessful checkout routes ${code} to the correct KYC step`, { timeout: 5000 }, async t => {
+for (const [code, tier] of [["missing_kyc", "l2"], ["crypto_onramp_missing_minimum_identity_verification", "l0"], ["missing_document_verification", "l2"]]) {
+  test(`unsuccessful EU checkout routes ${code} to EU compliance, never US L1`, { timeout: 5000 }, async t => {
     const h = createHarness({ ownership: { source: "backend" } });
     t.after(h.unmount);
     h.state.sdkUnsuccessful = true;
@@ -1833,9 +2246,93 @@ test('pending-verification checkout errors poll KYC before retrying the same che
   h.state.walletVerified = true;
   h.state.customerData = usCustomer('verified');
   await h.runTimer(2000);
+  await h.runTimer(3000);
   const hook = await flow;
   assert.equal(hook.step, 'completed');
   assert.deepEqual(h.calls.checkoutSessions, ['cos_test_ownership', 'cos_test_ownership']);
+  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
+  assert.equal(h.calls.verifyDocuments, 0);
+});
+
+test('verified KYC with a processing checkout response pauses safely then automatically resumes the same session', { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified');
+  h.state.sdkError = {
+    code: 'crypto_onramp_verification_error',
+    message: 'Consumer person verification is still processing. Try again shortly.',
+  };
+
+  const flow = completeOwnershipCheckout(h);
+  await h.runTimer(3000);
+  await h.runTimer(7000);
+  const hook = await flow;
+
+  assert.equal(hook.step, 'kyc_pending');
+  assert.equal(hook.error, null);
+  assert.equal(hook.errorDetails, null);
+  assert.equal(h.calls.performCheckout, 3);
+  assert.deepEqual(h.calls.checkoutSessions, Array(3).fill('cos_test_ownership'));
+  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
+  assert.equal(h.calls.verifyDocuments, 0);
+
+  h.state.sdkError = null;
+  h.state.walletVerified = true;
+  await h.runTimer(15000);
+  await h.runTimer(3000);
+  await settleUntil(() => h.calls.successes.length === 1);
+
+  assert.equal(h.render().step, 'completed');
+  assert.equal(h.calls.performCheckout, 4);
+  assert.ok(h.calls.checkoutSessions.every(id => id === 'cos_test_ownership'));
+  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
+});
+
+test('the live generic verification-required response backs off without terminally rejecting verified L1', { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified');
+  h.state.sdkError = {
+    code: 'crypto_onramp_verification_error',
+    message: 'Identity verification is required to complete your purchase.',
+  };
+
+  const flow = completeOwnershipCheckout(h);
+  await h.runTimer(3000);
+  await h.runTimer(7000);
+  const hook = await flow;
+
+  assert.equal(hook.step, 'kyc_pending');
+  assert.equal(hook.error, null);
+  assert.equal(hook.errorDetails, null);
+  assert.equal(h.calls.performCheckout, 3);
+  assert.deepEqual(h.calls.checkoutSessions, Array(3).fill('cos_test_ownership'));
+  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
+  assert.equal(h.calls.verifyDocuments, 0);
+
+  h.state.sdkError = null;
+  h.state.walletVerified = true;
+  await h.runTimer(15000);
+  await settleUntil(() => h.calls.successes.length === 1);
+  assert.equal(h.render().step, 'completed');
+  assert.equal(h.calls.performCheckout, 4);
+  assert.ok(h.calls.checkoutSessions.every(id => id === 'cos_test_ownership'));
+  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
+  assert.equal(h.calls.kycSubmissions?.length || 0, 0);
+});
+
+test('amount-driven additional verification advances an already-L1 US customer to L2 on the same session', async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usRejectedL0();
+  h.state.sdkError = {
+    code: 'crypto_onramp_verification_error',
+    message: 'We need additional identity verification for you to purchase this amount.',
+  };
+
+  const hook = await completeOwnershipCheckout(h);
+
+  assert.equal(hook.step, 'collecting_kyc');
+  assert.equal(hook.kycTierRequired, 'l2');
+  assert.equal(hook.sessionId, 'cos_test_ownership');
+  assert.equal(h.calls.performCheckout, 1);
   assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
   assert.equal(h.calls.verifyDocuments, 0);
 });
@@ -1854,6 +2351,107 @@ test('verification status outages pause without inferring KYC or resubmitting pa
   assert.equal(h.render().step, 'kyc_pending');
   assert.equal(h.calls.performCheckout, 1);
   assert.equal(h.calls.verifyDocuments, 0);
+});
+
+async function pauseCheckoutDuringKycOutage(h) {
+  h.state.customerData = usCustomer('verified');
+  h.state.onCheckout = () => {
+    h.state.customerOutage = true;
+    h.state.sdkError = { code: 'crypto_onramp_verification_error', message: 'Your verification is processing. Try again shortly.' };
+  };
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'kyc_pending');
+  h.state.onCheckout = null;
+  h.state.sdkError = null;
+  h.state.walletVerified = true;
+  return hook;
+}
+
+test('automatic KYC recovery survives repeated fast outages without requiring a render or a customer action', { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  await pauseCheckoutDuringKycOutage(h);
+  const customerReads = () => h.calls.requests.filter(item => item.pathname === `/api/stripe/crypto-customer/${CUSTOMER_ID}`).length;
+  for (let i = 0; i < 3; i++) {
+    const before = customerReads();
+    await h.runTimer(15000);
+    assert.equal(customerReads(), before + 1);
+    assert.equal(h.calls.performCheckout, 1);
+    assert.equal(h.calls.kycSubmissions?.length || 0, 0);
+    assert.ok(h.hasTimer(15000), 'another automatic observation remains scheduled');
+  }
+  h.state.customerOutage = false;
+  await h.runTimer(15000);
+  await h.runTimer(3000);
+  await settleUntil(() => h.calls.successes.length === 1);
+  assert.equal(h.render().step, 'completed');
+  assert.equal(h.calls.performCheckout, 2);
+  assert.deepEqual(h.calls.checkoutSessions, ['cos_test_ownership', 'cos_test_ownership']);
+  assert.equal(h.hasRecoveryListeners(), false);
+  assert.equal(h.hasTimer(15000), false);
+});
+
+for (const wakeEvent of ['focus', 'online', 'visibilitychange']) {
+  test(`automatic KYC recovery wakes on ${wakeEvent} and coalesces simultaneous events with a manual check`, { timeout: 5000 }, async t => {
+    const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+    const hook = await pauseCheckoutDuringKycOutage(h);
+    if (wakeEvent === 'online') h.setOnline(false);
+    else h.setVisibility('hidden');
+    const before = h.calls.requests.length;
+    await h.runTimer(15000);
+    assert.equal(h.calls.requests.length, before, 'a hidden or offline page does not launch recovery');
+
+    h.state.customerOutage = false;
+    if (wakeEvent === 'online') h.setOnline(true);
+    else h.setVisibility('visible');
+    h.emitWindow(wakeEvent);
+    h.emitWindow('focus');
+    h.emitWindow('online');
+    await h.runTimer(0);
+    const after = h.calls.requests.length;
+    await hook.checkKycStatus();
+    h.emitWindow('focus');
+    h.emitWindow('online');
+    assert.equal(h.calls.requests.length, after, 'an active recovery owns the status check');
+    assert.equal(h.hasTimer(0), false);
+    await h.runTimer(3000);
+    await settleUntil(() => h.calls.successes.length === 1);
+    assert.equal(h.render().step, 'completed');
+    assert.equal(h.calls.performCheckout, 2);
+    assert.equal(h.calls.verifyDocuments, 0);
+    assert.equal(h.calls.kycSubmissions?.length || 0, 0);
+  });
+}
+
+test('disabling checkout cancels pending KYC timers and reenabling resumes automatic observation', { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  await pauseCheckoutDuringKycOutage(h);
+  h.render({ enabled: false });
+  assert.equal(h.hasTimer(15000), false);
+  assert.equal(h.hasRecoveryListeners(), false);
+  h.render({ enabled: true });
+  assert.equal(h.hasTimer(15000), true);
+  assert.equal(h.hasRecoveryListeners(), true);
+  h.render().reset();
+  assert.equal(h.render().step, 'idle');
+  assert.equal(h.hasTimer(15000), false);
+  assert.equal(h.hasRecoveryListeners(), false);
+});
+
+test('leaving checkout during an automatic KYC read cannot resume a payment or leave recovery listeners', { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  await pauseCheckoutDuringKycOutage(h);
+  h.state.deferCustomer = true;
+  await h.runTimer(15000);
+  assert.ok(h.state.resolveCustomer);
+  h.unmount();
+  const before = h.calls.requests.length;
+  h.state.resolveCustomer(usCustomer('verified'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.calls.requests.length, before);
+  assert.equal(h.calls.performCheckout, 1);
+  assert.equal(h.calls.successes.length, 0);
+  assert.equal(h.hasTimer(15000), false);
+  assert.equal(h.hasRecoveryListeners(), false);
 });
 
 test('missing EU attestation opens Stripe attestation and resumes without repeating documents', { timeout: 5000 }, async t => {

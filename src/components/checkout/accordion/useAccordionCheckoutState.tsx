@@ -399,6 +399,16 @@ export function useAccordionCheckoutState(
   const isL0Approved = kyc.isL0Verified || l1Verified || l2Verified || isAllKycCompleted;
   const isL1Approved = l1Verified;
   const isL2Approved = l2Verified;
+  const l0VerificationStatus = String(
+    kycTiers.find((tier: any) => String(tier?.tier || "").toLowerCase() === "l0")?.verification_status || ""
+  ).toLowerCase();
+  const l1VerificationStatus = String(
+    kycTiers.find((tier: any) => String(tier?.tier || "").toLowerCase() === "l1")?.verification_status || ""
+  ).toLowerCase();
+  // Stripe permits the incremental L1 payload after either L0 approval or an
+  // L0 rejection (L1 supersedes L0). A direct L1 enrolment with no prior L0
+  // result still needs the combined L0 + L1 payload.
+  const canSubmitIncrementalL1 = isL0Approved || l0VerificationStatus === "rejected";
 
   useEffect(() => {
     // End the address editing mode only when the coordinator moves beyond
@@ -409,13 +419,13 @@ export function useAccordionCheckoutState(
     }
   }, [headlessStep, l1Verified]);
 
-  // Full L0 form (name, address): for new users (REQUIRES_KYC) or REJECTED where L1 itself failed
+  // Collect the complete demographic payload for a first/direct L1 enrolment
+  // and for L1 corrections. Prefer the authoritative tier array over the
+  // aggregate label because that label can lag a newly verified L0 result.
   const showFullForm =
-    kycLevel === "REQUIRES_KYC" ||
-    kycTiers.some((t: any) => t.tier === "l1" && t.verification_status === "rejected") ||
-    (kycLevel === "REJECTED" && !l1Verified) ||
     manualEditAddress ||
-    (!l1Verified && !kyc.isL0Verified && !isL0Approved);
+    l1VerificationStatus === "rejected" ||
+    (!l1Verified && !canSubmitIncrementalL1);
 
   const parsedActiveError = useMemo(() => {
     if (!rawActiveError) return null;
@@ -1064,7 +1074,7 @@ export function useAccordionCheckoutState(
       // Stripe KYC Tier Invariant:
       // - If US customer is already L0-verified (Address verified) and performing reactive L1 step-up, Stripe specifies uploading only DOB + SSN (attachKYCInfo partial upload).
       // - For new registrations or full KYC updates (showFullForm / manualEditAddress), submit the complete demographic payload including address.
-      const isStepUpOnly = isUS && showStepUpForm && isL0Approved && !manualEditAddress;
+      const isStepUpOnly = isUS && showStepUpForm && canSubmitIncrementalL1 && !manualEditAddress;
 
       if (onSubmitKycInfo && !isSimulationMode) {
         await onSubmitKycInfo({
