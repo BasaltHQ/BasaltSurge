@@ -17,6 +17,7 @@ import {
 import {
   deriveStripeKycSnapshot,
   hasReachedStripeKycVerificationAttemptLimit,
+  isStripeDocumentReviewPending,
   isStripeKycTierSatisfied,
   resolveUsStripeKycRecovery,
   isValidIsoCountryCode,
@@ -279,6 +280,56 @@ async function submitKycInfoWithTimeout(coordinator: OnrampCoordinator, kycInfo:
   ]);
 }
 
+function validateUsKycInfoPayload(kycInfo: any, snapshot: StripeKycSnapshot | null): void {
+  const hasDob = Boolean(kycInfo?.date_of_birth);
+  const hasIdNumber = Boolean(kycInfo?.id_number);
+  const isL1Submission = hasDob || hasIdNumber;
+
+  if (isL1Submission) {
+    if (!hasDob || !hasIdNumber) {
+      throw new Error("US Level 1 verification requires both date of birth and SSN.");
+    }
+    const dob = kycInfo.date_of_birth;
+    const year = Number(dob?.year);
+    const month = Number(dob?.month);
+    const day = Number(dob?.day);
+    const parsedDate = new Date(Date.UTC(year, month - 1, day));
+    if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)
+      || parsedDate.getUTCFullYear() !== year || parsedDate.getUTCMonth() !== month - 1 || parsedDate.getUTCDate() !== day) {
+      throw new Error("A valid date of birth is required for US Level 1 verification.");
+    }
+    if (kycInfo.id_number.type !== "us_ssn" || !/^\d{9}$/.test(String(kycInfo.id_number.value || ""))) {
+      throw new Error("A complete 9-digit US SSN is required for Level 1 verification.");
+    }
+  }
+
+  const l0Status = snapshot?.tiers.find((tier) => tier.tier === "l0")?.verification_status;
+  const hasPriorL0Result = l0Status === "verified" || l0Status === "rejected"
+    || snapshot?.verifiedTier === "L0" || snapshot?.verifiedTier === "L1" || snapshot?.verifiedTier === "L2";
+  const includesAnyL0Field = Boolean(kycInfo?.given_name || kycInfo?.surname || kycInfo?.address);
+  const requiresFullL0 = !isL1Submission || !hasPriorL0Result || includesAnyL0Field;
+
+  if (!requiresFullL0) return;
+
+  const address = kycInfo?.address;
+  if (!String(kycInfo?.given_name || "").trim() || !String(kycInfo?.surname || "").trim()
+    || !String(address?.line1 || "").trim() || !String(address?.city || "").trim()
+    || !String(address?.state || "").trim() || !String(address?.postal_code || "").trim()
+    || String(address?.country || "").toUpperCase() !== "US") {
+    throw new Error("Full legal name and US residential address are required for this identity verification.");
+  }
+}
+
+function isUncertainKycSubmissionError(error: unknown): boolean {
+  const candidate = error as any;
+  const code = String(candidate?.code || candidate?.name || "").trim().toLowerCase();
+  const message = String(candidate?.message || candidate || "").trim().toLowerCase();
+  return code === "aborterror"
+    || code === "timeout"
+    || code === "network_error"
+    || /timed?\s*out|timeout|failed to fetch|network error|load failed|connection (?:lost|closed|reset)|postmessage/.test(message);
+}
+
 
 export type UseStripeEmbeddedOnrampProps = {
   /** Buyer's email */
@@ -443,7 +494,7 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   authenticating: "Authenticating with Link...",
   exchanging_tokens: "Securing session...",
   checking_kyc: "Checking verification...",
-  kyc_pending: "Verification is still pending. Check its status to continue.",
+  kyc_pending: "Verification is still pending. We'll check again automatically.",
   collecting_kyc: "Collecting identity info...",
   collecting_identifiers: "Collecting required tax identifiers...",
   accepting_terms: "Confirming regulatory attestation...",
@@ -462,6 +513,16 @@ const STEP_MESSAGES: Record<OnrampStep, string> = {
   completed: "Payment complete!",
   error: "Something went wrong",
 };
+
+// Stripe can report a verified CryptoCustomer before that approval has
+// propagated to the onramp checkout endpoint. Give the provider a short,
+// bounded window to converge, then leave the same session recoverable from
+// kyc_pending instead of converting the delay into a terminal checkout error.
+const KYC_PROVIDER_PROPAGATION_DELAYS_MS = [3_000, 7_000] as const;
+// After the initial foreground polling budget expires, continue observing the
+// existing CryptoCustomer automatically. This is intentionally slower than the
+// active two-second poll and never resubmits KYC data.
+const KYC_PENDING_AUTO_RECHECK_MS = 15_000;
 
 /** Bound requests including response bodies. This helper never retries a submission. */
 async function fetchOnrampObservation(url: string, init: RequestInit = {}, timeoutMs = 15_000) {
@@ -714,8 +775,22 @@ export function useStripeEmbeddedOnramp({
   const pendingL2Ref = useRef(false);
   const verificationRecoveryRef = useRef<((action: OnrampRecovery, cause: unknown) => Promise<"ready" | "paused">) | null>(null);
   const verifyDocumentsRef = useRef<(() => Promise<boolean>) | null>(null);
+  const completeEuKycRef = useRef<(() => Promise<boolean>) | null>(null);
   const kycRequiredLevelDetectedRef = useRef<"l0" | "l1" | "l2" | null>(null);
   const kycRequirementScopeRef = useRef<string | null>(null);
+  // Submission evidence only, never approval. Scope it like the required tier
+  // so a remount can observe an existing review without reopening documents.
+  const documentReviewSubmittedRef = useRef(false);
+  const markDocumentReviewSubmitted = useCallback((submitted: boolean) => {
+    documentReviewSubmittedRef.current = submitted;
+    const scope = kycRequirementScopeRef.current;
+    try {
+      if (scope) {
+        if (submitted) sessionStorage.setItem(`${scope}:documents_submitted`, "true");
+        else sessionStorage.removeItem(`${scope}:documents_submitted`);
+      }
+    } catch { }
+  }, []);
   // Store only a required tier, never approval or identity data. The provider
   // snapshot must still satisfy it before payment can proceed after a remount.
   const restoreKycRequirement = useCallback((custId: string | null, requiredTier?: unknown) => {
@@ -725,6 +800,8 @@ export function useStripeEmbeddedOnramp({
     if (kycRequirementScopeRef.current !== scope) {
       kycRequiredLevelDetectedRef.current = null;
       pendingL2Ref.current = false;
+      documentReviewSubmittedRef.current = false;
+      try { if (scope) documentReviewSubmittedRef.current = sessionStorage.getItem(`${scope}:documents_submitted`) === "true"; } catch { }
       kycRequirementScopeRef.current = scope;
     }
     let stored: string | null = null;
@@ -757,6 +834,7 @@ export function useStripeEmbeddedOnramp({
   const requestKycVerification = useCallback((tier: "l0" | "l1" | "l2") => {
     const ranks = { l0: 0, l1: 1, l2: 2 };
     setKycTierRequired(tier);
+    if (tier === "l2") markDocumentReviewSubmitted(false);
     setKycTiers(previous => previous.map(entry => entry.verification_status === "verified" && ranks[entry.tier as keyof typeof ranks] >= ranks[tier]
       ? { ...entry, verification_status: "not_started" } : entry));
     // Preserve provider rejection details so L1 recovery still collects the
@@ -771,7 +849,7 @@ export function useStripeEmbeddedOnramp({
     setError(null);
     updateStep("collecting_kyc");
     isRunningRef.current = false;
-  }, [setKycTierRequired, kycTiers]);
+  }, [setKycTierRequired, kycTiers, markDocumentReviewSubmitted]);
   const [missingKycIdentifiers, setMissingKycIdentifiers] = useState<MicaIdentifierRequirement[]>([]);
   const [kycIdentifierAlternatives, setKycIdentifierAlternatives] = useState<Array<{
     original_missing_identifiers: string[];
@@ -1355,9 +1433,33 @@ export function useStripeEmbeddedOnramp({
     onErrorRef.current?.(err instanceof Error ? err : Object.assign(new Error(friendlyMessage), { code }));
   }, [detectedCardFunding, updateStep, receiptId, merchantWallet]);
 
+  const handleKycRejection = useCallback((err: any): boolean => {
+    const match = /^kyc_(l[012])_rejected$/.exec(String(err?.code || ""));
+    if (!match) return false;
+    const failedTier = match[1] as "l0" | "l1" | "l2";
+    const tier = failedTier === "l0" ? "l1" : failedTier;
+    const errors = latestKycSnapshotRef.current?.tiers.find(entry => entry.tier === failedTier)?.verification_errors;
+    isVerifyingRef.current = false;
+    if (hasReachedStripeKycVerificationAttemptLimit(errors)) {
+      reportKycEvent("verification_retry_exhausted", tier);
+      handleError("Stripe has reached the maximum identity verification attempts. Please contact Stripe support.", { code: "kyc_verification_attempts_exhausted" });
+      return true;
+    }
+    verificationStatusRecoveryRef.current = false;
+    reportKycEvent(`${failedTier}_rejected`, tier);
+    requestKycVerification(tier);
+    setError(failedTier === "l0"
+      ? "Stripe could not verify the basic identity details. Complete L1 verification with date of birth and SSN to continue."
+      : failedTier === "l1"
+        ? "Stripe rejected the L1 identity details. Correct the legal name, address, date of birth, or SSN and resubmit; L0 checkout is no longer available."
+        : "Stripe rejected the identity document or selfie. Please retry with a clear, current document.");
+    return true;
+  }, [handleError, reportKycEvent, requestKycVerification]);
+
   const pollKycStatus = useCallback(async (custId: string, targetTier?: "l0" | "l1" | "l2"): Promise<boolean> => {
+    const isCurrentObservation = () => mountedRef.current && isRunningRef.current && customerIdRef.current === custId;
     const pause = (): never => {
-      if (mountedRef.current) {
+      if (isCurrentObservation()) {
         setKycTierRequired(targetTier || kycTierRequiredRef.current);
         setKycLevel("PENDING");
         kycLevelRef.current = "PENDING";
@@ -1366,7 +1468,7 @@ export function useStripeEmbeddedOnramp({
         isVerifyingRef.current = false;
         updateStep("kyc_pending");
       }
-      throw Object.assign(new Error("Verification status is pending. Check its status to continue."), { code: "kyc_observation_pending" });
+      throw Object.assign(new Error("Verification status is pending. We'll check again automatically."), { code: "kyc_observation_pending" });
     };
     const startMsg = `[KYC POLL START] Polling KYC status for customer ${custId} (target: ${targetTier || 'legacy'})`;
     console.log(startMsg);
@@ -1388,8 +1490,7 @@ export function useStripeEmbeddedOnramp({
 
     let consecutiveErrors = 0;
     for (let i = 0; i < 90; i++) {
-      if (!mountedRef.current) return pause();
-      if (!isRunningRef.current) {
+      if (!isCurrentObservation()) {
         console.log("[EMBEDDED ONRAMP] Polling aborted because run was stopped/reset.");
         return pause();
       }
@@ -1403,10 +1504,11 @@ export function useStripeEmbeddedOnramp({
             "x-stripe-oauth-token": oauthTokenRef.current || "",
           },
         });
-        clearTimeout(timeoutId);
         if (res.ok) {
-          consecutiveErrors = 0;
           const kycData = await res.json();
+          clearTimeout(timeoutId);
+          consecutiveErrors = 0;
+          if (!isCurrentObservation()) return pause();
           const kycSnapshot = consumeKycTrackingResponse(kycData);
           if (kycData.refreshedToken) {
             console.log("[EMBEDDED ONRAMP] KYC poll returned refreshed OAuth token, updating ref...");
@@ -1497,6 +1599,7 @@ export function useStripeEmbeddedOnramp({
             return true;
           }
         } else {
+          clearTimeout(timeoutId);
           if (res.status === 409 || res.status === 429) {
             console.log(`[EMBEDDED ONRAMP] Transient status ${res.status} during KYC poll (Stripe verification processing lock). Retrying after backoff...`);
             await new Promise(resolve => setTimeout(resolve, 2500));
@@ -1564,6 +1667,7 @@ export function useStripeEmbeddedOnramp({
   const verificationRecoveryActionRef = useRef<OnrampRecovery>("kyc_status");
   const verificationStatusRecoveryRef = useRef(false);
   const recoverVerification = useCallback(async (action: OnrampRecovery, cause: unknown): Promise<"ready" | "paused"> => {
+    const causeDetails = onrampErrorDetails(cause);
     verificationRecoveryActionRef.current = action;
     // Persist the actual provider requirement before reading status. In an
     // L0 -> L2 escalation, collecting L1 must not discard the pending L2 tier.
@@ -1573,7 +1677,9 @@ export function useStripeEmbeddedOnramp({
     if (["kyc_l0", "kyc_l1", "kyc_l2"].includes(action)
       && (isEuEeaCountry(activeCountryRef.current) || latestKycSnapshotRef.current?.region === "eu")) {
       verificationStatusRecoveryRef.current = false;
-      requestKycVerification(action === "kyc_l0" ? "l0" : action === "kyc_l2" ? "l2" : "l1");
+      // EU basic details are collected first, but EU has no US-style L1/SSN
+      // pathway. Any higher requirement resumes EU L2 compliance.
+      requestKycVerification(action === "kyc_l0" ? "l0" : "l2");
       return "paused";
     }
     const customerId = customerIdRef.current;
@@ -1630,15 +1736,30 @@ export function useStripeEmbeddedOnramp({
         headers: { "x-stripe-oauth-token": oauthTokenRef.current || "" },
       });
       if (!mountedRef.current) return "paused";
+      if (response.status === 401 || response.status === 403) {
+        throw Object.assign(new Error("Stripe authentication required. Please sign in again."), { code: "stripe_reauthentication_required" });
+      }
       if (!response.ok) return pause(kycTierRequiredRef.current);
       if (data.refreshedToken) oauthTokenRef.current = data.refreshedToken;
       let snapshot = consumeKycTrackingResponse(data);
       if (snapshot.region !== "eu" && !isEuEeaCountry(activeCountryRef.current)) {
+        const amountRequiresAdditionalVerification = action === "kyc_l1"
+          && /additional identity verification.*(?:amount|purchase)|(?:amount|purchase).*additional identity verification/i.test(causeDetails.message);
+        const providerRequestedTier = amountRequiresAdditionalVerification
+          && isStripeKycTierSatisfied(snapshot, "l1")
+          && !isStripeKycTierSatisfied(snapshot, "l2")
+          ? "l2"
+          : action === "kyc_l2" ? "l2" : action === "kyc_l1" ? "l1" : action === "kyc_l0" ? "l0" : null;
         const requestedTier = normalizeKycTierLower(highestKycTier(
           kycRequiredLevelDetectedRef.current, pendingL2Ref.current ? "l2" : null,
-          action === "kyc_l2" ? "l2" : action === "kyc_l1" ? "l1" : action === "kyc_l0" ? "l0" : null,
+          providerRequestedTier,
         )) || undefined;
-        if (requestedTier === "l2") pendingL2Ref.current = true;
+        if (requestedTier === "l2") {
+          pendingL2Ref.current = true;
+          if (providerRequestedTier === "l2" && action !== "kyc_l2") {
+            reportKycEvent("provider_step_up_required", "l2");
+          }
+        }
         let decision = resolveUsStripeKycRecovery(snapshot, requestedTier, action === "kyc_l2");
         if (decision.kind === "pending") {
           setKycTierRequired(decision.tier);
@@ -1649,8 +1770,8 @@ export function useStripeEmbeddedOnramp({
         }
         if (decision.kind === "pending") return pause(decision.tier);
         if (decision.kind === "unavailable") return pause(kycTierRequiredRef.current);
-        verificationStatusRecoveryRef.current = false;
         if (decision.kind === "collect" && !(action === "kyc_l2" && isStripeKycTierSatisfied(snapshot, "l2"))) {
+          verificationStatusRecoveryRef.current = false;
           requestKycVerification(decision.tier);
           return "paused";
         }
@@ -1658,7 +1779,21 @@ export function useStripeEmbeddedOnramp({
         // generated sessions. Never erase a fresh Stripe approval to retry KYC.
         const key = `${customerId}:${action}:${snapshot.currentTier}:${snapshot.currentStatus}:${snapshot.verifiedTier}`;
         const attempts = verificationRecoveryAttemptsRef.current.get(key) || 0;
+        const isProviderVerificationContradiction = decision.kind === "ready"
+          && (action === "kyc_pending" || (
+            causeDetails.code === "crypto_onramp_verification_error"
+            && /identity verification is required/i.test(causeDetails.message)
+          ));
         if (attempts >= 2) {
+          if (isProviderVerificationContradiction) {
+            // The customer endpoint and checkout endpoint can briefly disagree.
+            // Stop automatic checkout calls, retain the session/payment method,
+            // and allow another bounded status check after Stripe has converged.
+            verificationRecoveryAttemptsRef.current.delete(key);
+            verificationStatusRecoveryRef.current = true;
+            const verifiedTier = normalizeKycTierLower(snapshot.verifiedTier);
+            return pause(verifiedTier || requestedTier || kycTierRequiredRef.current);
+          }
           handleError("Stripe continues to request verification after confirming your identity. Please contact checkout support.", { code: "verification_recovery_exhausted" });
           return "paused";
         }
@@ -1667,6 +1802,11 @@ export function useStripeEmbeddedOnramp({
           requestKycVerification(decision.tier);
           return "paused";
         }
+        if (isProviderVerificationContradiction) {
+          await new Promise(resolve => setTimeout(resolve, KYC_PROVIDER_PROPAGATION_DELAYS_MS[attempts]));
+          if (!mountedRef.current) return "paused";
+        }
+        verificationStatusRecoveryRef.current = false;
         setIsAllKycCompleted(true);
         setKycLevel(snapshot.verifiedTier!);
         kycLevelRef.current = snapshot.verifiedTier!;
@@ -1674,6 +1814,23 @@ export function useStripeEmbeddedOnramp({
         setError(null);
         setPersistedError(null);
         return "ready";
+      }
+      if (snapshot.region === "eu" && !snapshot.euFullyVerified) {
+        // Recovery must obey the same EU resume order as initial onboarding.
+        // L2 pending alone can mean that only basic KYC has been submitted.
+        if (action === "attestation" && !snapshot.attestationAccepted) return pause("l2");
+        const l2 = snapshot.tiers.find(tier => tier.tier === "l2");
+        if (!l2 || ["not_started", "not_available"].includes(l2.verification_status)) {
+          verificationStatusRecoveryRef.current = false;
+          requestKycVerification("l0");
+          return "paused";
+        }
+        isRunningRef.current = true;
+        if (await completeEuKycRef.current?.()) {
+          verificationStatusRecoveryRef.current = false;
+          return "ready";
+        }
+        return "paused";
       }
       const pending = snapshot.tiers.find(tier => tier.verification_status === "pending");
       if (pending) {
@@ -1704,18 +1861,11 @@ export function useStripeEmbeddedOnramp({
     } catch (err: any) {
       setAttestationElement(null);
       if (err?.code === "kyc_observation_pending") return "paused";
-      if (/^kyc_l[012]_rejected$/.test(err?.code || "")) {
-        const snapshot = latestKycSnapshotRef.current;
-        const decision = snapshot && snapshot.region !== "eu" && !isEuEeaCountry(activeCountryRef.current)
-          ? resolveUsStripeKycRecovery(snapshot) : null;
-        requestKycVerification(decision?.kind === "collect" ? decision.tier : kycTierRequiredRef.current);
-        setError(err.message, err);
-        return "paused";
-      }
+      if (handleKycRejection(err)) return "paused";
       handleError(err?.message || "Verification could not be completed. Please contact checkout support.", err);
       return "paused";
     }
-  }, [requestKycVerification, handleError, buildTrackedCustomerUrl, consumeKycTrackingResponse, pollKycStatus, reportKycEvent, updateStep, setKycTierRequired, setPersistedError]);
+  }, [requestKycVerification, handleError, handleKycRejection, buildTrackedCustomerUrl, consumeKycTrackingResponse, pollKycStatus, reportKycEvent, updateStep, setKycTierRequired, setPersistedError]);
   verificationRecoveryRef.current = recoverVerification;
 
   const reset = useCallback(() => {
@@ -2570,11 +2720,13 @@ export function useStripeEmbeddedOnramp({
           }
         } catch (sdkCheckoutErr: any) {
           const checkoutErr = checkoutResponseError || sdkCheckoutErr;
+          const checkoutErrorDetails = onrampErrorDetails(checkoutErr);
           console.error("[EMBEDDED ONRAMP] Checkout failure diagnostic:", {
             sessionId: currentSessionId, receiptId,
-            code: onrampErrorCode(checkoutErr) || null,
+            code: checkoutErrorDetails.code || null,
+            message: maskSensitiveData(checkoutErrorDetails.message) || null,
             declineCode: checkoutErr?.decline_code || checkoutErr?.error?.decline_code || null,
-            requestId: checkoutErr?.requestId || null,
+            requestId: checkoutErrorDetails.requestId || checkoutErr?.requestId || null,
             source: checkoutResponseError ? "checkout_api" : "stripe_sdk",
           });
           if (checkoutErr?.code === "receipt_already_paid" || checkoutErr?.code === "receipt_payment_in_progress") {
@@ -2968,19 +3120,21 @@ export function useStripeEmbeddedOnramp({
   }, [detectedCardFunding, handleError, runCheckoutLoop, setKycTierRequired, updateStep]);
 
   const checkKycStatus = useCallback(async () => {
-    if (stepRef.current !== "kyc_pending" || !customerIdRef.current || isRunningRef.current) return;
+    if (!mountedRef.current || stepRef.current !== "kyc_pending" || !customerIdRef.current || isRunningRef.current || isVerifyingRef.current) return;
+    const pendingCustomerId = customerIdRef.current;
+    const canResume = () => mountedRef.current && customerIdRef.current === pendingCustomerId && stepRef.current === "checking_kyc";
     isRunningRef.current = true;
     updateStep("checking_kyc");
     try {
       if (verificationStatusRecoveryRef.current) {
-        if (await recoverVerification(verificationRecoveryActionRef.current, {}) === "ready") resumeAfterKyc();
+        if (await recoverVerification(verificationRecoveryActionRef.current, {}) === "ready" && canResume()) resumeAfterKyc();
         return;
       }
       if (pendingL2Ref.current && kycTierRequiredRef.current === "l1" && !isEuEeaCountry(activeCountryRef.current) && latestKycSnapshotRef.current?.region !== "eu") {
         await verifyDocumentsRef.current?.();
         return;
       }
-      if (await pollKycStatus(customerIdRef.current, kycTierRequiredRef.current)) {
+      if (await pollKycStatus(pendingCustomerId, kycTierRequiredRef.current) && canResume()) {
         if (kycTierRequiredRef.current === "l2") pendingL2Ref.current = false;
         setError(null);
         setPersistedError(null);
@@ -2988,21 +3142,66 @@ export function useStripeEmbeddedOnramp({
       }
     } catch (err: any) {
       if (err?.code === "kyc_observation_pending") return;
-      if (/^kyc_l[012]_rejected$/.test(err?.code || "")) {
-        setKycLevel("REJECTED");
-        kycLevelRef.current = "REJECTED";
-        setError(err.message);
-        updateStep("collecting_kyc");
-        isRunningRef.current = false;
-        return;
-      }
+      if (handleKycRejection(err)) return;
       handleError(err?.message || "Verification status is unavailable", err);
     }
-  }, [pollKycStatus, resumeAfterKyc, handleError, updateStep, setPersistedError, recoverVerification]);
+  }, [pollKycStatus, resumeAfterKyc, handleError, handleKycRejection, updateStep, setPersistedError, recoverVerification]);
 
-  const completeEuKyc = useCallback(async (): Promise<void> => {
+  const checkKycStatusRef = useRef(checkKycStatus);
+  useEffect(() => { checkKycStatusRef.current = checkKycStatus; }, [checkKycStatus]);
+
+  useEffect(() => {
+    if (!enabled || step !== "kyc_pending" || !cryptoCustomerId || typeof window === "undefined") return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = (delayMs: number) => {
+      if (cancelled) return;
+      if (timer !== null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        if (cancelled || !mountedRef.current || stepRef.current !== "kyc_pending") return;
+        if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+        if (window.navigator.onLine === false) return;
+        void checkKycStatusRef.current().finally(() => {
+          // React can batch checking_kyc -> kyc_pending into one render. Rearm
+          // explicitly so a fast status outage cannot strand the pending flow.
+          if (!cancelled && stepRef.current === "kyc_pending") schedule(KYC_PENDING_AUTO_RECHECK_MS);
+        });
+      }, delayMs);
+    };
+
+    const wakePendingCheck = () => {
+      if (stepRef.current !== "kyc_pending") return;
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      if (window.navigator.onLine === false) return;
+      schedule(0);
+    };
+
+    schedule(KYC_PENDING_AUTO_RECHECK_MS);
+    window.addEventListener("focus", wakePendingCheck);
+    window.addEventListener("online", wakePendingCheck);
+    if (typeof document !== "undefined") {
+      document.addEventListener?.("visibilitychange", wakePendingCheck);
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer !== null) clearTimeout(timer);
+      window.removeEventListener("focus", wakePendingCheck);
+      window.removeEventListener("online", wakePendingCheck);
+      if (typeof document !== "undefined") {
+        document.removeEventListener?.("visibilitychange", wakePendingCheck);
+      }
+    };
+  }, [enabled, step, cryptoCustomerId, receiptId, merchantWallet]);
+
+  const completeEuKyc = useCallback(async (forceDocuments = false, identifiersJustCompleted = false): Promise<boolean> => {
     const coordinator = onrampRef.current;
     if (!coordinator) throw new Error("Onramp not initialized");
+    const customerId = customerIdRef.current;
+    const canContinue = () => mountedRef.current && customerIdRef.current === customerId && onrampRef.current === coordinator;
     reportKycEvent("l2_required", "l2");
 
     const currentL2 = latestKycSnapshotRef.current?.tiers.find((tier) => tier.tier === "l2");
@@ -3010,8 +3209,38 @@ export function useStripeEmbeddedOnramp({
       currentL2?.verification_status === "rejected"
       && hasReachedStripeKycVerificationAttemptLimit(currentL2.verification_errors)
     ) {
-      reportKycEvent("documents_retry_exhausted", "l2");
-      throw new Error("Stripe has reached the maximum identity verification attempts. Please contact Stripe support.");
+      handleKycRejection({ code: "kyc_l2_rejected" });
+      return false;
+    }
+
+    // Direct document retries must obey the same MiCA -> ToS -> documents
+    // order as onboarding. The completed SDK response is valid evidence when
+    // the customer GET has not yet reflected newly submitted identifiers.
+    if (!latestKycSnapshotRef.current?.identifiersSatisfied && !identifiersJustCompleted) {
+      if (!coordinator.getMissingIdentifiers || !coordinator.updateKycInfo) {
+        throw new Error("Stripe MiCA identifier collection is unavailable.");
+      }
+      const missing = await coordinator.getMissingIdentifiers();
+      if (!canContinue()) return false;
+      const requirements = Array.isArray(missing?.identifiers) ? missing.identifiers : [];
+      setMissingKycIdentifiers(requirements);
+      setKycIdentifierAlternatives(Array.isArray(missing?.alternatives) ? missing.alternatives : []);
+      if (requirements.length > 0) {
+        updateStep("collecting_identifiers");
+        isRunningRef.current = false;
+        return false;
+      }
+      const completed = await coordinator.updateKycInfo([]);
+      if (!canContinue()) return false;
+      if (!completed?.completed
+        || (Array.isArray(completed.identifiers) && completed.identifiers.length > 0)
+        || (Array.isArray(completed.invalid_identifiers) && completed.invalid_identifiers.length > 0)) {
+        setMissingKycIdentifiers(Array.isArray(completed?.identifiers) ? completed.identifiers : []);
+        setKycIdentifierAlternatives(Array.isArray(completed?.alternatives) ? completed.alternatives : []);
+        updateStep("collecting_identifiers");
+        isRunningRef.current = false;
+        return false;
+      }
     }
 
     if (!latestKycSnapshotRef.current?.attestationAccepted) {
@@ -3021,31 +3250,41 @@ export function useStripeEmbeddedOnramp({
       reportKycEvent("attestation_started", "l2");
       updateStep("accepting_terms");
       const attestationResult = await new Promise<"confirmed" | "abandoned">((resolve, reject) => {
-        coordinator.promptUserAttestation!("eu_carf", (result) => resolve(result.result))
-          .then((element) => setAttestationElement(element))
+        let completed = false;
+        coordinator.promptUserAttestation!("eu_carf", (result) => { completed = true; resolve(result.result); })
+          .then((element) => { if (!completed && mountedRef.current) setAttestationElement(element); })
           .catch(reject);
       });
+      if (!canContinue()) return false;
       setAttestationElement(null);
       if (attestationResult !== "confirmed") {
         reportKycEvent("attestation_abandoned", "l2");
-        throw new Error("EU tax attestation must be confirmed to continue.");
+        updateStep("collecting_kyc");
+        isRunningRef.current = false;
+        setError("Please accept Stripe's terms to continue.");
+        return false;
       }
       reportKycEvent("attestation_confirmed", "l2");
     }
 
-    const l2UnderReview = latestKycSnapshotRef.current?.tiers.some(tier => tier.tier === "l2" && tier.verification_status === "pending");
-    if (latestKycSnapshotRef.current?.verifiedTier !== "L2" && !l2UnderReview) {
+    const l2UnderReview = latestKycSnapshotRef.current
+      && isStripeDocumentReviewPending(latestKycSnapshotRef.current, documentReviewSubmittedRef.current);
+    if ((forceDocuments && currentL2?.verification_status === "verified")
+      || (latestKycSnapshotRef.current?.verifiedTier !== "L2" && !l2UnderReview)) {
       reportKycEvent("documents_started", "l2");
       updateStep("verifying_identity");
       const verifyResult = await coordinator.verifyDocuments();
+      if (!canContinue()) return false;
       if (!verifyResult || verifyResult.result === "abandoned") {
         reportKycEvent("documents_abandoned", "l2");
-        throw new Error("Identity document verification was abandoned.");
+        updateStep("collecting_kyc");
+        isRunningRef.current = false;
+        return false;
       }
+      markDocumentReviewSubmitted(true);
     }
 
     updateStep("checking_kyc");
-    const customerId = customerIdRef.current || "";
     const approved = customerId ? await pollKycStatus(customerId, "l2") : false;
     if (!approved) {
       const refreshedL2 = latestKycSnapshotRef.current?.tiers.find((tier) => tier.tier === "l2");
@@ -3059,25 +3298,9 @@ export function useStripeEmbeddedOnramp({
       throw new Error("EU L2 verification is pending or requires review.");
     }
 
-    if (customerId) {
-      let finalResponse: Response | null = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        finalResponse = await fetch(buildTrackedCustomerUrl(customerId, "final"), {
-          headers: { "x-stripe-oauth-token": oauthTokenRef.current || "" },
-        });
-        if (finalResponse.status !== 503 || attempt === 2) break;
-        await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
-      }
-      if (finalResponse?.ok) {
-        const finalData = await finalResponse.json();
-        const finalSnapshot = consumeKycTrackingResponse(finalData);
-        if (!finalSnapshot.euFullyVerified) {
-          throw new Error("EU verification is incomplete: L2, MiCA identifiers, and attestation are all required.");
-        }
-      } else {
-        throw new Error("Stripe's final EU verification status could not be confirmed. Please retry before continuing.");
-      }
-    }
+    // The successful poll already persisted a fresh provider snapshot with
+    // all three EU requirements. A second telemetry read must not stall or
+    // reverse that result; checkout still enforces Stripe's current eligibility.
 
     setIsAllKycCompleted(true);
     setKycLevel("L2");
@@ -3086,7 +3309,9 @@ export function useStripeEmbeddedOnramp({
     kycFinalStatusRef.current = "verified";
     kycVerifiedLevelRef.current = "L2";
     reportKycEvent("completed", "l2");
-  }, [buildTrackedCustomerUrl, consumeKycTrackingResponse, pollKycStatus, reportKycEvent, updateStep]);
+    return true;
+  }, [pollKycStatus, reportKycEvent, updateStep, markDocumentReviewSubmitted, handleKycRejection]);
+  completeEuKycRef.current = completeEuKyc;
 
   const submitKycIdentifiers = useCallback(async (
     input: Record<string, string> | Array<{ type: string; value: string }>,
@@ -3159,15 +3384,15 @@ export function useStripeEmbeddedOnramp({
     setMissingKycIdentifiers([]);
     setKycIdentifierAlternatives([]);
     try {
-      await completeEuKyc();
-      resumeAfterKyc();
+      if (await completeEuKyc(false, true)) resumeAfterKyc();
     } catch (completionError: any) {
+      if (completionError?.code === "kyc_observation_pending" || handleKycRejection(completionError)) return;
       if (stepRef.current !== "error") {
         handleError(completionError?.message || "EU verification could not be completed.", completionError);
       }
       throw completionError;
     }
-  }, [completeEuKyc, handleError, kycIdentifierAlternatives, missingKycIdentifiers, reportKycEvent, resumeAfterKyc, updateStep, isContactAuthenticationPending]);
+  }, [completeEuKyc, handleError, handleKycRejection, kycIdentifierAlternatives, missingKycIdentifiers, reportKycEvent, resumeAfterKyc, updateStep, isContactAuthenticationPending]);
 
   const submitKycInfo = useCallback(async (kycInfo: any) => {
     if (isContactAuthenticationPending()) return;
@@ -3214,7 +3439,11 @@ export function useStripeEmbeddedOnramp({
             type: "us_ssn"
           };
         } else if (payload.id_number.value && typeof payload.id_number.value === "string") {
-          payload.id_number.value = payload.id_number.value.replace(/\D/g, "");
+          payload.id_number = {
+            ...payload.id_number,
+            value: payload.id_number.value.replace(/\D/g, ""),
+            ...(payloadCountry === "US" ? { type: "us_ssn" } : {}),
+          };
         }
       }
       if (payload.date_of_birth) {
@@ -3263,9 +3492,33 @@ export function useStripeEmbeddedOnramp({
       }
       const targetCountryCode = (payload.address?.country || activeCountryRef.current || "US").toUpperCase();
       const isEuUser = isEuEeaCountry(targetCountryCode);
+      if (targetCountryCode === "US") {
+        validateUsKycInfoPayload(payload, latestKycSnapshotRef.current);
+      }
       const submittedTier = isEuUser ? "l2" : ((payload.date_of_birth || payload.id_number) ? "l1" : "l0");
       reportKycEvent("basic_submitted", submittedTier);
-      await submitKycInfoWithTimeout(onrampRef.current, payload);
+      let kycApprovedAfterUncertainSubmission = false;
+      try {
+        await submitKycInfoWithTimeout(onrampRef.current, payload);
+      } catch (submissionError) {
+        if (!isUncertainKycSubmissionError(submissionError) || !customerIdRef.current) throw submissionError;
+
+        // The SDK acknowledgement can be lost after Stripe accepted the KYC
+        // update. Never resubmit sensitive identity data to resolve that
+        // ambiguity. Observe the authenticated CryptoCustomer instead.
+        console.warn("[EMBEDDED ONRAMP] KYC submission acknowledgement was uncertain. Reconciling the provider tier before retrying any input...");
+        reportKycEvent("basic_submission_ack_uncertain", submittedTier);
+        if (!isEuUser) {
+          updateStep("checking_kyc");
+          kycApprovedAfterUncertainSubmission = await pollKycStatus(customerIdRef.current, submittedTier);
+          if (kycApprovedAfterUncertainSubmission) {
+            reportKycEvent("basic_submission_reconciled", submittedTier);
+          }
+        }
+        // EU continues with read-only missing-identifier discovery. A success
+        // there proves the basic update is visible and determines the exact
+        // MiCA fields still required; a failure remains recoverable below.
+      }
 
       if (isEuUser) {
         console.log("[EMBEDDED ONRAMP] EU KYC basic info submitted. Resolving Stripe MiCA identifier requirements...");
@@ -3303,7 +3556,8 @@ export function useStripeEmbeddedOnramp({
         return;
       } else {
         updateStep("checking_kyc");
-        const kycApproved = await pollKycStatus(customerIdRef.current || "", submittedTier);
+        const kycApproved = kycApprovedAfterUncertainSubmission
+          || await pollKycStatus(customerIdRef.current || "", submittedTier);
         if (!kycApproved) {
           if (submittedTier === "l0") {
             console.log("[EMBEDDED ONRAMP] L0 verification not approved. Remaining at L0 for address correction...");
@@ -3391,19 +3645,9 @@ export function useStripeEmbeddedOnramp({
     } catch (err: any) {
       const errMsg = String(err?.message || err || "").toLowerCase();
       if (err?.code === "kyc_observation_pending") return;
-      const rejectionCode = String(err?.code || "").toLowerCase();
-      if (rejectionCode === "kyc_l0_rejected" || rejectionCode === "kyc_l1_rejected") {
-        const failedTier = rejectionCode === "kyc_l0_rejected" ? "L0" : "L1";
-        const recoveryMessage = failedTier === "L0"
-          ? "Stripe could not verify the basic identity details. Complete L1 verification with date of birth and SSN to continue."
-          : "Stripe rejected the L1 identity details. Correct the legal name, address, date of birth, or SSN and resubmit; L0 checkout is no longer available.";
-        reportKycEvent(`${failedTier.toLowerCase()}_rejected`, "l1");
-        setKycLevel("REJECTED");
-        kycLevelRef.current = "REJECTED";
-        setKycTierRequired("l1");
-        setError(recoveryMessage);
-        updateStep("collecting_kyc");
-        isRunningRef.current = false;
+      if (handleKycRejection(err)) return;
+      if (stepRef.current === "collecting_identifiers") {
+        setError(err?.message || "Please correct the identifiers Stripe requires.");
         return;
       }
       const isAlreadyVerified = errMsg.includes("already been verified") ||
@@ -3549,6 +3793,7 @@ export function useStripeEmbeddedOnramp({
     handleError,
     detectedCardFunding,
     completeEuKyc,
+    handleKycRejection,
     submitKycIdentifiers,
     isContactAuthenticationPending,
     reportKycEvent,
@@ -3569,7 +3814,18 @@ export function useStripeEmbeddedOnramp({
     isRunningRef.current = true;
 
     try {
-      if (!isEuEeaCountry(activeCountryRef.current) && latestKycSnapshotRef.current?.region !== "eu") {
+      const l2 = latestKycSnapshotRef.current?.tiers.find(tier => tier.tier === "l2");
+      if (l2?.verification_status === "rejected" && hasReachedStripeKycVerificationAttemptLimit(l2.verification_errors)) {
+        handleKycRejection({ code: "kyc_l2_rejected" });
+        return false;
+      }
+      if (isEuEeaCountry(activeCountryRef.current) || latestKycSnapshotRef.current?.region === "eu") {
+        const completed = await completeEuKyc(true);
+        if (completed) resumeAfterKyc();
+        return completed;
+      }
+      let documentsUnderReview = false;
+      {
         const customerId = customerIdRef.current;
         if (!customerId) throw new Error("Customer identity is unavailable. Please sign in again.");
         setKycTierRequired("l1");
@@ -3596,6 +3852,14 @@ export function useStripeEmbeddedOnramp({
         } finally {
           clearTimeout(timeoutId);
         }
+        const freshL2 = snapshot.tiers.find(tier => tier.tier === "l2");
+        if (freshL2?.verification_status === "rejected" && hasReachedStripeKycVerificationAttemptLimit(freshL2.verification_errors)) {
+          handleKycRejection({ code: "kyc_l2_rejected" });
+          return false;
+        }
+        // US L2 pending follows document submission; do not duplicate an
+        // in-flight review, even if this method is called from a stale UI.
+        documentsUnderReview = freshL2?.verification_status === "pending";
         const l1 = snapshot.tiers.find(tier => tier.tier === "l1");
         if (l1?.verification_status !== "verified" && snapshot.verifiedTier !== "L2") {
           if (l1?.verification_status === "pending") {
@@ -3613,18 +3877,19 @@ export function useStripeEmbeddedOnramp({
           }
         }
       }
-      reportKycEvent("documents_started", "l2");
-      updateStep("verifying_identity");
       setKycTierRequired("l2");
-      const res = await onrampRef.current.verifyDocuments();
-      console.log("[EMBEDDED ONRAMP] verifyDocuments response:", res);
-      isVerifyingRef.current = false;
-
-      if (!res || res.result === "abandoned") {
-        console.warn("[EMBEDDED ONRAMP] Identity verification abandoned by user");
-        updateStep("collecting_kyc");
-        isRunningRef.current = false;
-        return false;
+      if (!documentsUnderReview) {
+        reportKycEvent("documents_started", "l2");
+        updateStep("verifying_identity");
+        const res = await onrampRef.current.verifyDocuments();
+        isVerifyingRef.current = false;
+        if (!res || res.result === "abandoned") {
+          reportKycEvent("documents_abandoned", "l2");
+          updateStep("collecting_kyc");
+          isRunningRef.current = false;
+          return false;
+        }
+        markDocumentReviewSubmitted(true);
       }
 
       console.log("[EMBEDDED ONRAMP] Document verification completed. Polling L2 KYC status...");
@@ -3657,14 +3922,7 @@ export function useStripeEmbeddedOnramp({
       if (err?.code === "kyc_observation_pending") return false;
       isVerifyingRef.current = false;
       isRunningRef.current = false;
-      if (err?.code === "kyc_l1_rejected") {
-        setKycTierRequired("l1");
-        setKycLevel("REJECTED");
-        kycLevelRef.current = "REJECTED";
-        setError(err.message);
-        updateStep("collecting_kyc");
-        return false;
-      }
+      if (handleKycRejection(err)) return false;
       const errMsg = String(err?.message || err || "").toLowerCase();
       if (errMsg.includes("invalid request") || errMsg.includes("already_verified") || errMsg.includes("cannot be updated")) {
         const snapshot = latestKycSnapshotRef.current;
@@ -3708,7 +3966,7 @@ export function useStripeEmbeddedOnramp({
     } finally {
       isVerifyingRef.current = false;
     }
-  }, [pollKycStatus, updateStep, handleError, reportKycEvent, setKycTierRequired, resumeAfterKyc, setPersistedError, buildTrackedCustomerUrl, consumeKycTrackingResponse, isContactAuthenticationPending]);
+  }, [pollKycStatus, updateStep, handleError, handleKycRejection, completeEuKyc, markDocumentReviewSubmitted, reportKycEvent, setKycTierRequired, resumeAfterKyc, setPersistedError, buildTrackedCustomerUrl, consumeKycTrackingResponse, isContactAuthenticationPending]);
   verifyDocumentsRef.current = verifyDocuments;
 
   const startOnramp = useCallback(async (
@@ -4307,9 +4565,13 @@ export function useStripeEmbeddedOnramp({
               return;
             }
 
-            await completeEuKyc();
-            resumeAfterKyc();
+            if (await completeEuKyc()) resumeAfterKyc();
           } catch (euResumeError: any) {
+            if (handleKycRejection(euResumeError)) return;
+            if (stepRef.current === "collecting_identifiers") {
+              setError(euResumeError?.message || "Please correct the identifiers Stripe requires.");
+              return;
+            }
             handleError(euResumeError?.message || "EU verification could not be completed.", euResumeError);
           }
           return;
@@ -4428,9 +4690,17 @@ export function useStripeEmbeddedOnramp({
                   console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before L2 verifyDocuments. Aborting.");
                   return;
                 }
-                const verifyResult = await onrampRef.current.verifyDocuments();
-                if (verifyResult.result === "abandoned") {
-                  throw new Error("Identity verification was abandoned");
+                if (l2Tier?.verification_status === "rejected" && hasReachedStripeKycVerificationAttemptLimit(l2Tier.verification_errors)) {
+                  handleKycRejection({ code: "kyc_l2_rejected" });
+                  return;
+                }
+                if (l2Tier?.verification_status !== "pending") {
+                  const verifyResult = await onrampRef.current.verifyDocuments();
+                  if (verifyResult.result === "abandoned") {
+                    requestKycVerification("l2");
+                    return;
+                  }
+                  markDocumentReviewSubmitted(true);
                 }
 
                 console.log("[EMBEDDED ONRAMP] L2 document verification finished. Polling status...");
@@ -4448,7 +4718,8 @@ export function useStripeEmbeddedOnramp({
                 setTimeout(() => startOnramp(activeEmail, activePhone, activeName), 50);
                 return;
               } catch (verifyErr: any) {
-                handleError(verifyErr?.message || "Identity verification failed");
+                if (verifyErr?.code === "kyc_observation_pending" || handleKycRejection(verifyErr)) return;
+                handleError(verifyErr?.message || "Identity verification failed", verifyErr);
                 return;
               }
             } else if (isL0Verified || l0Tier?.verification_status === "rejected" || l1Tier?.verification_status === "rejected") {
@@ -4874,9 +5145,17 @@ export function useStripeEmbeddedOnramp({
                     console.warn("[EMBEDDED ONRAMP] Onramp coordinator was cleared before L2 verifyDocuments. Aborting.");
                     return;
                   }
-                  const verifyResult = await onrampRef.current.verifyDocuments();
-                  if (verifyResult.result === "abandoned") {
-                    throw new Error("Identity verification was abandoned");
+                  if (l2Tier?.verification_status === "rejected" && hasReachedStripeKycVerificationAttemptLimit(l2Tier.verification_errors)) {
+                    handleKycRejection({ code: "kyc_l2_rejected" });
+                    return;
+                  }
+                  if (l2Tier?.verification_status !== "pending") {
+                    const verifyResult = await onrampRef.current.verifyDocuments();
+                    if (verifyResult.result === "abandoned") {
+                      requestKycVerification("l2");
+                      return;
+                    }
+                    markDocumentReviewSubmitted(true);
                   }
 
                   console.log("[EMBEDDED ONRAMP] ACH L2 document verification finished. Polling status...");
@@ -4914,7 +5193,7 @@ export function useStripeEmbeddedOnramp({
               return;
             }
           } catch (kycErr: any) {
-            if (kycErr?.code === "kyc_observation_pending") return;
+            if (kycErr?.code === "kyc_observation_pending" || handleKycRejection(kycErr)) return;
             console.warn("[EMBEDDED ONRAMP] Failed during ACH KYC enforcement check:", kycErr);
             setError(kycErr?.message || "Identity verification required for ACH payments.");
             setPaymentElement(null);
@@ -4990,6 +5269,7 @@ export function useStripeEmbeddedOnramp({
     } catch (err: any) {
       const errMessage = String(err?.message || "").toLowerCase();
       if (err?.code === "kyc_observation_pending") return;
+      if (handleKycRejection(err)) return;
       const errCode = String(err?.code || "").toLowerCase();
       const outerRecovery = onrampRecovery(err);
       if (["kyc_l0", "kyc_l1", "kyc_l2", "kyc_status", "kyc_pending", "attestation"].includes(outerRecovery)) {
@@ -5044,7 +5324,7 @@ export function useStripeEmbeddedOnramp({
     destinationCurrency, receiptId, merchantWallet, brandKey,
     publishableKey, connectedWalletAddress, connectedWallet, handleError,
     updateStep, setPersistedError, createBuyerWallet, runCheckoutLoop, pollKycStatus, recoverVerification, resumeAfterKyc,
-    buildTrackedCustomerUrl, consumeKycTrackingResponse, completeEuKyc, restoreKycRequirement, requestKycVerification,
+    buildTrackedCustomerUrl, consumeKycTrackingResponse, completeEuKyc, handleKycRejection, markDocumentReviewSubmitted, restoreKycRequirement, requestKycVerification,
     resumeAfterKyc, reportKycEvent, getOnrampAmount, achEnabled, theme, isEcommerceMode,
     isContactAuthenticationPending,
   ]);

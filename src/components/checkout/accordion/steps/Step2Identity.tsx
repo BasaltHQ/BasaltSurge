@@ -281,7 +281,7 @@ export function Step2Identity({
         {headlessStep === "kyc_pending" || headlessStep === "checking_kyc" ? (
           <div role="status" aria-live="polite" className="mt-3 rounded-xl border border-current/15 bg-current/5 p-4 space-y-3">
             <div className="flex items-center gap-2 font-semibold text-sm"><Clock className="h-4 w-4" /> Verification pending</div>
-            <p className="text-xs opacity-75">We’re waiting for your verification result. You don’t need to resubmit your details.</p>
+            <p className="text-xs opacity-75">We’re checking your verification automatically and will continue when it’s ready. You don’t need to refresh or resubmit your details.</p>
             <button type="button" onClick={() => { void onCheckKycStatus?.(); }}
               disabled={headlessStep === "checking_kyc" || !onCheckKycStatus}
               className="rounded-lg border border-current/20 px-3 py-2 text-xs font-semibold disabled:opacity-50">
