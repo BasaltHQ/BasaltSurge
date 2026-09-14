@@ -22,6 +22,11 @@ import {
   normalizeAccordionStepTransition,
 } from "@/lib/checkout-flow-tracking";
 import { resolvePersistedClientIp } from "@/lib/request-client-ip";
+import {
+  normalizeReceiptCustomerEmail,
+  planCheckoutEmailPersistence,
+  resolveReceiptCustomerEmail,
+} from "@/lib/receipt-customer-email";
 
 function hasValidInternalStatusSecret(req: NextRequest): boolean {
   const expected = getReceiptStatusInternalSecret();
@@ -143,7 +148,15 @@ export async function POST(req: NextRequest) {
     const tipUsdIn = typeof body.tipUsd === "number" ? Number(body.tipUsd) : undefined;
     const discountUsdIn = typeof body.discountUsd === "number" ? Number(body.discountUsd) : undefined;
     const stripeSessionId = typeof body.stripeSessionId === "string" ? String(body.stripeSessionId).trim() : undefined;
-    const customerEmail = typeof body.customerEmail === "string" ? String(body.customerEmail).trim().toLowerCase() : undefined;
+    const rawCustomerEmail = typeof body.customerEmail === "string" ? String(body.customerEmail).trim() : "";
+    const customerEmail = normalizeReceiptCustomerEmail(rawCustomerEmail) || undefined;
+
+    if (rawCustomerEmail && !customerEmail) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_customer_email" },
+        { status: 400, headers: { "x-correlation-id": correlationId } }
+      );
+    }
     
     const isCryptoPayment = !!txHash || body.paymentMethod === "crypto" || body.funding === "crypto" || body.detectedCardFunding === "crypto" || body.detectedCardFunding === "coinbase" || body.isCrypto === true;
 
@@ -265,7 +278,7 @@ export async function POST(req: NextRequest) {
       const checkoutStatus = !isTrustedInternal && isAuthoritativeStatus ? `client_reported_${status}` : status;
       const ts = Date.now();
       try {
-        const container = await getContainer();
+        const container = await getContainer(undefined, undefined, { profile: "critical" });
         const checkoutStatusSource = isTrustedInternal ? "verified_processor_progress" : "browser";
         const reportedRequiredTier = normalizeKycTier(body.kycRequiredLevel);
         const kycEvent = typeof body.kycEvent === "string"
@@ -291,6 +304,19 @@ export async function POST(req: NextRequest) {
           } catch { }
           if (!existing) break;
           receiptExists = true;
+          const checkoutEmailPlan = status === "checkout_initialized"
+            ? planCheckoutEmailPersistence(existing, customerEmail)
+            : null;
+          if (checkoutEmailPlan?.conflict) {
+            return NextResponse.json(
+              {
+                ok: false,
+                error: "receipt_customer_email_locked",
+                reason: "payment_in_progress",
+              },
+              { status: 409, headers: { "x-correlation-id": correlationId } }
+            );
+          }
           const ipAddress = !isTrustedInternal
             ? resolvePersistedClientIp(existing.ipAddress, req.headers, requestIpAddress)
             : null;
@@ -335,6 +361,12 @@ export async function POST(req: NextRequest) {
               { op: "set", path: "/checkoutStatusUpdatedAt", value: ts },
               { op: "set", path: "/checkoutStatusSource", value: checkoutStatusSource },
               { op: "set", path: "/checkoutStatusHistory", value: checkoutStatusHistory },
+              ...(checkoutEmailPlan?.fields
+                ? [
+                    { op: "set" as const, path: "/customerEmail", value: checkoutEmailPlan.fields.customerEmail },
+                    { op: "set" as const, path: "/stripeEmail", value: checkoutEmailPlan.fields.stripeEmail },
+                  ]
+                : []),
               ...(reportedRequiredTier
                 ? [{ op: "set" as const, path: "/kycRequiredLevel", value: highestKycTier(existing.kycRequiredLevel, reportedRequiredTier) }]
                 : []),
@@ -354,9 +386,19 @@ export async function POST(req: NextRequest) {
               ...(!isTrustedInternal && isAuthoritativeStatus
                 ? [{ op: "set" as const, path: "/paymentVerificationRequired", value: true }]
                 : []),
-            ] as any, existing._etag
-              ? { accessCondition: { type: "IfMatch", condition: existing._etag } }
-              : undefined);
+            ] as any, {
+              // Mongo uses matchFields and Cosmos uses the ETag. Together they
+              // make Step 1 selection atomic with payment-attempt reservation.
+              matchFields: {
+                stripeSessionId: existing.stripeSessionId ?? null,
+                stripePaymentAttemptSessionId: existing.stripePaymentAttemptSessionId ?? null,
+                customerEmail: existing.customerEmail ?? null,
+                stripeEmail: existing.stripeEmail ?? null,
+              },
+              ...(existing._etag
+                ? { accessCondition: { type: "IfMatch", condition: existing._etag } }
+                : {}),
+            } as any);
             if (ipAddress && ipAddress !== existing.ipAddress) {
               try {
                 await container.item(id, wallet).patch([
@@ -493,7 +535,6 @@ export async function POST(req: NextRequest) {
           ...(typeof discountUsdIn === "number" ? { discountUsd: discountUsdIn } : {}),
           ...(shopSlug ? { shopSlug } : {}),
           ...(stripeSessionId && (!resource?.stripeSessionId || resource.stripeSessionId === stripeSessionId) ? { stripeSessionId } : {}),
-          ...(customerEmail ? { customerEmail } : {}),
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
@@ -550,7 +591,6 @@ export async function POST(req: NextRequest) {
             : {}),
           ...(shopSlug ? { shopSlug } : {}),
           ...(stripeSessionId ? { stripeSessionId } : {}),
-          ...(customerEmail ? { customerEmail } : {}),
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
@@ -581,13 +621,14 @@ export async function POST(req: NextRequest) {
         next.paymentVerificationRequired = false;
       }
 
-      // Track customerSessions if stripeSessionId or customerEmail or buyerWallet is available
-      if (stripeSessionId || customerEmail || buyerWallet) {
+      // Later callbacks consume the Step 1 identity but cannot replace it.
+      const canonicalCustomerEmail = resolveReceiptCustomerEmail(next);
+      if (stripeSessionId || canonicalCustomerEmail || buyerWallet) {
         let sessions = Array.isArray(next.customerSessions || (resource && resource.customerSessions)) 
           ? [...(next.customerSessions || resource.customerSessions)] 
           : [];
         
-        const emailToUse = customerEmail || next.stripeEmail || next.customerEmail || (resource && (resource.stripeEmail || resource.customerEmail)) || "";
+        const emailToUse = canonicalCustomerEmail || "";
         const walletToUse = buyerWallet || next.buyerWallet || (resource && resource.buyerWallet) || "";
         
         const existingIndex = sessions.findIndex((s: any) => {

@@ -8,7 +8,8 @@ import Image from "next/image";
 import { motion, AnimatePresence } from "framer-motion";
 import dynamic from "next/dynamic";
 const ConnectButton = dynamic(() => import("thirdweb/react").then((m) => m.ConnectButton), { ssr: false });
-import { useActiveAccount } from "thirdweb/react";
+import { useActiveAccount, useActiveWallet } from "thirdweb/react";
+import { validateClientApplication } from "@/lib/client-application";
 import { client, chain, getWallets, getPrivateWallets } from "@/lib/thirdweb/client";
 import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
 import { useBrand } from "@/contexts/BrandContext";
@@ -240,6 +241,7 @@ function getWizardSteps(brandName: string, isPlatform: boolean) {
 
 export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: SignupWizardProps) {
     const account = useActiveAccount();
+    const activeWallet = useActiveWallet();
     const [currentStep, setCurrentStep] = useState(0);
     const [wallets, setWallets] = useState<any[]>([]);
     const twTheme = usePortalThirdwebTheme();
@@ -451,20 +453,36 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
         }
     }
 
-    async function submitApplication() {
-        if (!shopName.trim()) {
-            setSubmitError("Doing Business As (DBA) Name is required");
-            return;
-        }
-        if (!legalName.trim()) {
-            setSubmitError("Legal Business Name is required");
-            return;
-        }
-        if (!ein.trim()) {
-            setSubmitError("Tax ID / EIN is required");
-            return;
-        }
+    function applicationData() {
+        return {
+            shopName, legalBusinessName: legalName, businessType, ein, website, phone,
+            businessAddress: address, logoUrl, notes, slug: shopSlug,
+            shopLogoUrl, faviconUrl: shopFaviconUrl, primaryColor: shopPrimaryColor,
+            secondaryColor: shopSecondaryColor, layoutMode: shopLayoutMode, description: shopDescription,
+        };
+    }
 
+    function validateStep(step?: 1 | 2) {
+        const issues = validateClientApplication(applicationData(), step);
+        if (issues.length) {
+            setFormStep(issues[0].step);
+            setSubmitError(issues.map(issue => issue.message).join(" "));
+            return false;
+        }
+        setSubmitError("");
+        return true;
+    }
+
+    async function submitApplication() {
+        if (!validateStep()) return;
+        if (!account?.address || account.address.toLowerCase() !== connectedWallet.toLowerCase()) {
+            setSubmitError("Your wallet connection changed. Reconnect and continue with the application wallet.");
+            return;
+        }
+        if (slugStatus === "taken" || slugStatus === "checking") {
+            setSubmitError("Choose an available shop slug before submitting.");
+            return;
+        }
         setSubmitting(true);
         setSubmitError("");
         try {
@@ -496,6 +514,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                         }
                         return {};
                     })(),
+                    walletSignerAddress: activeWallet?.getAdminAccount?.()?.address,
                     shopName,
                     legalBusinessName: legalName,
                     businessType,
@@ -522,7 +541,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                     setApplicationStatus("success"); // Treat as success/already done
                     return;
                 }
-                throw new Error(data.error || "Submission failed");
+                throw new Error(data.message || data.error || "Submission failed");
             }
 
             // Also save the shop_config so it exists when admin views the application
@@ -921,6 +940,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                         </AnimatePresence>
                                     </div>
 
+                                    <p className="text-xs text-gray-400 mb-4">All application fields are required, including logos, favicon, and descriptions.</p>
                                     {formStep === 1 && (
                                         <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
                                             {/* Business Info Section */}
@@ -931,6 +951,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             <div className="md:col-span-6">
                                                 <label className="text-xs text-gray-400 block mb-1">Legal Business Name <span className="text-red-400">*</span></label>
                                                 <input
+                                                    required
                                                     value={legalName}
                                                     onChange={e => setLegalName(e.target.value)}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors"
@@ -940,6 +961,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             <div className="md:col-span-6">
                                                 <label className="text-xs text-gray-400 block mb-1">DBA / Shop Name <span className="text-red-400">*</span></label>
                                                 <input
+                                                    required
                                                     value={shopName}
                                                     onChange={e => setShopName(e.target.value)}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors"
@@ -948,9 +970,10 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             </div>
 
                                             <div className="md:col-span-4">
-                                                <label className="text-xs text-gray-400 block mb-1">Business Type</label>
+                                                <label className="text-xs text-gray-400 block mb-1">Business Type <span className="text-red-400">*</span></label>
                                                 <div className="relative">
                                                     <select
+                                                        required
                                                         value={businessType}
                                                         onChange={e => setBusinessType(e.target.value)}
                                                         className="w-full pl-3 pr-10 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors appearance-none cursor-pointer"
@@ -969,6 +992,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                 </label>
                                                 <div className="relative">
                                                     <input
+                                                        required
                                                         value={ein}
                                                         onChange={e => {
                                                             const val = e.target.value;
@@ -998,8 +1022,9 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                 )}
                                             </div>
                                             <div className="md:col-span-4">
-                                                <label className="text-xs text-gray-400 block mb-1">Phone Number</label>
+                                                <label className="text-xs text-gray-400 block mb-1">Phone Number <span className="text-red-400">*</span></label>
                                                 <input
+                                                    required
                                                     value={phone}
                                                     onChange={e => setPhone(formatPhoneNumber(e.target.value))}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors placeholder:text-gray-600 font-mono"
@@ -1013,8 +1038,9 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             </div>
 
                                             <div className="md:col-span-8">
-                                                <label className="text-xs text-gray-400 block mb-1">Street Address</label>
+                                                <label className="text-xs text-gray-400 block mb-1">Street Address <span className="text-red-400">*</span></label>
                                                 <input
+                                                    required
                                                     value={address.street}
                                                     onChange={e => setAddress({ ...address, street: e.target.value })}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors"
@@ -1022,8 +1048,9 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                 />
                                             </div>
                                             <div className="md:col-span-4">
-                                                <label className="text-xs text-gray-400 block mb-1">Website</label>
+                                                <label className="text-xs text-gray-400 block mb-1">Website <span className="text-red-400">*</span></label>
                                                 <input
+                                                    required
                                                     value={website}
                                                     onChange={e => setWebsite(e.target.value)}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors"
@@ -1031,28 +1058,43 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                 />
                                             </div>
 
-                                            <div className="md:col-span-5">
-                                                <label className="text-xs text-gray-400 block mb-1">City</label>
+                                            <div className="md:col-span-4">
+                                                <label className="text-xs text-gray-400 block mb-1">City <span className="text-red-400">*</span></label>
                                                 <input
+                                                    required
                                                     value={address.city}
                                                     onChange={e => setAddress({ ...address, city: e.target.value })}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors"
                                                 />
                                             </div>
-                                            <div className="md:col-span-4">
-                                                <label className="text-xs text-gray-400 block mb-1">State / Province</label>
+                                            <div className="md:col-span-3">
+                                                <label className="text-xs text-gray-400 block mb-1">State / Province <span className="text-red-400">*</span></label>
                                                 <input
+                                                    required
                                                     value={address.state}
                                                     onChange={e => setAddress({ ...address, state: e.target.value })}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors"
                                                 />
                                             </div>
-                                            <div className="md:col-span-3">
-                                                <label className="text-xs text-gray-400 block mb-1">ZIP / Postal</label>
+                                            <div className="md:col-span-2">
+                                                <label className="text-xs text-gray-400 block mb-1">ZIP / Postal <span className="text-red-400">*</span></label>
                                                 <input
+                                                    required
                                                     value={address.zip}
                                                     onChange={e => setAddress({ ...address, zip: e.target.value })}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors"
+                                                />
+                                            </div>
+                                            <div className="md:col-span-3">
+                                                <label className="text-xs text-gray-400 block mb-1">Country <span className="text-red-400">*</span></label>
+                                                <input
+                                                    required
+                                                    value={address.country}
+                                                    onChange={e => setAddress({ ...address, country: e.target.value.toUpperCase().slice(0, 2) })}
+                                                    className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors uppercase"
+                                                    placeholder="US"
+                                                    maxLength={2}
+                                                    aria-label="Two-letter country code"
                                                 />
                                             </div>
 
@@ -1060,7 +1102,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                 <h3 className="text-xs font-mono uppercase text-gray-500 mb-3 mt-2 tracking-wider">Branding & details</h3>
                                             </div>
                                             <div className="md:col-span-3">
-                                                <label className="text-xs text-gray-400 block mb-1">Business Logo</label>
+                                                <label className="text-xs text-gray-400 block mb-1">Business Logo <span className="text-red-400">*</span></label>
                                                 <ImageUploadField
                                                     value={logoUrl}
                                                     onChange={(val) => setLogoUrl(Array.isArray(val) ? val[0] : val)}
@@ -1071,8 +1113,9 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             </div>
 
                                             <div className="md:col-span-9">
-                                                <label className="text-xs text-gray-400 block mb-1">Notes / Description</label>
+                                                <label className="text-xs text-gray-400 block mb-1">Notes / Description <span className="text-red-400">*</span></label>
                                                 <textarea
+                                                    required
                                                     value={notes}
                                                     onChange={e => setNotes(e.target.value)}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors min-h-[80px]"
@@ -1092,11 +1135,12 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             {/* Slug with Availability Check */}
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <div>
-                                                    <label className="text-xs text-gray-400 block mb-2">Shop Slug</label>
+                                                    <label className="text-xs text-gray-400 block mb-2">Shop Slug <span className="text-red-400">*</span></label>
                                                     <div className="flex items-center gap-2">
                                                         <div className="flex items-center flex-1">
                                                             <span className="px-3 py-2 bg-black/30 rounded-l-lg border border-r-0 border-white/10 text-xs text-gray-500">/shop/</span>
                                                             <input
+                                                                required
                                                                 value={shopSlug}
                                                                 onChange={e => {
                                                                     setShopSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''));
@@ -1146,7 +1190,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <div>
                                                     <ImageUploadField
-                                                        label="Shop Logo"
+                                                        label="Shop Logo *"
                                                         value={shopLogoUrl}
                                                         onChange={(url) => {
                                                             const newUrl = String(url || "");
@@ -1163,7 +1207,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                 </div>
                                                 <div>
                                                     <ImageUploadField
-                                                        label="Favicon"
+                                                        label="Favicon *"
                                                         value={shopFaviconUrl}
                                                         onChange={(url) => setShopFaviconUrl(String(url || ""))}
                                                         target="shop_favicon"
@@ -1189,15 +1233,17 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                             {/* Color Pickers */}
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <div>
-                                                    <label className="text-xs text-gray-400 block mb-2">Primary Color</label>
+                                                    <label className="text-xs text-gray-400 block mb-2">Primary Color <span className="text-red-400">*</span></label>
                                                     <div className="flex items-center gap-2">
                                                         <input
+                                                            required
                                                             type="color"
                                                             value={shopPrimaryColor}
                                                             onChange={e => setShopPrimaryColor(e.target.value)}
                                                             className="w-10 h-10 p-0 shrink-0 aspect-square rounded border border-white/10 cursor-pointer bg-transparent"
                                                         />
                                                         <input
+                                                            required
                                                             value={shopPrimaryColor}
                                                             onChange={e => setShopPrimaryColor(e.target.value)}
                                                             className="flex-1 px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white font-mono focus:border-emerald-500 outline-none transition-colors"
@@ -1206,15 +1252,17 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
                                                     </div>
                                                 </div>
                                                 <div>
-                                                    <label className="text-xs text-gray-400 block mb-2">Secondary Color</label>
+                                                    <label className="text-xs text-gray-400 block mb-2">Secondary Color <span className="text-red-400">*</span></label>
                                                     <div className="flex items-center gap-2">
                                                         <input
+                                                            required
                                                             type="color"
                                                             value={shopSecondaryColor}
                                                             onChange={e => setShopSecondaryColor(e.target.value)}
                                                             className="w-10 h-10 p-0 shrink-0 aspect-square rounded border border-white/10 cursor-pointer bg-transparent"
                                                         />
                                                         <input
+                                                            required
                                                             value={shopSecondaryColor}
                                                             onChange={e => setShopSecondaryColor(e.target.value)}
                                                             className="flex-1 px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white font-mono focus:border-emerald-500 outline-none transition-colors"
@@ -1226,7 +1274,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
 
                                             {/* Layout Mode */}
                                             <div>
-                                                <label className="text-xs text-gray-400 block mb-2">Layout Style</label>
+                                                <label className="text-xs text-gray-400 block mb-2">Layout Style <span className="text-red-400">*</span></label>
                                                 <div className="grid grid-cols-3 gap-3">
                                                     {[
                                                         { id: "minimalist", label: "Minimalist", desc: "Clean & simple" },
@@ -1250,8 +1298,9 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
 
                                             {/* Shop Description */}
                                             <div>
-                                                <label className="text-xs text-gray-400 block mb-2">Shop Description</label>
+                                                <label className="text-xs text-gray-400 block mb-2">Shop Description <span className="text-red-400">*</span></label>
                                                 <textarea
+                                                    required
                                                     value={shopDescription}
                                                     onChange={e => setShopDescription(e.target.value)}
                                                     className="w-full px-3 py-2 bg-black/20 rounded-lg border border-white/10 text-sm text-white focus:border-emerald-500 outline-none transition-colors min-h-[100px]"
@@ -1279,7 +1328,7 @@ export function SignupWizard({ isOpen, onClose, onComplete, inline = false }: Si
 
                                         {formStep === 1 ? (
                                             <button
-                                                onClick={() => setFormStep(2)}
+                                                onClick={() => { if (validateStep(1)) setFormStep(2); }}
                                                 className={`${modalStyles.primary} px-6 py-2.5 rounded-lg bg-white/10 hover:bg-white/15 text-white text-xs font-mono uppercase tracking-wider transition-all border border-white/10`}
                                             >
                                                 Continue →

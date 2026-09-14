@@ -17,6 +17,7 @@ import type { TouchpointType, ColorMode, KioskLayout } from "@/lib/themes";
 import { Lock, CreditCard, Lightbulb, AlertTriangle, HelpCircle, Inbox, Store, Utensils, Sun, Moon, Grid, List, Newspaper, Sparkles, Ban, Check, Key, RefreshCw, Eye, EyeOff, Copy, Trash2, Plus, FileDown } from "lucide-react";
 import { pdf } from "@react-pdf/renderer";
 import { ClientRequestsKYBPDF } from "@/components/reports/ClientRequestsKYBPDF";
+import { WalletSignupContactDetails } from "@/components/admin/WalletSignupContactDetails";
 
 type ClientRequest = {
     id: string;
@@ -32,6 +33,7 @@ type ClientRequest = {
     phone?: string;
     email?: string;
     contactEmail?: string;
+    _synthesized?: boolean;
     billingEmail?: string;
     businessAddress?: {
         street: string;
@@ -1970,10 +1972,13 @@ export default function ClientRequestsPanel() {
                                                                             ) : "—"}
                                                                         </div>
                                                                         <div className="grid grid-cols-[80px_1fr] gap-2 text-sm">
-                                                                            <span className="text-muted-foreground">Phone</span>
+                                                                            <span className="text-muted-foreground">Business Phone</span>
                                                                             <a href={`tel:${req.phone}`} className="hover:text-white transition-colors">{req.phone || "—"}</a>
                                                                         </div>
                                                                     </div>
+                                                                    {req.type === "client_request" && req.status !== "orphaned" && !req._synthesized && (
+                                                                        <WalletSignupContactDetails requestId={req.id} brandKey={req.brandKey || brandKey} />
+                                                                    )}
                                                                 </div>
 
                                                                 <div className="space-y-3">

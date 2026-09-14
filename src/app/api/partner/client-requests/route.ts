@@ -5,6 +5,8 @@ import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth, getAuthenticatedWallet } from "@/lib/auth";
 import { getPlatformAdminWallets } from "@/lib/authz-server";
 import { isPartnerContext } from "@/lib/env";
+import { validateClientApplication, withoutWalletSignupIdentity } from "@/lib/client-application";
+import { getWalletSignupContact, type WalletSignupContact } from "@/lib/thirdweb/wallet-signup-contact";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,6 +27,13 @@ function json(obj: any, init?: { status?: number }) {
     return NextResponse.json(obj, init);
 }
 
+function privateNoStoreJson(obj: any, init?: { status?: number }) {
+    return NextResponse.json(obj, {
+        ...init,
+        headers: { "Cache-Control": "private, no-store" },
+    });
+}
+
 type ClientRequestDoc = {
     id: string;
     wallet: string; // Partition key = requesting wallet
@@ -37,6 +46,8 @@ type ClientRequestDoc = {
     ein?: string;
     website?: string;
     phone?: string;
+    walletSignupContact?: WalletSignupContact;
+    walletSignerAddress?: string;
     businessAddress?: {
         street: string;
         city: string;
@@ -67,6 +78,11 @@ type ClientRequestDoc = {
  * Query params: ?status=pending|approved|rejected (optional filter)
  */
 export async function GET(req: NextRequest) {
+    const isContactDetailRequest = (() => {
+        try { return new URL(req.url).searchParams.has("walletContactRequestId"); }
+        catch { return false; }
+    })();
+    const responseJson = isContactDetailRequest ? privateNoStoreJson : json;
     try {
         const caller = await requireThirdwebAuth(req).catch(() => null as any);
         const roles = Array.isArray(caller?.roles) ? caller.roles : [];
@@ -77,7 +93,7 @@ export async function GET(req: NextRequest) {
         const isPlatformAdmin = platformAdminWallets.includes(callerWallet);
 
         if (!isPlatformAdmin && !roles.includes("admin") && !roles.includes("superadmin")) {
-            return json({ error: "forbidden" }, { status: 403 });
+            return responseJson({ error: "forbidden" }, { status: 403 });
         }
 
         const url = new URL(req.url);
@@ -88,11 +104,40 @@ export async function GET(req: NextRequest) {
 
         const brandKey = (queryBrandKey || envBrandKey || "").toLowerCase();
 
+        if (!isPlatformAdmin && brandKey !== String(envBrandKey || "").toLowerCase()) {
+            return responseJson({ error: "forbidden" }, { status: 403 });
+        }
+
         if (!brandKey) {
-            return json({ error: "missing_brand_key" }, { status: 500 });
+            return responseJson({ error: "missing_brand_key" }, { status: 500 });
         }
 
         const container = await getContainer();
+
+        // The details panel requests one application at a time. Avoid loading the
+        // brand's full application/config list when resolving provider identity.
+        const contactRequestId = url.searchParams.get("walletContactRequestId");
+        if (contactRequestId) {
+            const contactQuery = {
+                query: `SELECT TOP 1 * FROM c WHERE c.type = 'client_request' AND c.id = @id AND StringEquals(c.brandKey, @brand, true)`,
+                parameters: [
+                    { name: "@id", value: contactRequestId },
+                    { name: "@brand", value: brandKey },
+                ],
+            };
+            const { resources: applications } = await container.items.query(contactQuery).fetchAll();
+            const application = applications[0];
+            if (!application) return responseJson({ error: "request_not_found" }, { status: 404 });
+            if (application.walletSignupContact?.source === "thirdweb") {
+                return responseJson({ ok: true, contact: application.walletSignupContact, recordedAtSubmission: true });
+            }
+            try {
+                const contact = await getWalletSignupContact(application.wallet, application.walletSignerAddress);
+                return responseJson({ ok: true, contact, recordedAtSubmission: false });
+            } catch {
+                return responseJson({ error: "wallet_contact_lookup_unavailable" }, { status: 503 });
+            }
+        }
 
         // Fetch requests AND their corresponding site configs (for split persistence)
         // Use StringEquals for case-insensitive brand matching to handle XOINPAY vs xoinpay discrepancies
@@ -494,31 +539,35 @@ export async function GET(req: NextRequest) {
         const creditPlatformBps = dbCreditPlatformFeeBps !== undefined ? dbCreditPlatformFeeBps : (creditBps?.platform ?? 125);
         const debitPlatformBps = dbPlatformFeeBps !== undefined ? dbPlatformFeeBps : (getEnv().PLATFORM_BPS ?? 125);
 
-        return json({ ok: true, requests: result, brandKey, envAgents, envAgentsDebit, isDualSplit, creditPlatformBps, debitPlatformBps });
+        const listRequests = result.map((item: any) => withoutWalletSignupIdentity(item));
+        return responseJson({ ok: true, requests: listRequests, brandKey, envAgents, envAgentsDebit, isDualSplit, creditPlatformBps, debitPlatformBps });
     } catch (e: any) {
         console.error("[client-requests] GET Error:", e);
-        return json({ error: e?.message || "query_failed" }, { status: 500 });
+        return responseJson({ error: e?.message || "query_failed" }, { status: 500 });
     }
 }
 
 /**
  * POST /api/partner/client-requests
  * 
- * Public (requires wallet auth): Submit a new client access request.
- * Body: { shopName, logoUrl?, faviconUrl?, primaryColor?, notes? }
+ * Public (requires wallet auth): Submit a complete client application.
+ * Required fields are validated by validateClientApplication.
  */
 export async function POST(req: NextRequest) {
     try {
         // Try full JWT auth first, then fall back to basic wallet auth
         // This allows new users (who just connected but haven't signed yet) to submit applications
         let wallet: string | null = null;
+        let hasVerifiedWalletSession = false;
 
         try {
             const caller = await requireThirdwebAuth(req);
             wallet = caller?.wallet || null;
+            hasVerifiedWalletSession = Boolean(wallet);
         } catch {
             // Fall back to basic authenticated wallet (cookie-based)
             wallet = await getAuthenticatedWallet(req);
+            hasVerifiedWalletSession = Boolean(wallet);
         }
 
         // If no authenticated session, check for x-wallet header (Unauthenticated submission for new users)
@@ -533,6 +582,11 @@ export async function POST(req: NextRequest) {
             return json({ error: "unauthorized" }, { status: 401 });
         }
 
+        const submittedWallet = req.headers.get("x-wallet");
+        if (submittedWallet && submittedWallet.toLowerCase() !== wallet.toLowerCase()) {
+            return json({ error: "wallet_mismatch", message: "Your signed-in wallet differs from the application wallet. Sign in with the application wallet and try again." }, { status: 400 });
+        }
+
         const w = wallet.toLowerCase();
 
         const brandKey = getBrandKey(req);
@@ -543,8 +597,9 @@ export async function POST(req: NextRequest) {
         const body = await req.json().catch(() => ({} as any));
         const shopName = String(body?.shopName || "").trim();
 
-        if (!shopName) {
-            return json({ error: "shop_name_required" }, { status: 400 });
+        const issues = validateClientApplication(body);
+        if (issues.length) {
+            return json({ error: "invalid_application", message: issues.map(issue => issue.message).join(" "), issues }, { status: 400 });
         }
 
         const container = await getContainer();
@@ -571,6 +626,16 @@ export async function POST(req: NextRequest) {
             return json({ error: "pending_request_exists", message: "You already have a pending request." }, { status: 409 });
         }
 
+        const walletSignerAddress = typeof body?.walletSignerAddress === "string" && /^0x[a-fA-F0-9]{40}$/.test(body.walletSignerAddress)
+            ? body.walletSignerAddress.toLowerCase() : undefined;
+        // Resolve contacts on the server; never trust a contact supplied in the request body.
+        // A transient provider failure can be retried from the admin details view.
+        // Only a verified wallet session may cause provider contact data to be
+        // read and stored. Legacy header-only applications remain supported;
+        // their contact is resolved later through the admin-only details API.
+        const walletSignupContact = hasVerifiedWalletSession
+            ? await getWalletSignupContact(w, walletSignerAddress).catch(() => null)
+            : null;
         const doc: ClientRequestDoc = {
             id: crypto.randomUUID(),
             wallet: w,
@@ -578,6 +643,8 @@ export async function POST(req: NextRequest) {
             brandKey,
             status: "pending",
             shopName,
+            walletSignerAddress,
+            walletSignupContact: walletSignupContact || undefined,
             legalBusinessName: typeof body?.legalBusinessName === "string" ? body.legalBusinessName : undefined,
             businessType: typeof body?.businessType === "string" ? body.businessType : undefined,
             // Encrypt EIN/SSN if present to protect sensitive PII

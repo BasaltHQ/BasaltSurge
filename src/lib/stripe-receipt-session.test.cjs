@@ -90,6 +90,18 @@ test('worker observations cannot overwrite the native receipt valuation', async 
   assert.equal(h.doc.totalUsd, base.totalUsd);
 });
 
+test('worker observations cannot overwrite the Step 1 receipt identity', async () => {
+  const h = harness({ ...base, customerEmail: 'chosen@example.test', stripeEmail: 'chosen@example.test' });
+  await h.helpers.persistStripeReceiptUpdate(h.container, {
+    ...h.doc,
+    customerEmail: 'stale@example.test',
+    stripeEmail: 'stale@example.test',
+    checkoutStatus: 'requires_payment',
+  });
+  assert.equal(h.doc.customerEmail, 'chosen@example.test');
+  assert.equal(h.doc.stripeEmail, 'chosen@example.test');
+});
+
 test('session attachment refuses a different native valuation', async () => {
   const pricing = { version: 1, currency: 'EUR', usdPerUnit: 1.25 };
   const h = harness({ ...base, pricing });
@@ -183,6 +195,26 @@ test('late session creation cannot overwrite accepted payment or unrelated recei
   h.race(doc => { doc.status = 'paid'; });
   await assert.rejects(h.helpers.attachCreatedStripeSession(h.container, base, { id: 'cos_later', created: 400, status: 'requires_payment' }), /accepted_payment/);
   assert.equal(h.doc.stripeSessionId, 'cos_new');
+});
+
+test('session attachment loses a race with a different Step 1 email', async () => {
+  const h = harness({ ...base, customerEmail: 'chosen@example.test', stripeEmail: 'chosen@example.test' });
+  h.race(doc => {
+    doc.customerEmail = 'other@example.test';
+    doc.stripeEmail = 'other@example.test';
+  });
+  await assert.rejects(
+    h.helpers.attachCreatedStripeSession(
+      h.container,
+      structuredClone(h.doc),
+      { id: 'cos_new', created: 300, status: 'initialized' },
+      false,
+      'chosen@example.test',
+    ),
+    { code: 'receipt_customer_email_mismatch' },
+  );
+  assert.equal(h.doc.stripeSessionId, 'cos_old');
+  assert.equal(h.doc.customerEmail, 'other@example.test');
 });
 
 test('one receipt allows only one concurrent confirmation reservation', async () => {

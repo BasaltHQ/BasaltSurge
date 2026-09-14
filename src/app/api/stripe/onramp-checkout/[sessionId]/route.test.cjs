@@ -5,15 +5,21 @@ const vm = require("node:vm");
 const test = require("node:test");
 const ts = require("typescript");
 
-function harness({ receiptOverrides = {}, providerStatus = "requires_payment", providerError = null, readError = null, postError = null, postResponse = null } = {}) {
+function harness({ receiptOverrides = {}, providerStatus = "requires_payment", providerError = null, readError = null, postError = null, postResponse = null, providerCustomerId = "crc_mock", bindingEmail = "buyer@example.test", bindingMissing = false, refreshedToken = null, refreshedBindingEmail } = {}) {
   const wallet = "0x1111111111111111111111111111111111111111";
-  const receipt = { id: "receipt:R1", receiptId: "R1", wallet, status: "pending", stripeSessionId: "cos_current", ...receiptOverrides };
+  const receipt = { id: "receipt:R1", receiptId: "R1", wallet, status: "pending", stripeSessionId: "cos_current", customerEmail: "buyer@example.test", stripeEmail: "buyer@example.test", cryptoCustomerId: "crc_mock", ...receiptOverrides };
   const requests = [];
+  let refreshed = false;
   const response = (data, status = 200) => new Response(JSON.stringify(data), { status });
   const mocks = {
     "next/server": { NextResponse: { json: (data, options = {}) => response(data, options.status) } },
     "@/lib/request-client-ip": { getPublicClientIp: () => "8.8.8.8" },
-    "@/app/api/stripe/link-auth-tokens/route": { getOAuthToken: async () => null, refreshOAuthToken: async () => null },
+    "@/app/api/stripe/link-auth-tokens/route": {
+      getOAuthToken: async () => "oauth_server_bound",
+      getOAuthIdentityBinding: async () => bindingMissing ? null : ({ accessToken: "oauth_server_bound", emailFingerprint: refreshed && refreshedBindingEmail !== undefined ? refreshedBindingEmail : bindingEmail }),
+      refreshOAuthToken: async () => { refreshed = true; return refreshedToken; },
+    },
+    "@/lib/stripe-link-identity": { stripeLinkEmailMatchesFingerprint: (email, fingerprint) => String(email || "").trim().toLowerCase() === fingerprint },
     "@/lib/cosmos": { getContainer: async () => ({ item: () => ({ read: async () => {
       if (readError) throw readError;
       return { resource: { ...receipt } };
@@ -42,7 +48,7 @@ function harness({ receiptOverrides = {}, providerStatus = "requires_payment", p
           if (postResponse) return postResponse();
           return response({ client_secret: "cos_mock_secret_test", status: "requires_payment" });
         }
-        return response({ id: "cos_current", status: providerStatus, metadata: { receiptId: "R1", merchantWallet: wallet }, transaction_details: { last_error: providerError } });
+        return response({ id: "cos_current", crypto_customer_id: providerCustomerId, status: providerStatus, client_secret: "cos_stale_get_secret", metadata: { receiptId: "R1", merchantWallet: wallet }, transaction_details: { last_error: providerError } });
       },
       Response, URLSearchParams, AbortSignal,
       process: { env: { STRIPE_API_KEY: "sk_test_mock" } },
@@ -56,6 +62,66 @@ function harness({ receiptOverrides = {}, providerStatus = "requires_payment", p
     return { status: result.status, data: await result.json() };
   } };
 }
+
+test("checkout uses the provider session customer and the server-bound Step 1 credential", async () => {
+  const h = harness();
+  const result = await h.post();
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  const post = h.requests.find(request => request.options.method === "POST");
+  assert.equal(post.options.headers["Stripe-OAuth-Token"], "oauth_server_bound");
+});
+
+test("checkout does not retry OAuth failure after refresh changes the Link email binding", async () => {
+  const h = harness({
+    refreshedToken: "oauth_new_identity", refreshedBindingEmail: "other@example.test",
+    postResponse: () => new Response(JSON.stringify({ error: { message: "OAuth token expired" } }), { status: 401 }),
+  });
+  const result = await h.post();
+  assert.equal(result.status, 409, JSON.stringify(result.data));
+  assert.equal(result.data.code, "receipt_customer_email_mismatch");
+  assert.equal(h.requests.filter(request => request.options.method === "POST").length, 1);
+  assert.equal(h.receipt.stripeCheckoutRequestId, null);
+});
+
+test("checkout retries OAuth failure when refresh preserves the Step 1 identity", async () => {
+  let posts = 0;
+  const h = harness({
+    refreshedToken: "oauth_refreshed",
+    postResponse: () => ++posts === 1
+      ? new Response(JSON.stringify({ error: { message: "OAuth token expired" } }), { status: 401 })
+      : new Response(JSON.stringify({ client_secret: "cos_fresh_secret", status: "requires_payment" }), { status: 200 }),
+  });
+  const result = await h.post();
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  assert.equal(result.data.client_secret, "cos_fresh_secret");
+  const requests = h.requests.filter(request => request.options.method === "POST");
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].options.headers["Stripe-OAuth-Token"], "oauth_refreshed");
+});
+
+test("checkout rejects a provider session for a different CryptoCustomer before confirmation", async () => {
+  const h = harness({ providerCustomerId: "crc_other" });
+  const result = await h.post();
+  assert.equal(result.status, 409, JSON.stringify(result.data));
+  assert.equal(result.data.code, "stripe_session_customer_binding_failed");
+  assert.equal(h.requests.filter(request => request.options.method === "POST").length, 0);
+});
+
+test("checkout rejects a stored Link identity bound to another Step 1 email", async () => {
+  const h = harness({ bindingEmail: "other@example.test" });
+  const result = await h.post();
+  assert.equal(result.status, 409, JSON.stringify(result.data));
+  assert.equal(result.data.code, "receipt_customer_email_mismatch");
+  assert.equal(h.requests.filter(request => request.options.method === "POST").length, 0);
+});
+
+test("checkout fails closed when no durable Link email binding exists", async () => {
+  const h = harness({ bindingMissing: true });
+  const result = await h.post();
+  assert.equal(result.status, 409, JSON.stringify(result.data));
+  assert.equal(result.data.code, "receipt_customer_email_mismatch");
+  assert.equal(h.requests.filter(request => request.options.method === "POST").length, 0);
+});
 
 for (const receiptOverrides of [
   { status: "paid" }, { status: "reconciled" }, { status: "paid - ach pending" },
@@ -108,7 +174,65 @@ test("pending current receipt confirms once using the provider receipt metadata"
   assert.equal((await h.post()).status, 409);
   assert.equal(h.requests.filter(r => r.options.method === "POST").length, 1);
 });
-for (const providerStatus of ["awaiting_funds", "fulfillment_processing", "fulfillment_complete"]) {
+
+test("invalid purchase-confirmation state never returns a stale client secret", async () => {
+  const h = harness({
+    postResponse: () => new Response(JSON.stringify({
+      error: {
+        type: "invalid_request_error",
+        message: "The payment intent for the purchase attempt is not in a valid state for purchase confirmation.",
+      },
+    }), { status: 400, headers: { "request-id": "req_invalid_state" } }),
+  });
+  const result = await h.post();
+  assert.equal(result.status, 409);
+  assert.equal(result.data.ok, false);
+  assert.equal(result.data.code, "stripe_payment_confirmation_state_pending");
+  assert.equal(result.data.status, "requires_payment");
+  assert.equal(result.data.client_secret, null);
+  assert.equal(result.data.sessionId, "cos_current");
+  assert.equal(result.data.requestId, "req_invalid_state");
+  assert.equal(h.requests.filter(r => r.options.method === "POST").length, 1);
+  assert.equal(h.receipt.stripePaymentAttemptSessionId, "cos_current");
+  assert.equal(h.receipt.stripeCheckoutRequestId, null);
+  assert.equal(h.receipt.stripeCheckoutDeclineCode, null);
+});
+
+test("invalid purchase-confirmation state returns provider failure evidence without its GET secret", async () => {
+  const lastError = { code: "card_declined", message: "The card was declined.", decline_code: "do_not_honor" };
+  const h = harness({
+    providerError: lastError,
+    postResponse: () => new Response(JSON.stringify({
+      error: { type: "invalid_request_error", message: "The payment intent is not in a valid state for purchase confirmation." },
+    }), { status: 400 }),
+  });
+  const result = await h.post();
+  assert.equal(result.status, 409);
+  assert.equal(result.data.ok, false);
+  assert.equal(result.data.code, "card_declined");
+  assert.equal(result.data.client_secret, null);
+  assert.deepEqual(result.data.lastError, lastError);
+  assert.equal(h.receipt.stripePaymentAttemptSessionId, "cos_current");
+  assert.equal(h.receipt.stripeCheckoutDeclineCode, "card_declined");
+});
+
+test("invalid purchase-confirmation state returns terminal status without its GET secret", async () => {
+  const h = harness({
+    providerStatus: "rejected",
+    postResponse: () => new Response(JSON.stringify({
+      error: { type: "invalid_request_error", message: "The payment intent is not in a valid state for purchase confirmation." },
+    }), { status: 400 }),
+  });
+  const result = await h.post();
+  assert.equal(result.status, 409);
+  assert.equal(result.data.ok, false);
+  assert.equal(result.data.code, "stripe_payment_confirmation_terminal");
+  assert.equal(result.data.status, "rejected");
+  assert.equal(result.data.client_secret, null);
+  assert.equal(h.receipt.stripePaymentAttemptSessionId, "cos_current");
+});
+
+for (const providerStatus of ["awaiting_funds", "fulfillment_processing", "fulfillment_complete", "onramp_completed"]) {
   test(`accepted provider session ${providerStatus} is observed without a second checkout`, async () => {
     const h = harness({ providerStatus });
     const result = await h.post();

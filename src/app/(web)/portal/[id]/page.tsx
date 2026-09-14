@@ -29,6 +29,7 @@ import { isStripeEmbeddedCheckoutEnabled, isUnsupportedStripeCheckoutRegion } fr
 import { isStripeOnrampPreflightErrorCode } from "@/lib/stripe-onramp-preflight";
 import { resolvePortalCheckoutMode } from "@/lib/stripe-onramp-status";
 import { resolveFundingOnrampAmount } from "@/lib/portal-checkout-pricing";
+import { resolveReceiptCustomerEmail } from "@/lib/receipt-customer-email";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
 // Embedded mode (embedded=1 or iframe) removes page background to fit seamlessly in host modals.
@@ -167,6 +168,7 @@ type Receipt = {
   returnUrl?: string;
   onSuccess?: string;
   stripeEmail?: string;
+  customerEmail?: string;
   detectedCardFunding?: string;
   customerSessions?: any[];
 };
@@ -2173,14 +2175,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
             if (typeof j?.clientCountry === "string" && j.clientCountry) {
               setClientCountry(j.clientCountry);
             }
-            // Prepopulate stripeEmail if returned from receipt API (making it device-specific)
-            const emailVal = rec.stripeEmail || (rec as any).customerEmail || (rec as any).buyerEmail || rec.shippingAddress?.email || "";
-            if (emailVal) {
-              const isFresh = rec.status === "generated" || rec.status === "link_opened";
-              if (isFresh) {
-                setShipEmail((prev) => prev || emailVal);
-                setHeadlessEmailInput((prev) => prev || emailVal);
-              }
+            // A persisted Step 1 identity is authoritative for every receipt
+            // state, including reloads while payment confirmation is pending.
+            // Storefront/shipping values are only a prefill for a fresh receipt.
+            const persistedCheckoutEmail = resolveReceiptCustomerEmail(rec);
+            const isFresh = rec.status === "generated" || rec.status === "link_opened";
+            const fallbackEmail = isFresh
+              ? resolveReceiptCustomerEmail({}, (rec as any).buyerEmail || rec.shippingAddress?.email)
+              : null;
+            if (persistedCheckoutEmail) {
+              checkoutContactRef.current = { receiptId, email: persistedCheckoutEmail };
+              setShipEmail(persistedCheckoutEmail);
+              setHeadlessEmailInput(persistedCheckoutEmail);
+            } else if (fallbackEmail) {
+              setShipEmail((prev) => prev || fallbackEmail);
+              setHeadlessEmailInput((prev) => prev || fallbackEmail);
             }
             const b = rec.billingAddress || rec.shippingAddress || (rec as any).customerAddress || (rec as any).billing;
             if (b) {
@@ -2470,6 +2479,20 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   });
   const [headlessPhoneInput, setHeadlessPhoneInput] = useState('');
   const [headlessInitiated, setHeadlessInitiated] = useState(false);
+  // The customer's Step 1 choice overrides email supplied by the storefront.
+  const checkoutContactRef = useRef<{ receiptId: string; email: string } | null>(null);
+
+  function selectCheckoutEmail(value: string) {
+    const selectedEmail = value.trim().toLowerCase();
+    if (!isValidEmail(selectedEmail)) return;
+    checkoutContactRef.current = { receiptId, email: selectedEmail };
+    setShipEmail(selectedEmail);
+    setHeadlessEmailInput(selectedEmail);
+  }
+
+  const selectedCheckoutEmail = checkoutContactRef.current?.receiptId === receiptId
+    ? checkoutContactRef.current.email
+    : "";
 
   const COUNTRY_OPTIONS = [
     { code: "US", name: "United States" },
@@ -2714,19 +2737,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const lastSyncedShipEmailRef = useRef(shipEmail);
   useEffect(() => {
     if (shipEmail !== lastSyncedShipEmailRef.current) {
-      if (shipEmail) {
+      const selectedEmail = checkoutContactRef.current?.receiptId === receiptId ? checkoutContactRef.current.email : "";
+      if (shipEmail && (!selectedEmail || shipEmail === selectedEmail)) {
         setHeadlessEmailInput(shipEmail);
       }
       lastSyncedShipEmailRef.current = shipEmail;
     }
-  }, [shipEmail]);
+  }, [shipEmail, receiptId]);
 
   // Auto-detect pre-existing shipping info (page refresh)
   useEffect(() => {
-    if (receipt?.shippingAddress?.line1 && !shippingComplete) {
-      const a = receipt.shippingAddress;
-      if (a.name) setShipName(a.name);
-      if (a.email) setShipEmail(a.email);
+      if (receipt?.shippingAddress?.line1 && !shippingComplete) {
+        const a = receipt.shippingAddress;
+        if (a.name) setShipName(a.name);
+        // Shipping data is only a prefill. Once Step 1 has been persisted, its
+        // canonical identity must not be replaced during receipt hydration.
+        if (a.email && checkoutContactRef.current?.receiptId !== receiptId) setShipEmail(a.email);
       if (a.line1) setShipLine1(a.line1);
       if (a.line2) setShipLine2(a.line2);
       if (a.city) setShipCity(a.city);
@@ -3500,14 +3526,22 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         .then(() => fetch("/api/receipts/status", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload),
-        }));
+          // Read at dispatch time so queued events from an older render cannot
+          // restore the storefront email after Step 1 has been submitted.
+          body: JSON.stringify({
+            ...payload,
+            // The explicit Step 1 write establishes the selected email. Once
+            // accepted, it overrides any email carried by later callbacks.
+            ...(status !== "checkout_initialized" && checkoutContactRef.current?.receiptId === receiptId
+              ? { customerEmail: checkoutContactRef.current.email } : {}),
+          }),
+      }));
       statusPostQueueRef.current = queuedPost;
-      await queuedPost;
+      const statusResponse = await queuedPost;
 
       // Auto-email receipt if customer email is available and status is successfully posted as paid
-      const customerEmail = extra?.customerEmail || shipEmail;
-      if (status === "paid" && customerEmail && customerEmail.includes("@")) {
+      const customerEmail = (checkoutContactRef.current?.receiptId === receiptId ? checkoutContactRef.current.email : "") || extra?.customerEmail || shipEmail;
+      if (statusResponse.ok && status === "paid" && customerEmail && customerEmail.includes("@")) {
         if (!autoEmailSentRef.current) {
           autoEmailSentRef.current = true;
           console.log("[PORTAL] Triggering automatic receipt email to:", customerEmail);
@@ -3520,7 +3554,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           }).catch(err => console.error("[PORTAL] Failed to auto-email receipt:", err));
         }
       }
-    } catch { }
+      return statusResponse;
+    } catch (error) {
+      console.error("[PORTAL] Failed to persist receipt status:", error);
+      return undefined;
+    }
   }
 
   useEffect(() => {
@@ -3542,7 +3580,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   useEffect(() => {
     try {
-      const emailToSend = shipEmail || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || receipt?.stripeEmail;
+      const emailToSend = selectedCheckoutEmail
+        || resolveReceiptCustomerEmail(receipt, (receipt as any)?.buyerEmail || shipEmail)
+        || "";
       const receiptStatus = receipt?.status || "";
       const isActuallyPaid = (receiptStatus && ["paid", "paid - ach pending", "checkout_success", "reconciled", "confirmed"].includes(receiptStatus)) || !!paymentConfirmed?.txHash;
       if (paymentConfirmed && isActuallyPaid && emailToSend && emailToSend.includes("@") && receiptId) {
@@ -3559,7 +3599,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         }
       }
     } catch { }
-  }, [paymentConfirmed, shipEmail, receipt, receiptId]);
+  }, [paymentConfirmed, selectedCheckoutEmail, shipEmail, receipt, receiptId]);
 
   const usdRate = Number(rates["USD"] || 0);
   const ethAmount = useMemo(() => {
@@ -3744,10 +3784,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         !!receipt &&
         !isSettled(receipt.status)
       ) {
-        postStatus("checkout_initialized", {
+        // Readiness telemetry must never select or replace the customer's
+        // Step 1 identity. `persistCheckoutEmail` is the only caller allowed
+        // to emit `checkout_initialized` with an email.
+        postStatus("checkout_ready", {
           token,
           amount: widgetAmount,
-          customerEmail: shipEmail || undefined,
         });
       }
     } catch { }
@@ -3762,7 +3804,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     receipt,
     token,
     widgetAmount,
-    shipEmail,
   ]);
 
   const displayTotalRounded = useMemo(() => {
@@ -4013,7 +4054,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     confirmSpeed: headlessConfirmSpeed,
     verifyDocuments: headlessVerifyDocuments,
   } = useStripeEmbeddedOnramp({
-    email: shipEmail || headlessEmailInput || undefined,
+    email: selectedCheckoutEmail || shipEmail || headlessEmailInput || undefined,
     fullName: shipName || undefined,
     phone: headlessPhoneInput || undefined,
     theme: isLightBackground ? "stripe" : "night",
@@ -4064,7 +4105,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
         postStatus("payment_method_detected", {
           stripeSessionId: headlessSessionId || undefined,
-          customerEmail: shipEmail || headlessEmailInput || undefined,
+          customerEmail: selectedCheckoutEmail || shipEmail || headlessEmailInput || undefined,
           detectedCardFunding: card.funding,
           paymentMethodDetails: {
             type: card.funding === "us_bank_account" ? "us_bank_account" : "card",
@@ -4090,7 +4131,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }
       postStatus(`onramp_${newStep}`, {
         stripeSessionId: headlessSessionId || undefined,
-        customerEmail: shipEmail || headlessEmailInput || undefined,
+        customerEmail: selectedCheckoutEmail || shipEmail || headlessEmailInput || undefined,
         detectedCardFunding: stripeDetectedFunding || undefined,
       });
     },
@@ -4130,7 +4171,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           paymentMethod: "stripe_headless",
           stripeSessionId: result.sessionId,
           checkoutMode: isEcommerceMode ? "ecommerce" : "full",
-          customerEmail: shipEmail || headlessEmailInput || undefined,
+          customerEmail: selectedCheckoutEmail || shipEmail || headlessEmailInput || undefined,
           detectedCardFunding: isAch ? "us_bank_account" : (result.detectedCardFunding || stripeDetectedFunding || undefined),
           kycLevel: result.kycVerifiedLevel || result.kycFinalLevel || result.kycLevel,
           kycInitialLevel: result.kycInitialLevel,
@@ -4157,7 +4198,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         paymentMethod: "stripe_headless",
         stripeSessionId: result.sessionId,
         checkoutMode: isEcommerceMode ? "ecommerce" : "full",
-        customerEmail: shipEmail || headlessEmailInput || undefined,
+        customerEmail: selectedCheckoutEmail || shipEmail || headlessEmailInput || undefined,
         detectedCardFunding: isAch ? "us_bank_account" : (result.detectedCardFunding || stripeDetectedFunding || undefined),
         isCreditCard: typeof result.isCreditCard === "boolean" ? result.isCreditCard : (stripeDetectedFunding === "credit" ? true : (stripeDetectedFunding === "debit" ? false : undefined)),
         kycLevel: result.kycVerifiedLevel || result.kycFinalLevel || result.kycLevel,
@@ -4245,11 +4286,51 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.log("[STRIPE HEADLESS] Session ID resolved on client:", headlessSessionId);
       postStatus("checkout_session_created", {
         stripeSessionId: headlessSessionId,
-        customerEmail: shipEmail || headlessEmailInput || undefined,
+        customerEmail: selectedCheckoutEmail || shipEmail || headlessEmailInput || undefined,
         detectedCardFunding: stripeDetectedFunding || undefined,
       });
     }
   }, [headlessSessionId]);
+
+  async function persistCheckoutEmail(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!isValidEmail(normalizedEmail)) {
+      const message = "Enter a valid email address before continuing.";
+      setDisplayError(message);
+      throw new Error(message);
+    }
+    const response = await postStatus("checkout_initialized", { customerEmail: normalizedEmail });
+    if (!response?.ok) {
+      const message = response?.status === 409
+        ? "This payment has already started with a different email. Reopen the receipt and try again."
+        : "We couldn't save the email from Step 1. Check your connection and try again. No payment was started.";
+      setDisplayError(message);
+      throw Object.assign(new Error(message), {
+        code: response?.status === 409 ? "receipt_customer_email_locked" : "checkout_email_persistence_failed",
+        status: response?.status,
+      });
+    }
+    selectCheckoutEmail(normalizedEmail);
+    return normalizedEmail;
+  }
+
+  async function submitHeadlessContact(
+    email: string, phone: string, country?: string,
+    isForceRetryOrName?: boolean | string, fullName?: string,
+  ) {
+    // Persist the Step 1 choice before wallet creation/payment can launch the
+    // background worker, and after any older queued receipt observations.
+    const normalizedEmail = await persistCheckoutEmail(email);
+    return startHeadlessOnramp(normalizedEmail, phone, country, isForceRetryOrName, fullName);
+  }
+
+  async function submitHeadlessContactPhone(phone: string, email?: string, country?: string) {
+    if (email) {
+      const normalizedEmail = await persistCheckoutEmail(email);
+      return headlessSubmitPhone(phone, normalizedEmail, country);
+    }
+    return headlessSubmitPhone(phone, email, country);
+  }
 
   // Clean up Stripe headless elements on unmount or when they are cleared/replaced
   useEffect(() => {
@@ -4397,11 +4478,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     };
   }, [theme.brandName]);
 
-  // Autostart Stripe headless flow if it's the only active onramp, payment is ready, and user hasn't opted out
+  // When Stripe is the only active onramp, open Step 1 and wait for the
+  // customer to confirm the email that will own the wallet and payment.
   useEffect(() => {
     const isStripeOnly = stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled;
     const paymentReady = !shippingRequired || shippingComplete;
-    const hasStripeEmailParam = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("stripeEmail");
 
     if (
       configLoaded &&
@@ -4415,18 +4496,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       !headlessActive &&
       !headlessInitiated
     ) {
-      if (hasStripeEmailParam) {
-        console.log("[PORTAL PAGE] stripeEmail parameter present. Prepopulating field and waiting for user confirmation.");
-        setHeadlessEmailPrompt(true);
-      } else {
-        console.log("[PORTAL PAGE] Stripe is the only active onramp. Autostarting direct flow.");
-        if (!shipEmail || !isValidEmail(shipEmail)) {
-          setHeadlessEmailPrompt(true);
-        } else {
-          setHeadlessInitiated(true);
-          startHeadlessOnramp(shipEmail, undefined, shipName || undefined);
-        }
-      }
+      console.log("[PORTAL PAGE] Stripe is the only active onramp. Waiting for Step 1 email confirmation.");
+      setHeadlessEmailPrompt(true);
     }
   }, [
     configLoaded,
@@ -4440,16 +4511,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     shippingRequired,
     shippingComplete,
     userOptedOutOfStripeBypass,
-    shipEmail,
-    shipName,
     headlessEmailPrompt,
     headlessActive,
-    headlessInitiated,
-    startHeadlessOnramp
+    headlessInitiated
   ]);
 
   // Interceptor: ALWAYS active to block crypto.link.com redirects from Thirdweb's CheckoutWidget.
-  // In headless mode: interceptOnly=true → blocks redirect, calls onIntercept → startHeadlessOnramp()
+  // In headless mode: interceptOnly=true blocks the redirect and opens Step 1.
   // In legacy mode: interceptOnly=false → blocks redirect, launches legacy Stripe modal
   useStripeOnrampInterceptor({
     walletAddress: sellerAddress as string,
@@ -4465,13 +4533,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       console.error("[STRIPE ONRAMP] Error:", error);
     },
     onIntercept: stripeHeadless ? () => {
-      console.log("[STRIPE ONRAMP] Intercepted → deferring to headless onramp");
-      if (!shipEmail || !isValidEmail(shipEmail)) {
-        setHeadlessEmailPrompt(true);
-      } else {
-        setHeadlessInitiated(true);
-        startHeadlessOnramp(shipEmail, undefined, shipName || undefined);
-      }
+      console.log("[STRIPE ONRAMP] Intercepted → waiting for Step 1 email confirmation");
+      setHeadlessEmailPrompt(true);
     } : undefined,
     interceptOnly: stripeHeadless, // Block redirect only, don't launch legacy modal
     enabled: stripeHeadless, // Only enabled during stripeHeadless mode to catch redirects and route to headless flow
@@ -4885,7 +4948,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           theme={theme}
           isLightText={isLightText}
           merchantWallet={effectiveMerchantWallet || merchantWallet}
-          email={shipEmail || headlessEmailInput}
+          email={selectedCheckoutEmail || shipEmail || headlessEmailInput}
           phone={headlessPhoneInput}
           fullName={shipName || (kycFirstName && kycLastName ? `${kycFirstName} ${kycLastName}` : kycFirstName || kycLastName || "")}
           firstName={kycFirstName}
@@ -4906,8 +4969,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           kycTiers={headlessKycTiers}
           isAllKycCompleted={isAllKycCompleted}
           onrampLimits={headlessOnrampLimits}
-          onHeadlessSubmitEmailPhone={configLoaded ? (email, phone, country, isForceRetry, fullName) => startHeadlessOnramp(email, phone, country, isForceRetry, fullName) : undefined}
-          onSubmitPhone={headlessSubmitPhone}
+          onHeadlessSubmitEmailPhone={configLoaded ? submitHeadlessContact : undefined}
+          onSubmitPhone={submitHeadlessContactPhone}
           onRetryContactVerification={retryHeadlessContactVerification}
           onSubmitKycInfo={submitKycInfo}
           onSubmitKycIdentifiers={headlessSubmitKycIdentifiers}
@@ -4929,7 +4992,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           onAccordionStepTransition={(transition) => {
             postStatus(`onramp_accordion_step_${transition.toStep}`, {
               stripeSessionId: headlessSessionId || undefined,
-              customerEmail: shipEmail || headlessEmailInput || undefined,
+              customerEmail: selectedCheckoutEmail || shipEmail || headlessEmailInput || undefined,
               accordionTransition: transition,
             });
           }}
@@ -4939,11 +5002,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           onSubmit={(e) => {
             e.preventDefault();
             if (isValidEmail(headlessEmailInput)) {
-              setShipEmail(headlessEmailInput);
               setHeadlessInitiated(true);
               setHeadlessEmailPrompt(false);
-              postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
-              startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
+              void submitHeadlessContact(headlessEmailInput, "", undefined, shipName || undefined).catch(() => {
+                setHeadlessInitiated(false);
+                setHeadlessEmailPrompt(true);
+              });
             }
           }}
           className={`w-full rounded-2xl md:rounded-3xl border p-6 md:p-8 flex flex-col items-stretch animate-in zoom-in duration-300 backdrop-blur-2xl shadow-2xl ${isLightText ? 'border-white/10 bg-neutral-900/90 shadow-black/80' : 'border-black/10 bg-white/95 shadow-black/10'
@@ -5038,15 +5102,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   }`}
                 value={headlessEmailInput}
                 onChange={(e) => setHeadlessEmailInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && isValidEmail(headlessEmailInput)) {
-                    setShipEmail(headlessEmailInput);
-                    setHeadlessInitiated(true);
-                    setHeadlessEmailPrompt(false);
-                    postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
-                    startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
-                  }
-                }}
                 autoFocus
               />
             </div>
@@ -5074,13 +5129,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     color: btnTextColor,
                   }}
                   disabled={!isValidEmail(headlessEmailInput)}
-                  onClick={() => {
-                    setShipEmail(headlessEmailInput);
-                    setHeadlessInitiated(true);
-                    setHeadlessEmailPrompt(false);
-                    postStatus("checkout_initialized", { customerEmail: headlessEmailInput });
-                    startHeadlessOnramp(headlessEmailInput, undefined, shipName || undefined);
-                  }}
                 >
                   <span style={{ color: btnTextColor }}>Continue to Secure Checkout</span>
                   <span className="text-base font-extrabold" style={{ color: btnTextColor }}>→</span>
@@ -5112,14 +5160,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                     color: btnTextColor,
                   }}
                   disabled={!isValidEmail(headlessEmailInput)}
-                  onClick={() => {
-                    const trimmedEmail = headlessEmailInput.trim();
-                    setShipEmail(trimmedEmail);
-                    setHeadlessInitiated(true);
-                    setHeadlessEmailPrompt(false);
-                    postStatus("checkout_initialized", { customerEmail: trimmedEmail });
-                    startHeadlessOnramp(trimmedEmail, undefined, shipName || undefined);
-                  }}
                 >
                   <span style={{ color: btnTextColor }}>Continue</span>
                   <span className="text-base font-extrabold" style={{ color: btnTextColor }}>→</span>
@@ -8746,9 +8786,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 onClick={() => {
                   setDisplayError(null);
                   resetHeadlessOnramp();
-                  const targetEmail = (shipEmail || headlessEmailInput || "").trim();
+                  const targetEmail = (selectedCheckoutEmail || shipEmail || headlessEmailInput || "").trim();
                   if (targetEmail) {
-                    startHeadlessOnramp(targetEmail, headlessPhoneInput || undefined, shipName || undefined);
+                    void submitHeadlessContact(targetEmail, headlessPhoneInput, undefined, shipName || undefined).catch(() => undefined);
                   }
                 }}
                 className={`flex-1 px-4 py-3 font-bold rounded-xl hover:brightness-110 active:scale-95 transition-all shadow-md text-center text-sm ${isColorLight(theme.primaryColor || '#635BFF') ? 'text-neutral-900' : 'text-white'
@@ -8851,7 +8891,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
 
             {(() => {
-              const displayEmail = shipEmail || (receipt as any)?.customerEmail || (receipt as any)?.buyerEmail || receipt?.stripeEmail;
+              const displayEmail = selectedCheckoutEmail
+                || resolveReceiptCustomerEmail(receipt, (receipt as any)?.buyerEmail || shipEmail)
+                || "";
               return (
                 <>
                   {!displayEmail && (
@@ -8994,6 +9036,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                 onClick={() => {
                   setShowUnsupportedLinkModal(false);
                   resetHeadlessOnramp();
+                  checkoutContactRef.current = null;
                   setHeadlessEmailInput("");
                   setShipEmail("");
                   setHeadlessInitiated(false);

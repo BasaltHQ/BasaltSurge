@@ -9,10 +9,12 @@ const SOURCE_ROOT = path.resolve(__dirname, "../../../..");
 
 // Run the actual route, FX loader, and conversion helper with HTTP and database
 // boundaries replaced. No test request can reach Stripe or a live receipt.
-function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides = {}, legacy = false, onKycPatch = null } = {}) {
+function createHarness({ eurPerUsd = 0.9, stripeError = null, stripeErrorOnce = false, receiptOverrides = {}, legacy = false, onKycPatch = null, onSessionAttachPatch = null, bindingEmail, bindingMissing = false, providerCustomerId = "crc_mock", refreshedToken = null, refreshedBindingEmail } = {}) {
   const requests = [];
   const writes = [];
-  const receipt = { id: "receipt:R-currency-test", wallet: "0x1111111111111111111111111111111111111111", receiptId: "R-currency-test", totalUsd: 10, status: "pending", ...receiptOverrides };
+  let sessionPosts = 0;
+  let refreshed = false;
+  const receipt = { id: "receipt:R-currency-test", wallet: "0x1111111111111111111111111111111111111111", receiptId: "R-currency-test", totalUsd: 10, status: "pending", customerEmail: "buyer@example.test", stripeEmail: "buyer@example.test", ...receiptOverrides };
   const jsonResponse = (value, status = 200, headers = {}) => new Response(JSON.stringify(value), { status, headers });
   const fetch = async (url, options = {}) => {
     requests.push({ url: String(url), options });
@@ -24,8 +26,9 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides =
     }
     assert.equal(String(url), "https://api.stripe.com/v1/crypto/onramp_sessions");
     assert.equal(options.method, "POST");
-    if (stripeError) return jsonResponse({ error: stripeError }, 400, { "request-id": "req_test_currency" });
-    return jsonResponse({ id: "cos_currency_test", status: "initialized", transaction_details: { destination_amount: "9.65", destination_currency: "usdc" } });
+    sessionPosts++;
+    if (stripeError && (!stripeErrorOnce || sessionPosts === 1)) return jsonResponse({ error: stripeError }, 400, { "request-id": "req_test_currency" });
+    return jsonResponse({ id: "cos_currency_test", crypto_customer_id: providerCustomerId, status: "initialized", transaction_details: { destination_amount: "9.65", destination_currency: "usdc" } });
   };
   const mocks = {
     "next/server": { NextResponse: { json: (value, init = {}) => jsonResponse(value, init.status || 200, init.headers || {}) } },
@@ -34,7 +37,12 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides =
         read: async () => ({ resource: { ...receipt } }),
         patch: async (operations, options = {}) => {
           if (operations.length === 1 && operations[0].path === '/kycRequiredLevel') onKycPatch?.(receipt);
-          for (const [key, expected] of Object.entries(options.matchFields || {})) assert.equal(receipt[key] ?? null, expected);
+          if (operations.some(operation => operation.path === '/stripeSessionId')) onSessionAttachPatch?.(receipt);
+          for (const [key, expected] of Object.entries(options.matchFields || {})) {
+            if (!Object.is(receipt[key] ?? null, expected)) {
+              throw Object.assign(new Error(`Patch precondition failed for ${key}`), { code: 412, statusCode: 412 });
+            }
+          }
           for (const operation of operations) receipt[operation.path.slice(1)] = operation.value;
           writes.push({ ...receipt });
           return { resource: { ...receipt } };
@@ -43,6 +51,19 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides =
       items: { upsert: async value => writes.push({ ...value }) },
     }) },
     "@/lib/request-client-ip": { getPublicClientIp: () => "8.8.8.8" },
+    "@/lib/stripe-link-identity": {
+      stripeLinkEmailMatchesFingerprint: (email, fingerprint) => String(email || "").trim().toLowerCase() === fingerprint,
+    },
+    "@/app/api/stripe/link-auth-tokens/route": {
+      getOAuthIdentityBinding: async () => bindingMissing ? null : ({
+        accessToken: "oauth_server_bound",
+        emailFingerprint: refreshed && refreshedBindingEmail !== undefined ? refreshedBindingEmail : bindingEmail === undefined
+          ? String(receipt.customerEmail || receipt.stripeEmail || "").trim().toLowerCase()
+          : bindingEmail,
+      }),
+      getOAuthToken: async () => "oauth_server_bound",
+      refreshOAuthToken: async () => { refreshed = true; return refreshedToken; },
+    },
   };
   const modules = new Map();
   function load(file) {
@@ -76,6 +97,7 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, receiptOverrides =
         json: async () => ({
           cryptoCustomerId: "crc_mock", cryptoPaymentToken: "cpt_mock", oauthToken: "oauth_mock",
           sourceAmountUsd: 10, sourceCurrency: "eur", receiptId: "R-currency-test",
+          customerEmail: "buyer@example.test",
           merchantWallet: "0x1111111111111111111111111111111111111111", ...overrides,
         }),
       });
@@ -101,6 +123,96 @@ test("EUR route sends converted fiat and server FX metadata while persisting USD
   assert.equal(harness.writes[0].totalUsd, 10);
   assert.equal(harness.writes[0].orderTotalUsd, 10);
   assert.equal(harness.writes[0].onrampAmount, 10);
+  assert.equal(harness.receipt.cryptoCustomerId, "crc_mock");
+});
+
+test("receipt session creation ignores a browser OAuth token and uses the Step 1-bound server token", async () => {
+  const harness = createHarness();
+  const response = await harness.post({ sourceCurrency: "usd", oauthToken: "oauth_attacker_supplied" });
+  assert.equal(response.status, 200, JSON.stringify(response.data));
+  const stripeRequest = harness.requests.find(request => request.url === "https://api.stripe.com/v1/crypto/onramp_sessions");
+  assert.equal(stripeRequest.options.headers["Stripe-OAuth-Token"], "oauth_server_bound");
+});
+
+test("receipt session creation rejects a Link customer bound to another email before Stripe", async () => {
+  const harness = createHarness({ bindingEmail: "other@example.test" });
+  const response = await harness.post({ sourceCurrency: "usd" });
+  assert.equal(response.status, 409, JSON.stringify(response.data));
+  assert.equal(response.data.code, "receipt_customer_email_mismatch");
+  assert.equal(harness.requests.length, 0);
+  assert.equal(harness.writes.length, 0);
+});
+
+test("receipt session creation requires a durable Link email binding", async () => {
+  const harness = createHarness({ bindingMissing: true });
+  const response = await harness.post({ sourceCurrency: "usd" });
+  assert.equal(response.status, 403, JSON.stringify(response.data));
+  assert.equal(response.data.code, "stripe_customer_email_binding_required");
+  assert.equal(harness.requests.length, 0);
+});
+
+test("session creation does not retry OAuth failure after refresh changes the Link email binding", async () => {
+  const harness = createHarness({
+    stripeError: { message: "OAuth token expired" }, stripeErrorOnce: true,
+    refreshedToken: "oauth_new_identity", refreshedBindingEmail: "other@example.test",
+  });
+  const result = await harness.post({ sourceCurrency: "usd" });
+  assert.equal(result.status, 409, JSON.stringify(result.data));
+  assert.equal(result.data.code, "receipt_customer_email_mismatch");
+  assert.equal(result.data.reauthenticate, true);
+  assert.equal(harness.requests.length, 1);
+  assert.equal(harness.writes.length, 0);
+});
+
+test("session creation retries OAuth failure when refresh preserves the Step 1 identity", async () => {
+  const harness = createHarness({ stripeError: { message: "OAuth token expired" }, stripeErrorOnce: true, refreshedToken: "oauth_refreshed" });
+  const result = await harness.post({ sourceCurrency: "usd" });
+  assert.equal(result.status, 200, JSON.stringify(result.data));
+  assert.equal(harness.requests.length, 2);
+  assert.equal(harness.requests[1].options.headers["Stripe-OAuth-Token"], "oauth_refreshed");
+  assert.equal(harness.receipt.stripeSessionId, "cos_currency_test");
+});
+
+test("a Stripe response for another CryptoCustomer is never attached to the receipt", async () => {
+  const harness = createHarness({ providerCustomerId: "crc_other" });
+  const response = await harness.post({ sourceCurrency: "usd" });
+  assert.equal(response.status, 502, JSON.stringify(response.data));
+  assert.equal(response.data.code, "stripe_session_customer_binding_failed");
+  assert.equal(harness.receipt.stripeSessionId, undefined);
+  assert.equal(harness.writes.length, 0);
+});
+
+test("receipt-linked session creation rejects a different Step 1 email before Stripe", async () => {
+  const harness = createHarness();
+  const response = await harness.post({ customerEmail: "other@example.test", sourceCurrency: "usd" });
+  assert.equal(response.status, 409, JSON.stringify(response.data));
+  assert.equal(response.data.code, "receipt_customer_email_mismatch");
+  assert.equal(harness.requests.length, 0);
+  assert.equal(harness.writes.length, 0);
+});
+
+test("a rolling-deploy client can use a legacy stripeEmail as the canonical identity", async () => {
+  const harness = createHarness({ receiptOverrides: { customerEmail: undefined, stripeEmail: "legacy@example.test" } });
+  const response = await harness.post({ customerEmail: undefined, sourceCurrency: "usd" });
+  assert.equal(response.status, 200);
+  assert.equal(harness.requests.length, 1);
+  assert.equal(harness.receipt.stripeSessionId, "cos_currency_test");
+});
+
+test("session attachment rejects an email changed by another tab after Stripe creation", async () => {
+  let raced = false;
+  const harness = createHarness({ onSessionAttachPatch: receipt => {
+    if (raced) return;
+    raced = true;
+    receipt.customerEmail = "other@example.test";
+    receipt.stripeEmail = "other@example.test";
+  } });
+  const response = await harness.post({ sourceCurrency: "usd" });
+  assert.equal(response.status, 409, JSON.stringify(response.data));
+  assert.equal(response.data.code, "receipt_customer_email_mismatch");
+  assert.equal(harness.requests.length, 1, "the already-created Stripe session is not submitted again");
+  assert.equal(harness.receipt.stripeSessionId, undefined);
+  assert.equal(harness.receipt.customerEmail, "other@example.test");
 });
 
 for (const legacy of [false, true]) {

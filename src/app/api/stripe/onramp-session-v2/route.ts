@@ -7,6 +7,8 @@ import { fetchUsdRates } from "@/lib/eth";
 import { getReceiptPricing, ReceiptCurrencyError } from "@/lib/receipt-currency";
 import { resolveStripeOnrampSourceAmounts, StripeOnrampCurrencyError } from "@/lib/stripe-onramp-currency";
 import { persistStripeKycRequirement } from "@/lib/stripe-kyc-requirement";
+import { normalizeReceiptCustomerEmail, resolveReceiptCustomerEmail } from "@/lib/receipt-customer-email";
+import { stripeLinkEmailMatchesFingerprint } from "@/lib/stripe-link-identity";
 
 export const dynamic = 'force-dynamic';
 
@@ -53,11 +55,35 @@ export async function POST(req: NextRequest) {
     const receiptId = String(body.receiptId || "").trim();
     const merchantWallet = String(body.merchantWallet || "").trim();
     const brandKey = String(body.brandKey || "").trim();
+    const rawCustomerEmail = typeof body.customerEmail === "string" ? body.customerEmail.trim() : "";
+    const requestedCustomerEmail = normalizeReceiptCustomerEmail(rawCustomerEmail);
+    if (rawCustomerEmail && !requestedCustomerEmail) {
+      return NextResponse.json({ ok: false, error: "invalid_customer_email" }, { status: 400 });
+    }
     const checkoutMode = normalizeStripeOnrampCheckoutMode(body.checkoutMode);
     let paymentReceipt: any;
+    let expectedCustomerEmail: string | null = requestedCustomerEmail;
     if (receiptId) {
       const container = await getContainer(undefined, undefined, { profile: "critical" });
       paymentReceipt = await readStripeReceiptForPayment(container, receiptId, merchantWallet);
+      const receiptCustomerEmail = resolveReceiptCustomerEmail(paymentReceipt);
+      if (!receiptCustomerEmail) {
+        return NextResponse.json({
+          ok: false,
+          error: "Save the Step 1 email before creating the payment session.",
+          code: "receipt_customer_email_required",
+        }, { status: 409 });
+      }
+      if (requestedCustomerEmail && requestedCustomerEmail !== receiptCustomerEmail) {
+        return NextResponse.json({
+          ok: false,
+          error: "The Step 1 email no longer matches this receipt.",
+          code: "receipt_customer_email_mismatch",
+        }, { status: 409 });
+      }
+      // A stale client may omit the new field during a rolling deploy. The
+      // already-persisted receipt identity remains authoritative in that case.
+      expectedCustomerEmail = receiptCustomerEmail;
       await assertStripeReceiptCanCreateSession(container, paymentReceipt);
     }
 
@@ -68,17 +94,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // If the token is missing or contains invalid values like "undefined" / "null", resolve from store or refresh
-    if ((!oauthToken || oauthToken === "undefined" || oauthToken === "null") && cryptoCustomerId) {
+    if (receiptId && expectedCustomerEmail) {
+      // Receipt payments use only the credential exchanged from the exact
+      // server-created LinkAuthIntent for Step 1. A browser-supplied token can
+      // never select a different Link consumer here.
+      const tokenModule = await import("@/app/api/stripe/link-auth-tokens/route");
+      let identityBinding = await tokenModule.getOAuthIdentityBinding(cryptoCustomerId);
+      if (!identityBinding?.emailFingerprint) {
+        return NextResponse.json({
+          ok: false,
+          error: "Sign in to Link again for this checkout email.",
+          code: "stripe_customer_email_binding_required",
+          reauthenticate: true,
+        }, { status: 403 });
+      }
+      if (!stripeLinkEmailMatchesFingerprint(expectedCustomerEmail, identityBinding.emailFingerprint)) {
+        return NextResponse.json({
+          ok: false,
+          error: "The authenticated Link account does not match the Step 1 email.",
+          code: "receipt_customer_email_mismatch",
+          reauthenticate: true,
+        }, { status: 409 });
+      }
+      oauthToken = identityBinding.accessToken || "";
+      if (!oauthToken) {
+        oauthToken = await tokenModule.refreshOAuthToken(cryptoCustomerId) || "";
+        identityBinding = await tokenModule.getOAuthIdentityBinding(cryptoCustomerId);
+        if (!identityBinding?.emailFingerprint
+          || !stripeLinkEmailMatchesFingerprint(expectedCustomerEmail, identityBinding.emailFingerprint)) {
+          oauthToken = "";
+        }
+      }
+    } else if ((!oauthToken || oauthToken === "undefined" || oauthToken === "null") && cryptoCustomerId) {
+      // Preserve the legacy unlinked API behavior; receipt-linked ecommerce
+      // checkouts always take the stronger server-bound branch above.
       const { getOAuthToken, refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
       let storedToken = await getOAuthToken(cryptoCustomerId);
-      if (!storedToken) {
-        storedToken = await refreshOAuthToken(cryptoCustomerId);
-      }
-      if (storedToken) {
-        console.log("[ONRAMP V2] Resolved OAuth token from server store or refresh for:", cryptoCustomerId);
-        oauthToken = storedToken;
-      }
+      if (!storedToken) storedToken = await refreshOAuthToken(cryptoCustomerId);
+      if (storedToken) oauthToken = storedToken;
     }
 
     if (!oauthToken || oauthToken === "undefined" || oauthToken === "null") {
@@ -201,9 +254,21 @@ export async function POST(req: NextRequest) {
 
     if (isOAuthError && cryptoCustomerId) {
       console.log("[ONRAMP V2] OAuth token expired or rejected. Attempting background token refresh...");
-      const { refreshOAuthToken } = await import("@/app/api/stripe/link-auth-tokens/route");
-      const refreshedToken = await refreshOAuthToken(cryptoCustomerId);
+      const tokenModule = await import("@/app/api/stripe/link-auth-tokens/route");
+      const refreshedToken = await tokenModule.refreshOAuthToken(cryptoCustomerId);
       if (refreshedToken) {
+        if (receiptId && expectedCustomerEmail) {
+          const currentBinding = await tokenModule.getOAuthIdentityBinding(cryptoCustomerId);
+          if (!currentBinding?.emailFingerprint
+            || !stripeLinkEmailMatchesFingerprint(expectedCustomerEmail, currentBinding.emailFingerprint)) {
+            return NextResponse.json({
+              ok: false,
+              error: "The authenticated Link account no longer matches the Step 1 email.",
+              code: "receipt_customer_email_mismatch",
+              reauthenticate: true,
+            }, { status: 409 });
+          }
+        }
         oauthToken = refreshedToken;
         tokenRefreshed = true;
         console.log("[ONRAMP V2] Retrying session creation with refreshed OAuth token...");
@@ -250,6 +315,20 @@ export async function POST(req: NextRequest) {
     }
 
     console.log("[ONRAMP V2] Session created:", data.id, "status:", data.status);
+
+    // Stripe validates payment_token ownership while creating the session. The
+    // returned provider customer must also match the server-bound customer used
+    // in that request before any receipt can be linked to it.
+    const providerCustomerId = String(data.crypto_customer_id || "").trim();
+    if (providerCustomerId !== cryptoCustomerId) {
+      console.error("[ONRAMP V2] Provider customer binding validation failed");
+      return NextResponse.json({
+        ok: false,
+        error: "stripe_session_customer_binding_failed",
+        code: "stripe_session_customer_binding_failed",
+        requestId: response.headers.get("request-id"),
+      }, { status: 502 });
+    }
 
     if (receiptId) {
       try {
@@ -312,7 +391,14 @@ export async function POST(req: NextRequest) {
           receipt.stripeSessionId = data.id;
           receipt.checkoutMode = checkoutMode;
           receipt.lastUpdatedAt = Date.now();
-          await attachCreatedStripeSession(container, receipt, data);
+          await attachCreatedStripeSession(
+            container,
+            receipt,
+            data,
+            false,
+            expectedCustomerEmail || undefined,
+            cryptoCustomerId,
+          );
           console.log(`[ONRAMP V2] Successfully linked Stripe session ${data.id} for receipt ${receiptId}`);
         } else {
           console.warn(`[ONRAMP V2] Receipt ${receiptId} not found in DB`);
@@ -321,6 +407,7 @@ export async function POST(req: NextRequest) {
       } catch (dbErr: any) {
         if (dbErr?.code === "receipt_payment_in_progress") return NextResponse.json({ ok: false, error: dbErr.message, code: dbErr.code, sessionId: dbErr.sessionId }, { status: 409 });
         if (dbErr?.code === "receipt_already_paid") return NextResponse.json({ ok: false, error: "This receipt has already been paid.", code: dbErr.code }, { status: 409 });
+        if (dbErr?.code === "receipt_customer_email_mismatch") return NextResponse.json({ ok: false, error: dbErr.message, code: dbErr.code }, { status: 409 });
         console.error("[ONRAMP V2] Failed to persist Stripe session ID to receipt:", { receiptId, sessionId: data.id, requestId: response.headers.get("request-id") }, dbErr);
         return NextResponse.json({ ok: false, error: "stripe_session_receipt_attachment_failed", code: "stripe_session_receipt_attachment_failed", requestId: response.headers.get("request-id"), stage: "receipt_attachment" }, { status: 503 });
       }
