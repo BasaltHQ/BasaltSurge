@@ -25,17 +25,21 @@ export async function acceptVerifiedStripeReceiptSession(container: any, session
     const stripeStatus = isStripeFulfillmentCompleteStatus(receipt.stripeSessionStatus) ? receipt.stripeSessionStatus : session.status;
     const funding = resolveStripeOnrampFunding(session, receipt.detectedCardFunding, receipt.isCreditCard);
     const nextStatus = resolveStripeAcceptedReceiptStatus(stripeStatus, { isAch: funding === "us_bank_account" })!;
-    const restoreAch = shouldRestoreStripeAchPendingStatus({ currentReceiptStatus: receipt.status, incomingReceiptStatus: nextStatus,
+    const restoreAch = shouldRestoreStripeAchPendingStatus({
+      currentReceiptStatus: receipt.status, incomingReceiptStatus: nextStatus,
       stripeStatus, currentStripeStatus: receipt.stripeSessionStatus,
-      hasVerifiedSettlementTx: [receipt.transactionHash, receipt.leg2TxHash].some(hash => /^0x[a-f0-9]{64}$/i.test(String(hash || ""))) });
+      hasVerifiedSettlementTx: [receipt.transactionHash, receipt.leg2TxHash].some(hash => /^0x[a-f0-9]{64}$/i.test(String(hash || "")))
+    });
     if (receipt.stripePaidSessionId === session.id && receipt.stripeSessionStatus === stripeStatus
       && isProtectedPaymentStatus(receipt.status) && !restoreAch) return;
     const previousStatus = receipt.status;
     if (!shouldIgnoreCanonicalStatusTransition(receipt.status, nextStatus) || restoreAch) receipt.status = nextStatus;
     if (receipt.status !== previousStatus) receipt.statusHistory = [...(receipt.statusHistory || []), { status: receipt.status, ts: Date.now() }];
-    Object.assign(receipt, { stripeSessionId: session.id, stripeSessionStatus: stripeStatus, checkoutStatus: stripeStatus,
+    Object.assign(receipt, {
+      stripeSessionId: session.id, stripeSessionStatus: stripeStatus, checkoutStatus: stripeStatus,
       checkoutStatusSource: "stripe_status_verified", checkoutStatusUpdatedAt: Date.now(), lastUpdatedAt: Date.now(),
-      detectedCardFunding: funding, isCreditCard: funding === "credit", ttl: -1 });
+      detectedCardFunding: funding, isCreditCard: funding === "credit", ttl: -1
+    });
     try {
       await persistStripeReceiptUpdate(container, receipt);
       return;
@@ -174,7 +178,7 @@ export async function attachCreatedStripeSession(
       writeCondition.matchFields.stripeEmail = current.stripeEmail ?? null;
       await item.patch(Object.entries(fields).filter(([, value]) => value !== undefined)
         .map(([key, value]) => ({ op: "set", path: `/${key}`, value })),
-      writeCondition);
+        writeCondition);
       return;
     } catch (error: any) {
       if (Number(error?.code || error?.statusCode) !== 412 || attempt === 2) throw error;
@@ -296,7 +300,7 @@ export async function retrieveStripeReceiptSession(sessionId: string): Promise<a
   const key = process.env.STRIPE_API_KEY;
   if (!key) throw new Error("stripe_not_configured");
   const response = await fetch(`https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`, {
-    headers: { Authorization: `Bearer ${key}`, "Stripe-Version": "2026-06-24.dahlia" },
+    headers: { Authorization: `Bearer ${key}`, "Stripe-Version": "2026-08-26.dahlia" },
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error(`Stripe session lookup failed (HTTP ${response.status}).`);

@@ -12,7 +12,7 @@ import { stripeLinkEmailMatchesFingerprint } from "@/lib/stripe-link-identity";
 
 export const dynamic = 'force-dynamic';
 
-const STRIPE_API_VERSION = "2026-06-24.dahlia";
+const STRIPE_API_VERSION = "2026-08-26.dahlia";
 
 /**
  * POST /api/stripe/onramp-session-v2
@@ -247,10 +247,10 @@ export async function POST(req: NextRequest) {
     let tokenRefreshed = false;
 
     const errorMsg = String(data.error?.message || "").toLowerCase();
-    const isOAuthError = response.status === 401 || 
-                         errorMsg.includes("oauth") || 
-                         data.error?.param === "HTTP_HEADER[Stripe-OAuth-Token]" ||
-                         data.error?.code === "parameter_missing";
+    const isOAuthError = response.status === 401 ||
+      errorMsg.includes("oauth") ||
+      data.error?.param === "HTTP_HEADER[Stripe-OAuth-Token]" ||
+      data.error?.code === "parameter_missing";
 
     if (isOAuthError && cryptoCustomerId) {
       console.log("[ONRAMP V2] OAuth token expired or rejected. Attempting background token refresh...");
@@ -289,7 +289,7 @@ export async function POST(req: NextRequest) {
     if (!response.ok) {
       const requiredTier = data.error?.code === "crypto_onramp_missing_document_verification" ? "L2"
         : data.error?.code === "crypto_onramp_missing_identity_verification" ? "L1"
-        : data.error?.code === "crypto_onramp_missing_minimum_identity_verification" ? "L0" : null;
+          : data.error?.code === "crypto_onramp_missing_minimum_identity_verification" ? "L0" : null;
       if (requiredTier && receiptId && merchantWallet) {
         try {
           await persistStripeKycRequirement(

@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 
 export const dynamic = 'force-dynamic';
 
-const STRIPE_API_VERSION = "2026-06-24.dahlia";
+const STRIPE_API_VERSION = "2026-08-26.dahlia";
 
 /**
  * POST /api/stripe/onramp-checkout/[sessionId]
@@ -233,13 +233,15 @@ export async function POST(
     // Preserve that server evidence even if a later session GET clears it.
     definitiveDecline = data.error || data.transaction_details?.last_error;
     const providerErrorDetails = onrampErrorDetails(definitiveDecline);
-    diagnostic = { requestId: response.headers.get("request-id"), httpStatus: response.status,
+    diagnostic = {
+      requestId: response.headers.get("request-id"), httpStatus: response.status,
       code: providerErrorDetails.code || null,
       message: providerErrorDetails.message
         ? String(maskSensitiveData(providerErrorDetails.message)).slice(0, 500)
         : null,
       declineCode: data.error?.decline_code || data.transaction_details?.last_error?.decline_code || null,
-      sessionId, at: Date.now() };
+      sessionId, at: Date.now()
+    };
     // 200 or 202 are both valid responses — check for last_error
     if (response.status === 200 || response.status === 202) {
       const lastError = data.transaction_details?.last_error || null;
@@ -334,8 +336,10 @@ export async function POST(
 
       console.error("[ONRAMP CHECKOUT] Checkout failed:", data);
       return NextResponse.json(
-        { ok: false, error: data.error?.message || "checkout_failed", code: data.error?.code,
-          decline_code: diagnostic.declineCode, requestId: diagnostic.requestId, sessionId },
+        {
+          ok: false, error: data.error?.message || "checkout_failed", code: data.error?.code,
+          decline_code: diagnostic.declineCode, requestId: diagnostic.requestId, sessionId
+        },
         { status: response.status }
       );
     }

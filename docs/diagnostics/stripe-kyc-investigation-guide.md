@@ -73,7 +73,7 @@ async function run() {
   const response = await fetch(`https://api.stripe.com/v1/crypto/onramp_sessions/${sessionId}`, {
     headers: {
       "Authorization": `Bearer ${stripeKey}`,
-      "Stripe-Version": "2026-06-24.dahlia",
+      "Stripe-Version": "2026-08-26.dahlia",
     },
   });
   const session = await response.json();
@@ -85,7 +85,7 @@ async function run() {
     const custResponse = await fetch(`https://api.stripe.com/v1/crypto/customers/${session.crypto_customer_id}`, {
       headers: {
         "Authorization": `Bearer ${stripeKey}`,
-        "Stripe-Version": "2026-06-24.dahlia",
+        "Stripe-Version": "2026-08-26.dahlia",
       },
     });
     const customer = await custResponse.json();

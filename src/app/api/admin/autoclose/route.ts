@@ -159,7 +159,7 @@ export async function GET(req: NextRequest) {
       const ethFormatted = Number(totalEth) / 1e18;
 
       // Estimate total USDC equivalent (approximating ETH to USD, e.g. $3000/ETH)
-      const ethPriceUsd = 3000; 
+      const ethPriceUsd = 3000;
       const totalUsdcEquivalent = usdcFormatted + usdtFormatted + (ethFormatted * ethPriceUsd);
 
       return NextResponse.json({
@@ -193,7 +193,7 @@ export async function GET(req: NextRequest) {
       };
       const { resources } = await containerEvents.items.query(achQuery).fetchAll();
       pendingAch = resources || [];
-      
+
       // Filter by brandKey if not platform
       if (!isPlatform) {
         pendingAch = pendingAch.filter(
@@ -320,7 +320,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Stripe API key not configured" }, { status: 500 });
       }
 
-      const STRIPE_API_VERSION = "2026-06-24.dahlia";
+      const STRIPE_API_VERSION = "2026-08-26.dahlia";
       const stripeRes = await fetch(
         `https://api.stripe.com/v1/crypto/onramp_sessions/${encodeURIComponent(sessionId)}`,
         {

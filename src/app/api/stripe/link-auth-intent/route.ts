@@ -3,7 +3,7 @@ import { storeStripeLinkAuthIntentBinding } from "@/lib/stripe-link-identity";
 
 export const dynamic = 'force-dynamic';
 
-const STRIPE_API_VERSION = "2026-06-24.dahlia";
+const STRIPE_API_VERSION = "2026-08-26.dahlia";
 
 /**
  * POST /api/stripe/link-auth-intent

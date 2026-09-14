@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
 
     const headers: Record<string, string> = {
       "Authorization": `Bearer ${stripeKey}`,
-      "Stripe-Version": "2026-06-24.dahlia",
+      "Stripe-Version": "2026-08-26.dahlia",
     };
 
     let oauthToken = req.headers.get("x-stripe-oauth-token") || "";
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
       method: "GET",
       headers,
     });
-    
+
     const limitsData = await stripeRes.json();
     if (!stripeRes.ok || limitsData.error) {
       console.warn("[STRIPE LIMITS API] Stripe error:", limitsData.error);

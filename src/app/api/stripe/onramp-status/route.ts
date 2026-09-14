@@ -50,7 +50,7 @@ export async function GET(req: NextRequest) {
 
     const headers: Record<string, string> = {
       "Authorization": `Bearer ${stripeKey}`,
-      "Stripe-Version": "2026-06-24.dahlia",
+      "Stripe-Version": "2026-08-26.dahlia",
     };
     if (oauthToken) {
       headers["Stripe-OAuth-Token"] = oauthToken;
