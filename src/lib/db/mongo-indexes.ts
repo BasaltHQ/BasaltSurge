@@ -19,40 +19,48 @@ export interface IndexDefinition {
   };
 }
 
+const eventCollection = process.env.DB_COLLECTION || process.env.COSMOS_CONTAINER_ID || process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "payportal_events";
+
 export const REQUIRED_INDEXES: IndexDefinition[] = [
+  // Merchant list keyset pagination: equality scope, then sort and unique tie-breaker.
+  ...["createdAt", "totalUsd", "receiptId", "status", "brandName"].map(field => ({
+    collection: eventCollection,
+    keys: { type: 1, wallet: 1, [field]: -1, _id: -1 } as Record<string, 1 | -1>,
+    options: { name: `idx_merchant_orders_${field}_id`, background: true },
+  })),
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, createdAt: -1, _id: -1 },
     options: { name: "idx_type_createdAt_id", background: true }
   },
   // ── Events / Receipts collection (payportal_events / surge_events) ──
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, wallet: 1, createdAt: -1 },
     options: { name: "idx_type_wallet_createdAt", background: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, status: 1, createdAt: -1 },
     options: { name: "idx_type_status_createdAt", background: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { id: 1, wallet: 1, updatedAt: -1 },
     options: { name: "idx_id_wallet_updatedAt", background: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, stripeSessionId: 1 },
     options: { name: "idx_type_stripeSessionId", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, brandKey: 1, createdAt: -1 },
     options: { name: "idx_type_brandKey_createdAt", background: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, transactionHash: 1 },
     options: { name: "idx_type_transactionHash", background: true, sparse: true }
   },
@@ -90,7 +98,7 @@ export const REQUIRED_INDEXES: IndexDefinition[] = [
 
   // ── Configurations (wallet_config / client_request) ──
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { brandKey: 1, type: 1 },
     options: { name: "idx_brandKey_type", background: true }
   },
@@ -114,61 +122,61 @@ export const REQUIRED_INDEXES: IndexDefinition[] = [
 
   // ── Subscriptions Domain ──
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, customerWallet: 1, createdAt: -1 },
     options: { name: "idx_type_customerWallet_createdAt", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, merchantWallet: 1, createdAt: -1 },
     options: { name: "idx_type_merchantWallet_createdAt", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, merchantWallet: 1, active: 1, createdAt: -1 },
     options: { name: "idx_type_merchantWallet_active_createdAt", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, subscriptionId: 1 },
     options: { name: "idx_type_subscriptionId", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, planId: 1 },
     options: { name: "idx_type_planId", background: true, sparse: true }
   },
 
   // ── Extended Receipts & Orders Lookups ──
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, customerEmail: 1, createdAt: -1 },
     options: { name: "idx_type_customerEmail_createdAt", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, orderId: 1 },
     options: { name: "idx_type_orderId", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, stripePaymentIntentId: 1 },
     options: { name: "idx_type_stripePaymentIntentId", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, shopSlug: 1 },
     options: { name: "idx_type_shopSlug", background: true, sparse: true }
   },
 
   // ── Node Network & Staking ──
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, nodeId: 1, timestamp: -1 },
     options: { name: "idx_type_nodeId_timestamp", background: true, sparse: true }
   },
   {
-    collection: process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "surge_events",
+    collection: eventCollection,
     keys: { type: 1, keyHash: 1 },
     options: { name: "idx_type_keyHash", background: true, sparse: true }
   },
@@ -206,8 +214,8 @@ export async function syncMongoIndexes(connStr?: string, dbName?: string): Promi
   existing: string[];
   errors: string[];
 }> {
-  const uri = connStr || process.env.MONGODB_CONNECTION_STRING || process.env.DB_CONNECTION_STRING || "";
-  const databaseName = dbName || process.env.DB_NAME || process.env.COSMOS_PAYPORTAL_DB_ID || "surge";
+  const uri = connStr || process.env.COSMOS_CONNECTION_STRING || process.env.MONGODB_CONNECTION_STRING || process.env.DB_CONNECTION_STRING || "";
+  const databaseName = dbName || process.env.DB_NAME || process.env.COSMOS_DB_ID || process.env.COSMOS_PAYPORTAL_DB_ID || "payportal";
 
   if (!uri || !/^mongodb(\+srv)?:\/\//i.test(uri)) {
     return { created: [], existing: [], errors: ["Invalid or missing MongoDB connection string"] };

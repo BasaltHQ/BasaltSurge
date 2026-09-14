@@ -40,6 +40,15 @@ import {
   selectStripeOnrampLimit,
 } from "@/lib/stripe-onramp-limits";
 
+function requiresLinkIdentityAuthentication(error: unknown): boolean {
+  return [
+    "stripe_customer_email_binding_required", "receipt_customer_email_mismatch",
+    "stripe_customer_reauthentication_required", "stripe_reauthentication_required",
+    "link_customer_email_mismatch", "link_customer_binding_mismatch",
+    "link_identity_binding_missing", "missing_oauth_token",
+  ].includes(onrampErrorCode(error));
+}
+
 // Safe sessionStorage decorator that redirects persistent user tokens to localStorage to minimize OTP prompts
 const sessionStorageDecorator = {
   getItem(key: string): string | null {
@@ -442,7 +451,7 @@ export type UseStripeEmbeddedOnrampReturn = {
   /** Reset state */
   reset: () => void;
   /** Submit phone number to resume registration */
-  submitPhone: (phoneNumber: string) => void;
+  submitPhone: (phoneNumber: string, emailOverride?: string, countryOverride?: string) => void;
   /** Submit KYC details to recover from missing_kyc error */
   submitKycInfo: (kycInfo: any) => Promise<void>;
   /** Submit the MiCA identifiers Stripe reports as missing for an EU customer. */
@@ -766,8 +775,10 @@ export function useStripeEmbeddedOnramp({
 
   useEffect(() => {
     if (typeof window !== "undefined") {
+      linkIdentityReauthenticationRef.current = null;
       const currentStored = sessionStorage.getItem(sessionKey);
       sessionIdRef.current = currentStored || null;
+      sessionPaymentTokenRef.current = null;
       setSessionId(currentStored || null);
     }
   }, [sessionKey]);
@@ -861,6 +872,13 @@ export function useStripeEmbeddedOnramp({
   const speedResolverRef = useRef<((speed: "standard" | "instant") => void) | null>(null);
   const authenticatedCoordinatorRef = useRef<OnrampCoordinator | null>(null);
   const contactReauthenticationCustomerRef = useRef<string | null>(null);
+  const linkIdentityReauthenticationRef = useRef<{
+    customerId: string | null;
+    sessionId: string;
+    paymentToken: string | null;
+    buyerWallet: string | null;
+    funding: "credit" | "debit" | "us_bank_account" | null;
+  } | null>(null);
   const kycOccurredRef = useRef(false);
   const activeCountryRef = useRef<string>("US");
   const kycInitialLevelRef = useRef<string | null>(null);
@@ -948,11 +966,16 @@ export function useStripeEmbeddedOnramp({
   const stepRef = useRef<OnrampStep>("idle");
   const oauthTokenRef = useRef<string | null>(null);
   const paymentTokenRef = useRef<string | null>(null);
+  // Each headless session is bound to the payment token selected when it was
+  // created. This association intentionally stays in memory: after a reload,
+  // a newly selected method must receive a fresh session.
+  const sessionPaymentTokenRef = useRef<string | null>(null);
   const verificationTokenRef = useRef<string | null>(null);
   const buyerAccountRef = useRef<any>(null);
   const isRunningRef = useRef(false);
   const sessionIdRef = useRef<string | null>(null);
   const activeEmailRef = useRef<string | null>(email ? email.trim().toLowerCase() : null);
+  const hasSelectedEmailRef = useRef(false);
   const customerIdRef = useRef<string | null>(null);
   const buyerWalletRef = useRef<string | null>(null);
   const isVerifyingRef = useRef(false);
@@ -1054,17 +1077,12 @@ export function useStripeEmbeddedOnramp({
     kycOccurred: kycOccurredRef.current,
   }), []);
 
-  // Synchronize email in session storage and activeEmailRef when it changes dynamically
+  // Props are prefills. Only an explicit Step 1 start persists identity to
+  // session storage; a storefront value may be replaced when the receipt loads.
   useEffect(() => {
     const currentEmail = (email || "").trim().toLowerCase();
-    if (currentEmail) {
+    if (currentEmail && !hasSelectedEmailRef.current) {
       activeEmailRef.current = currentEmail;
-      if (typeof window !== "undefined") {
-        const storedEmail = sessionStorage.getItem("stripe_onramp_email");
-        if (!storedEmail && stepRef.current === "idle") {
-          sessionStorage.setItem("stripe_onramp_email", currentEmail);
-        }
-      }
     }
   }, [email]);
 
@@ -1076,46 +1094,27 @@ export function useStripeEmbeddedOnramp({
       const storedEmail = sessionStorage.getItem("stripe_onramp_email");
       const currentEmail = (email || "").trim().toLowerCase();
 
-      if (storedEmail && currentEmail && storedEmail !== currentEmail && stepRef.current === "idle") {
-        console.warn("[EMBEDDED ONRAMP] Email mismatch on reload while idle. Resetting refs.");
-        sessionStorage.removeItem("stripe_onramp_customer_id");
-        sessionStorage.removeItem("stripe_onramp_oauth_token");
-        sessionStorage.removeItem("stripe_onramp_buyer_wallet");
-        sessionStorage.removeItem(sessionKey);
-        sessionStorage.removeItem("stripe_onramp_email");
-        sessionStorage.removeItem("stripe_onramp_session_funding");
+      // Do not discard a receipt-scoped payment session because a mutable
+      // storefront prefill differs during the first render. The receipt's
+      // canonical Step 1 value hydrates immediately afterward and wins.
+      activeEmailRef.current = currentEmail || storedEmail || null;
+      const storedCustId = sessionStorage.getItem("stripe_onramp_customer_id");
+      const storedToken = sessionStorage.getItem("stripe_onramp_oauth_token");
+      const storedWallet = sessionStorage.getItem("stripe_onramp_buyer_wallet");
+      const storedSessionId = sessionStorage.getItem(sessionKey);
+      const storedFunding = sessionStorage.getItem("stripe_onramp_session_funding") as any;
 
-        customerIdRef.current = null;
-        oauthTokenRef.current = null;
-        buyerWalletRef.current = null;
-        sessionIdRef.current = null;
-        sessionFundingRef.current = null;
+      if (storedCustId) customerIdRef.current = storedCustId;
+      if (storedToken) oauthTokenRef.current = storedToken;
+      if (storedWallet) buyerWalletRef.current = storedWallet;
+      sessionIdRef.current = storedSessionId || null;
+      setSessionId(storedSessionId || null);
+      if (storedFunding) sessionFundingRef.current = storedFunding;
 
-        setCryptoCustomerId(null);
-        setBuyerWalletAddress(null);
-        setSessionId(null);
-      } else {
-        const storedCustId = sessionStorage.getItem("stripe_onramp_customer_id");
-        const storedToken = sessionStorage.getItem("stripe_onramp_oauth_token");
-        const storedWallet = sessionStorage.getItem("stripe_onramp_buyer_wallet");
-        const storedSessionId = sessionStorage.getItem(sessionKey);
-        const storedFunding = sessionStorage.getItem("stripe_onramp_session_funding") as any;
-
-        if (storedCustId) customerIdRef.current = storedCustId;
-        if (storedToken) oauthTokenRef.current = storedToken;
-        if (storedWallet) buyerWalletRef.current = storedWallet;
-        sessionIdRef.current = storedSessionId || null;
-        setSessionId(storedSessionId || null);
-        if (storedFunding) sessionFundingRef.current = storedFunding;
-
-        // Note: Keep customer session details restored but let coordinator instance authenticate properly
-        if (storedCustId && storedToken && storedWallet) {
-          console.log("[EMBEDDED ONRAMP] Restored active session details for customer:", storedCustId);
-        }
-      }
-
-      if (currentEmail && stepRef.current === "idle") {
-        sessionStorage.setItem("stripe_onramp_email", currentEmail);
+      // Keep customer session details restored but let the coordinator
+      // instance authenticate properly before performing any payment action.
+      if (storedCustId && storedToken && storedWallet) {
+        console.log("[EMBEDDED ONRAMP] Restored active session details for customer:", storedCustId);
       }
     }
 
@@ -1320,7 +1319,26 @@ export function useStripeEmbeddedOnramp({
     if (err?.code === "kyc_observation_pending") return;
 
     // Resolve programmatic code from error object if present
-    const details = onrampErrorDetails(err, message);
+    let details = onrampErrorDetails(err, message);
+    if (requiresLinkIdentityAuthentication(details)) {
+      // Authentication rejection occurs before this API request can confirm a
+      // payment. A deliberate retry must obtain fresh Link consent, retaining
+      // the exact existing session and payment selection for reconciliation.
+      if (sessionIdRef.current && !linkIdentityReauthenticationRef.current) {
+        linkIdentityReauthenticationRef.current = {
+          customerId: customerIdRef.current,
+          sessionId: sessionIdRef.current,
+          paymentToken: sessionPaymentTokenRef.current,
+          buyerWallet: buyerWalletRef.current,
+          funding: sessionFundingRef.current,
+        };
+      }
+      oauthTokenRef.current = null;
+      verificationTokenRef.current = null;
+      sessionStorage.removeItem("stripe_onramp_oauth_token");
+      message = "Sign in to Link again with your checkout email to continue. Your existing payment will be checked first.";
+      details = { ...details, code: "stripe_reauthentication_required", message };
+    }
     const code = details.code;
     if (code === "receipt_already_paid") {
       isRunningRef.current = false;
@@ -1870,6 +1888,7 @@ export function useStripeEmbeddedOnramp({
 
   const reset = useCallback(() => {
     contactReauthenticationCustomerRef.current = null;
+    linkIdentityReauthenticationRef.current = null;
     verificationRecoveryAttemptsRef.current.clear();
     verificationStatusRecoveryRef.current = false;
     sdkPaymentFailureRef.current = false;
@@ -1904,6 +1923,7 @@ export function useStripeEmbeddedOnramp({
     sessionIdRef.current = null;
     setSessionId(null);
     activeEmailRef.current = null;
+    hasSelectedEmailRef.current = false;
     customerIdRef.current = null;
     buyerWalletRef.current = null;
     isAchEnforcedRef.current = false;
@@ -2048,6 +2068,7 @@ export function useStripeEmbeddedOnramp({
             oauthToken: oauthTokenRef.current,
             receiptId,
             merchantWallet,
+            customerEmail: activeEmailRef.current,
             brandKey,
             splitMode: isDualSplitEnabled() ? "dual" : "single",
             settlementSpeed,
@@ -2057,6 +2078,10 @@ export function useStripeEmbeddedOnramp({
 
         if (!sessionRes.ok) {
           const errData = sessionData;
+          if (requiresLinkIdentityAuthentication(errData)) {
+            handleError(errData.error || "Link sign-in is required.", errData);
+            return null;
+          }
           if (errData.code === "receipt_already_paid" || errData.code === "receipt_payment_in_progress") {
             handleError(errData.error, errData);
             return null;
@@ -2130,6 +2155,7 @@ export function useStripeEmbeddedOnramp({
           throw new Error("No session ID returned");
         }
         sessionFundingRef.current = fundingTypeToUse;
+        sessionPaymentTokenRef.current = pmToken;
         if (typeof window !== "undefined") {
           sessionStorage.setItem("stripe_onramp_session_funding", fundingTypeToUse || "");
         }
@@ -2554,10 +2580,11 @@ export function useStripeEmbeddedOnramp({
 
     let currentSessionId = sessionIdRef.current;
     const sessionFunding = sessionFundingRef.current;
-    const needsRecreate = !currentSessionId || (sessionFunding !== resolvedFunding);
+    const sessionPaymentToken = sessionPaymentTokenRef.current;
+    const needsRecreate = !currentSessionId || sessionFunding !== resolvedFunding || sessionPaymentToken !== pmToken;
 
     if (needsRecreate) {
-      console.log(`[EMBEDDED ONRAMP] Creating/Re-creating session. Reason: !sessionId=${!currentSessionId}, fundingChanged=${sessionFunding} -> ${resolvedFunding}`);
+      console.log(`[EMBEDDED ONRAMP] Creating/Re-creating session. Reason: !sessionId=${!currentSessionId}, fundingChanged=${sessionFunding} -> ${resolvedFunding}, paymentSelectionChanged=${sessionPaymentToken !== pmToken}`);
       const initialAmount = getOnrampAmount(resolvedFunding || null);
       const sessionResult = await createSessionHelper(customerId, pmToken, buyerWallet, initialAmount, resolvedFunding);
       if (!sessionResult) return;
@@ -2733,6 +2760,10 @@ export function useStripeEmbeddedOnramp({
             handleError(checkoutErr.message, checkoutErr);
             return;
           }
+          if (requiresLinkIdentityAuthentication(checkoutErr)) {
+            handleError(checkoutErr.message, checkoutErr);
+            return;
+          }
           console.warn(`[EMBEDDED ONRAMP] Checkout attempt ${attempt + 1} failed, checking error state...`, checkoutErr);
 
           let isCardDecline = false;
@@ -2773,6 +2804,24 @@ export function useStripeEmbeddedOnramp({
             if (statusData.refreshedToken) {
               console.log("[EMBEDDED ONRAMP] Status check returned refreshed OAuth token, updating ref...");
               oauthTokenRef.current = statusData.refreshedToken;
+            }
+            const checkoutErrorCode = String(checkoutErr?.code || checkoutErr?.error?.code || "").toLowerCase();
+            const checkoutErrorMessage = String(checkoutErr?.message || checkoutErr?.error?.message || "").toLowerCase();
+            const isConfirmationStatePending = checkoutErrorCode === "stripe_payment_confirmation_state_pending" ||
+              checkoutErrorMessage.includes("valid state") ||
+              checkoutErrorMessage.includes("purchase confirmation");
+            if (isConfirmationStatePending) {
+              if (attempt < MAX_ATTEMPTS - 1) {
+                const backoff = Math.min(Math.pow(2, attempt) * 1000, 4000);
+                console.warn(`[EMBEDDED ONRAMP] Stripe is resolving the existing confirmation. Retrying session ${currentSessionId} in ${backoff}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})...`);
+                await new Promise(r => setTimeout(r, backoff));
+                if (!mountedRef.current) return;
+                updateStep("checking_out");
+                continue;
+              }
+              console.warn("[EMBEDDED ONRAMP] Confirmation-state retries exhausted. Preserving the reserved session for status recovery.");
+              await pendingRecoveryRef.current(currentSessionId || undefined);
+              return;
             }
             const rawLastError = statusData.transactionDetails?.last_error || statusData.transaction_details?.last_error || checkoutErr?.lastError;
             const lastError = onrampErrorCode(rawLastError);
@@ -2863,8 +2912,6 @@ export function useStripeEmbeddedOnramp({
                 errCode === "zerohash_api_error" ||
                 errMessage.includes("server error") ||
                 errMessage.includes("timed out") ||
-                errMessage.includes("valid state") ||
-                errMessage.includes("purchase confirmation") ||
                 errMessage.includes("try creating a new session");
 
               const isAmountLimitError =
@@ -2959,11 +3006,9 @@ export function useStripeEmbeddedOnramp({
                 }
               }
 
-              const isInvalidState = errMessage.includes("valid state") || errMessage.includes("purchase confirmation");
-
-              if (isQuoteExpired || isInvalidState) {
-                console.log("[EMBEDDED ONRAMP] Quote expired or session state invalid. Recreating fresh session & PaymentIntent...");
-                if (isQuoteExpired && !isInvalidState && recovery !== "new_quote") {
+              if (isQuoteExpired) {
+                console.log("[EMBEDDED ONRAMP] Quote expired. Refreshing the quote or recreating the session through the reserved receipt...");
+                if (recovery !== "new_quote") {
                   updateStep("creating_session");
                   try {
                     const refreshRes = await fetch("/api/stripe/onramp-quote-refresh", {
@@ -4066,6 +4111,7 @@ export function useStripeEmbeddedOnramp({
     console.log("[EMBEDDED ONRAMP] startOnramp triggered. isEcommerceMode prop:", isEcommerceMode, "window.location.search:", typeof window !== "undefined" ? window.location.search : "SSR");
 
     if (activeEmail) {
+      if (overrideEmail?.trim()) hasSelectedEmailRef.current = true;
       activeEmailRef.current = activeEmail;
       if (typeof window !== "undefined") {
         const storedEmail = sessionStorage.getItem("stripe_onramp_email");
@@ -4247,7 +4293,7 @@ export function useStripeEmbeddedOnramp({
               authenticationCompleted = true;
               clearTimeout(authTimeout);
               if (result.result === "success" && result.crypto_customer_id) {
-                const expectedCustomerId = contactReauthenticationCustomerRef.current || (authOptions?.reauthenticate ? customerId : null);
+                const expectedCustomerId = linkIdentityReauthenticationRef.current?.customerId || contactReauthenticationCustomerRef.current || (authOptions?.reauthenticate ? customerId : null);
                 if (expectedCustomerId && result.crypto_customer_id !== expectedCustomerId) {
                   authenticatedCoordinatorRef.current = null;
                   reject(new Error("Please sign in to the same Link account to resume this checkout."));
@@ -4316,7 +4362,7 @@ export function useStripeEmbeddedOnramp({
 
         if (!tokenRes.ok) {
           const tokenData = await tokenRes.json();
-          handleError(tokenData.error || "Token exchange failed");
+          handleError(tokenData.error || "Token exchange failed", { ...tokenData, code: tokenData.code || tokenData.error });
           return;
         }
 
@@ -4343,7 +4389,7 @@ export function useStripeEmbeddedOnramp({
 
         if (!markRes.ok) {
           const markData = await markRes.json();
-          handleError(markData.error || "Secure email verification failed");
+          handleError(markData.error || "Secure email verification failed", { ...markData, code: markData.code || markData.error });
           return;
         }
 
@@ -4805,6 +4851,22 @@ export function useStripeEmbeddedOnramp({
       }
 
       if (!mountedRef.current) return;
+
+      const reauthenticatedPayment = linkIdentityReauthenticationRef.current;
+      if (reauthenticatedPayment) {
+        if (sessionIdRef.current !== reauthenticatedPayment.sessionId
+          || finalBuyerWallet.toLowerCase() !== reauthenticatedPayment.buyerWallet?.toLowerCase()) {
+          handleError("The existing payment could not be matched after Link sign-in. Contact checkout support.", { code: "session_verification_unavailable" });
+          return;
+        }
+        linkIdentityReauthenticationRef.current = null;
+        if (!reauthenticatedPayment.paymentToken) {
+          await pendingRecoveryRef.current(reauthenticatedPayment.sessionId);
+          return;
+        }
+        await runCheckoutLoop(activeEmail, customerId || "", reauthenticatedPayment.paymentToken, finalBuyerWallet, reauthenticatedPayment.funding);
+        return;
+      }
 
       // ─── Step 8: Collect payment method ───
       let checkoutSucceeded = false;

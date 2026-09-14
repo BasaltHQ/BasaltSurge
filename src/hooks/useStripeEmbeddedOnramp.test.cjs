@@ -10,6 +10,116 @@ const BUYER_WALLET = "0x1111111111111111111111111111111111111111";
 const CUSTOMER_ID = "crc_test_buyer";
 const EMAIL = "buyer@example.test";
 
+test("Step 1 email survives store prop updates through wallet creation and settlement", { timeout: 10000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" }, storage: createStorage() });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  const checkout = h.render({ email: "account@store.example" }).startOnramp(EMAIL, "", "US");
+  await settleUntil(() => h.state.paymentCompletion);
+  // A parent rerender must not replace the Step 1 identity with a billing prefill.
+  h.render({ email: "different-billing@store.example" });
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_email_test", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  await checkout;
+  assert.deepEqual(h.calls.walletEmails, [EMAIL]);
+  const verified = h.calls.requests.find(request => request.pathname === "/api/auth/mark-verified");
+  assert.equal(JSON.parse(verified.options.body).email, EMAIL);
+  const launch = h.calls.requests.find(request => request.pathname === "/api/stripe/background-poll");
+  assert.equal(JSON.parse(launch.options.body).email, EMAIL);
+  assert.equal(h.localStorage.getItem("stripe_onramp_email"), EMAIL);
+  assert.equal(h.render().step, "completed");
+});
+
+test("a stale storefront prefill cannot clear a restored payment before canonical email hydration", async t => {
+  const browserSession = createStorage({
+    stripe_onramp_email: EMAIL,
+    stripe_onramp_customer_id: CUSTOMER_ID,
+    stripe_onramp_oauth_token: "liwltoken_restored_test",
+    stripe_onramp_buyer_wallet: BUYER_WALLET,
+    "stripe_onramp_session_id:R-TEST-EU": "cos_restored_email_test",
+    stripe_onramp_session_funding: "debit",
+  });
+  const h = createHarness({ ownership: { source: "backend" }, sessionStorage: browserSession });
+  t.after(h.unmount);
+
+  h.render({ email: "account@store.example" });
+  assert.equal(browserSession.getItem("stripe_onramp_session_id:R-TEST-EU"), "cos_restored_email_test");
+  assert.equal(browserSession.getItem("stripe_onramp_customer_id"), CUSTOMER_ID);
+
+  // The receipt API hydrates its persisted Step 1 identity after the first
+  // render. Recovery must use that value without discarding the saved session.
+  h.render({ email: EMAIL });
+  h.state.providerStatus = "fulfillment_complete";
+  await h.render().checkPaymentStatus();
+  const launch = h.calls.requests.find(request => request.pathname === "/api/stripe/background-poll");
+  assert.equal(JSON.parse(launch.options.body).email, EMAIL);
+  assert.equal(h.calls.performCheckout, 0);
+});
+
+for (const code of ['stripe_customer_email_binding_required', 'receipt_customer_email_mismatch', 'missing_oauth_token']) {
+  test(`session creation ${code} requires fresh Link authentication on deliberate retry`, async t => {
+    const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+    h.state.kycVerified = true;
+    h.state.walletVerified = true;
+    h.state.sessionFailure = { code, error: 'Sign in to Link again.' };
+    const first = h.render().startOnramp();
+    await settleUntil(() => h.calls.paymentOptions.length === 1);
+    h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_before_binding', paymentMethodDetails: { type: 'card', card: { funding: 'debit' } } });
+    await first;
+    assert.equal(h.render().step, 'error');
+    assert.match(h.render().error, /Sign in to Link again/);
+    assert.equal(h.calls.performCheckout, 0);
+    h.state.sessionFailure = null;
+    const retry = h.render().startOnramp(undefined, undefined, undefined, true);
+    await settleUntil(() => h.calls.paymentOptions.length === 2);
+    assert.equal(h.calls.authenticate, 2);
+    h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_bound', paymentMethodDetails: { type: 'card', card: { funding: 'debit' } } });
+    await retry;
+    assert.equal(h.render().step, 'completed');
+  });
+}
+
+for (const outcome of ['resume', 'accepted', 'uncertain']) {
+  test(`checkout identity reauthentication preserves the same payment when ${outcome}`, async t => {
+    const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+    h.state.kycVerified = true;
+    h.state.walletVerified = true;
+    h.state.checkoutFailure = { code: 'receipt_customer_email_mismatch', error: 'The authenticated Link account does not match the Step 1 email.' };
+    const first = h.render().startOnramp();
+    await settleUntil(() => h.calls.paymentOptions.length === 1);
+    h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_existing', paymentMethodDetails: { type: 'card', card: { funding: 'debit' } } });
+    await first;
+    assert.equal(h.render().step, 'error');
+    assert.equal(h.calls.performCheckout, 1);
+    assert.equal(h.sessionStorage.getItem('stripe_onramp_session_id:R-TEST-EU'), 'cos_test_ownership');
+    h.state.checkoutFailure = outcome === 'uncertain'
+      ? { code: 'receipt_payment_in_progress', error: 'Existing payment is unresolved.', sessionId: 'cos_test_ownership' }
+      : null;
+    if (outcome === 'accepted') h.state.providerStatus = 'fulfillment_complete';
+    await h.render().startOnramp(undefined, undefined, undefined, true);
+    assert.equal(h.calls.authenticate, 2);
+    assert.equal(h.calls.paymentOptions.length, 1, 'reauthentication must retain the selected payment');
+    assert.equal(h.calls.requests.filter(r => r.pathname === '/api/stripe/onramp-session-v2').length, 1, 'reauthentication must not create another session');
+    assert.ok(h.calls.checkoutSessions.every(id => id === 'cos_test_ownership'));
+    assert.equal(h.calls.performCheckout, outcome === 'accepted' ? 1 : 2);
+    assert.equal(h.render().step, outcome === 'uncertain' ? 'awaiting_funds' : 'completed');
+  });
+}
+
+for (const phase of ['tokenFailure', 'markFailure']) {
+  test(`${phase} identity rejection offers fresh Link authentication`, async t => {
+    const h = createHarness(); t.after(h.unmount);
+    h.state[phase] = { error: phase === 'tokenFailure' ? 'link_identity_binding_missing' : 'link_customer_email_mismatch', reauthenticate: true };
+    await h.render().startOnramp();
+    assert.equal(h.render().step, 'error');
+    assert.match(h.render().error, /Sign in to Link again/);
+    h.state[phase] = null;
+    const retry = h.render().startOnramp(undefined, undefined, undefined, true);
+    await settleUntil(() => h.calls.authenticate === 2);
+    await retry;
+    assert.equal(h.calls.authenticate, 2);
+  });
+}
+
 // Exercise the real hook and its real helpers without adding a browser test
 // dependency. This runner preserves hook state, dependency lists, and effect
 // cleanup across explicit renders; it does not access the hook's private refs.
@@ -84,7 +194,7 @@ function createStorage(initial = {}) {
   };
 }
 
-function createHarness({ accordion = false, ownership = null, storage = null, customerId = CUSTOMER_ID } = {}) {
+function createHarness({ accordion = false, ownership = null, storage = null, sessionStorage: initialSessionStorage = null, customerId = CUSTOMER_ID } = {}) {
   const runner = createHookRunner();
   const calls = { initialize: 0, authenticate: 0, destroy: 0, verifyDocuments: 0, performCheckout: 0, paymentOptions: [], requests: [], errors: [], steps: [], challenges: [], signedMessages: [], signatures: [], checkoutSessions: [], successes: [] };
   const state = { kycVerified: false, paymentCompletion: null, sessionFailure: null, walletVerified: false };
@@ -99,6 +209,7 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
     stripe_onramp_oauth_token: "liwltoken_restored_test",
     stripe_onramp_buyer_wallet: BUYER_WALLET,
   });
+  const browserSessionStorage = initialSessionStorage || createStorage();
   class Element {}
   const paymentElement = new Element();
   const coordinator = {
@@ -210,8 +321,12 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
     const pathname = String(url).split("?")[0];
     calls.requests.push({ pathname, options });
     if (pathname === "/api/stripe/link-auth-intent") return jsonResponse({ authIntentId: "lai_test" });
-    if (pathname === "/api/stripe/link-auth-tokens") return jsonResponse({ accessToken: "liwltoken_authenticated_test" });
-    if (pathname === "/api/auth/mark-verified") return jsonResponse({ verificationToken: "verification_test" });
+    if (pathname === "/api/stripe/link-auth-tokens") return state.tokenFailure
+      ? { ok: false, status: 403, json: async () => state.tokenFailure }
+      : jsonResponse({ accessToken: "liwltoken_authenticated_test" });
+    if (pathname === "/api/auth/mark-verified") return state.markFailure
+      ? { ok: false, status: 403, json: async () => state.markFailure }
+      : jsonResponse({ verificationToken: "verification_test" });
     if (["/api/users/profile", "/api/receipts/status", "/api/portal/log"].includes(pathname)) return jsonResponse({ ok: true });
     if (pathname === "/api/stripe/onramp-limits") return jsonResponse({ ok: true, limits: state.limits || [] });
     if (pathname === "/api/stripe/onramp-session-v2" && state.hangSession) return new Promise((_, reject) => {
@@ -235,7 +350,10 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
       if (state.hangCheckout) return new Promise((_, reject) => {
         options.signal.addEventListener("abort", () => reject(new Error("checkout_request_aborted")), { once: true });
       });
-      if (state.checkoutFailure) return { ok: false, status: 409, json: async () => state.checkoutFailure };
+      if (state.checkoutFailure && (state.checkoutFailuresRemaining === undefined || state.checkoutFailuresRemaining > 0)) {
+        if (state.checkoutFailuresRemaining !== undefined) state.checkoutFailuresRemaining--;
+        return { ok: false, status: 409, json: async () => state.checkoutFailure };
+      }
       if (state.walletVerified) { state.checkoutAccepted = true; return jsonResponse({ ok: true, client_secret: "test_client_secret" }); }
       if (ownership.source === "lastError") {
         return jsonResponse({ ok: false, client_secret: null, lastError: "wallet_ownership_verification_required", status: "requires_payment" });
@@ -292,7 +410,7 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
     process: { env },
     window: {
       localStorage,
-      sessionStorage: createStorage(),
+      sessionStorage: browserSessionStorage,
       addEventListener(name, listener) { listeners.set(name, listener); },
       removeEventListener(name) { listeners.delete(name); },
       location: { search: "", host: "checkout.example.test" },
@@ -325,13 +443,17 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
     },
     "@stripe/crypto": { loadCryptoOnrampAndInitialize: async () => { calls.initialize++; return coordinator; } },
     thirdweb: { createThirdwebClient: () => ({}), getContract: () => { calls.clientSettlements = (calls.clientSettlements || 0) + 1; assert.fail("Browser must not race server settlement"); } },
-    "thirdweb/wallets": { inAppWallet: () => ({ connect: async () => ({
-      address: BUYER_WALLET,
-      signMessage: async ({ message }) => {
-        calls.signedMessages.push(message);
-        return `0x${"11".repeat(65)}`;
-      },
-    }) }) },
+    "thirdweb/wallets": { inAppWallet: () => ({ connect: async (options) => {
+      calls.walletEmails ??= [];
+      calls.walletEmails.push(JSON.parse(options.payload).email);
+      return {
+        address: BUYER_WALLET,
+        signMessage: async ({ message }) => {
+          calls.signedMessages.push(message);
+          return `0x${"11".repeat(65)}`;
+        },
+      };
+    } }) },
     "thirdweb/chains": { base: { id: 8453 } },
   };
   const loaded = new Map();
@@ -374,7 +496,7 @@ function createHarness({ accordion = false, ownership = null, storage = null, cu
     onStepChange: (step) => calls.steps.push(step),
   };
   return {
-    calls, state, env, localStorage, paymentElement,
+    calls, state, env, localStorage, sessionStorage: browserSessionStorage, paymentElement,
     setCookie: value => { context.window.document.cookie = value; },
     hasTimer: delay => [...timers.values()].some(timer => timer.delay === delay),
     emitWindow: name => listeners.get(name)?.(),
@@ -430,7 +552,9 @@ test(`${country} contact waits for configuration and authentication before advan
     onHeadlessSubmitEmailPhone: async (...args) => { liveSubmissions.push(args); },
   });
   assert.equal(state.step1Props.isSubmittingContact, false);
-  assert.equal(liveSubmissions.length, 1, "configuration readiness triggers the real prewarm handler exactly once");
+  assert.equal(liveSubmissions.length, 0, "typing or configuration readiness must not submit a partial Step 1 email");
+  await state.step1Props.onSubmit();
+  assert.equal(liveSubmissions.length, 1, "the completed Step 1 submission starts the live checkout exactly once");
   assert.equal(liveSubmissions[0][0], EMAIL);
   assert.equal(state.isSimulationMode, false);
   assert.equal(Boolean(state.step1Props.authElement), false);
@@ -440,6 +564,35 @@ test(`${country} contact waits for configuration and authentication before advan
   assert.equal(state.activeStep, 2, "explicit Stripe KYC requirements still open identity after authentication");
 });
 }
+
+test("accordion replaces stale restored contact with the canonical receipt email before submission", async t => {
+  const receiptId = "R-TEST-EU";
+  const staleEmail = "storefront@example.test";
+  const canonicalEmail = "buyer+link@example.test";
+  const sessionStorage = createStorage({
+    [`pp_checkout_${receiptId}`]: JSON.stringify({ email: staleEmail }),
+  });
+  const h = createHarness({ accordion: true, sessionStorage });
+  t.after(h.unmount);
+  const submissions = [];
+
+  let state = h.render({
+    receiptId,
+    email: staleEmail,
+    onHeadlessSubmitEmailPhone: async (...args) => { submissions.push(args); },
+  });
+  assert.equal(state.step1Props.email, staleEmail);
+
+  // Receipt hydration replaces the storefront prefill after the accordion has
+  // already populated its local state and receipt-scoped session storage.
+  h.render({ email: canonicalEmail });
+  state = h.render();
+  assert.equal(state.step1Props.email, canonicalEmail);
+  await state.step1Props.onSubmit();
+  assert.equal(submissions.length, 1);
+  assert.equal(submissions[0][0], canonicalEmail);
+  assert.equal(JSON.parse(sessionStorage.snapshot()[`pp_checkout_${receiptId}`]).email, canonicalEmail);
+});
 
 test("in-flight accordion stays on fulfillment despite stale KYC errors or incomplete snapshots", t => {
   const harness = createHarness({ accordion: true });
@@ -571,6 +724,7 @@ test("a session verification error preserves a fully verified EU customer's orig
   assert.equal(harness.calls.requests.filter(({ pathname }) => pathname === "/api/stripe/onramp-session-v2").length, 1);
   const sessionRequest = harness.calls.requests.find(({ pathname }) => pathname === "/api/stripe/onramp-session-v2");
   const sessionBody = JSON.parse(sessionRequest.options.body);
+  assert.equal(sessionBody.customerEmail, EMAIL);
   assert.equal(sessionBody.sourceCurrency, "eur");
   assert.equal(sessionBody.sourceAmountUsd, 20, "the server converts the USD order value to the customer's funding currency");
   assert.equal(Object.hasOwn(sessionBody, "sourceAmount"), false, "a USD order value cannot be relabeled as an EUR source amount");
@@ -1849,6 +2003,25 @@ test("unknown payment stays locked after observation expires, and manual status 
   assert.equal(h.calls.performCheckout, 0);
 });
 
+test("payment recovery retains Step 1 email after a different store email arrives", { timeout: 10000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.sessionFailure = { code: "receipt_payment_in_progress", sessionId: "cos_test_ownership" };
+  const flow = h.render().startOnramp(EMAIL);
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_email_pending", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  for (let i = 0; i < 29; i++) await h.runTimer(4000);
+  await flow;
+  h.render({ email: "stale-account@store.example" });
+  h.state.providerStatus = "fulfillment_complete";
+  await h.render().checkPaymentStatus();
+  const launch = h.calls.requests.find(request => request.pathname === "/api/stripe/background-poll");
+  assert.equal(JSON.parse(launch.options.body).email, EMAIL);
+  assert.equal(h.render().step, "completed");
+  assert.equal(h.calls.performCheckout, 0);
+});
+
 for (const lastError of ["transaction_failed", { code: "crypto_onramp_identity_verification_failed", message: "Contact support" }]) {
   test(`unsuccessful SDK result respects authoritative terminal last_error ${JSON.stringify(lastError)}`, { timeout: 5000 }, async t => {
     const h = createHarness({ ownership: { source: "backend" } });
@@ -1923,6 +2096,83 @@ test("an unsuccessful SDK result without an authoritative failure is pending, ne
   await h.runTimer(4000);
   await flow;
   assert.equal(h.render().step, "completed");
+});
+
+test("provider invalid-state retries the same session without creating another payment attempt", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.walletVerified = true;
+  h.state.checkoutFailure = {
+    ok: false,
+    error: "Stripe is still resolving the existing payment confirmation.",
+    code: "stripe_payment_confirmation_state_pending",
+    client_secret: null,
+    status: "requires_payment",
+  };
+  h.state.checkoutFailuresRemaining = 2;
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_invalid_state", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  await h.runTimer(1000);
+  await h.runTimer(2000);
+  await flow;
+  assert.equal(h.render().step, "completed");
+  assert.equal(h.calls.performCheckout, 3);
+  assert.deepEqual(h.calls.checkoutSessions, Array(3).fill("cos_test_ownership"));
+  assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 1);
+  assert.equal(h.calls.errors.length, 0);
+  assert.equal(h.calls.successes[0].paymentAccepted, true);
+});
+
+test("exhausted invalid-state retries preserve the session and enter status recovery", { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: "backend" } });
+  t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.walletVerified = true;
+  h.state.checkoutFailure = {
+    ok: false,
+    error: "Stripe is still resolving the existing payment confirmation.",
+    code: "stripe_payment_confirmation_state_pending",
+    client_secret: null,
+    status: "requires_payment",
+  };
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: "cpt_invalid_state", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
+  await h.runTimer(1000);
+  await h.runTimer(2000);
+  await h.runTimer(4000);
+  await h.runTimer(4000);
+  await settleUntil(() => h.render().step === "awaiting_funds");
+  assert.equal(h.calls.performCheckout, 5);
+  assert.deepEqual(h.calls.checkoutSessions, Array(5).fill("cos_test_ownership"));
+  assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 1);
+  assert.equal(h.sessionStorage.getItem("stripe_onramp_session_id:R-TEST-EU"), "cos_test_ownership");
+  assert.equal(h.calls.errors.length, 0);
+  assert.equal(h.calls.successes.length, 0);
+
+  h.state.providerStatus = "fulfillment_complete";
+  await h.runTimer(4000);
+  await flow;
+  assert.equal(h.render().step, "completed");
+  assert.equal(h.calls.performCheckout, 5);
+  assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 1);
+});
+
+test("a newly selected payment token replaces an unsubmitted restored session before checkout", { timeout: 5000 }, async t => {
+  const browserSession = createStorage({
+    "stripe_onramp_session_id:R-TEST-EU": "cos_restored_for_old_payment_token",
+    stripe_onramp_session_funding: "debit",
+  });
+  const h = createHarness({ ownership: { source: "backend" }, sessionStorage: browserSession });
+  t.after(h.unmount);
+  h.state.walletVerified = true;
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, "completed");
+  assert.equal(h.calls.requests.filter(r => r.pathname === "/api/stripe/onramp-session-v2").length, 1);
+  assert.deepEqual(h.calls.checkoutSessions, ["cos_test_ownership"]);
+  assert.equal(browserSession.getItem("stripe_onramp_session_id:R-TEST-EU"), "cos_test_ownership");
 });
 
 test("stalled confirmation is observed after its deadline without resubmitting", { timeout: 5000 }, async t => {
@@ -2485,7 +2735,7 @@ test('terminal provider errors cannot be retried from the accordion even after d
   assert.equal(state.step3Props.onTimeoutRetry, undefined);
   state.dismissError();
   assert.equal(h.render().step3Props.onTimeoutRetry, undefined);
-  assert.equal(attempts, 0, 'terminal errors must also suppress payment prewarming');
+  assert.equal(attempts, 0, 'terminal errors must suppress payment restart');
 });
 
 test('200 checkout last_error is retained even with a client_secret and unsuccessful SDK result', async t => {

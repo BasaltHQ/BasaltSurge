@@ -41,6 +41,7 @@ export type Receipt = {
   shippingCostUsd?: number;
   tracking?: { carrier?: string; trackingNumber?: string; trackingUrl?: string; shippedAt?: number; updatedAt?: number };
   stripeEmail?: string;
+  customerEmail?: string;
   billingAddress?: {
     firstName?: string;
     lastName?: string;
@@ -149,7 +150,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
       parameters: [
         { name: "@id", value: id },
         { name: "@wallet", value: wallet }
@@ -164,7 +165,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       try {
         const specCrossPartition = {
           query:
-            "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+            "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
           parameters: [{ name: "@id", value: id }],
         } as { query: string; parameters: { name: string; value: any }[] };
         const crossRes = await container.items.query(specCrossPartition).fetchAll();
@@ -195,6 +196,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         shippingCostUsd: Number.isFinite(Number((row as any)?.shippingCostUsd)) ? Number((row as any).shippingCostUsd) : undefined,
         tracking: (row as any)?.tracking && typeof (row as any).tracking === "object" ? (row as any).tracking : undefined,
         stripeEmail: typeof (row as any)?.stripeEmail === "string" ? (row as any).stripeEmail : undefined,
+        customerEmail: typeof (row as any)?.customerEmail === "string" ? (row as any).customerEmail : undefined,
         billingAddress: (row as any)?.billingAddress && typeof (row as any).billingAddress === "object" ? (row as any).billingAddress : undefined,
         detectedCardFunding: typeof (row as any)?.detectedCardFunding === "string" ? (row as any).detectedCardFunding : undefined,
         lastPolledAt: Number.isFinite(Number((row as any)?.lastPolledAt)) ? Number((row as any).lastPolledAt) : undefined,

@@ -595,9 +595,13 @@ export function useAccordionCheckoutState(
   const authContainerRef = useRef<HTMLDivElement | null>(null);
   const paymentContainerRef = useRef<HTMLDivElement | null>(null);
 
-  // Sync props when initial values change
+  // Sync props when initial values change. The parent replaces an initial
+  // storefront/shipping prefill with the receipt's canonical Step 1 email
+  // after hydration, so an already-populated local field must follow it.
   useEffect(() => {
-    if (initialEmail && !email) setEmail(initialEmail);
+    if (initialEmail && initialEmail.trim().toLowerCase() !== email.trim().toLowerCase()) {
+      setEmail(initialEmail);
+    }
     if (initialPhone && !phone) setPhone(initialPhone);
     if (initialFirstName && !firstName) setFirstName(initialFirstName);
     if (initialLastName && !lastName) setLastName(initialLastName);
@@ -669,21 +673,6 @@ export function useAccordionCheckoutState(
       window.sessionStorage.setItem(`pp_checkout_${receiptId}`, JSON.stringify(payload));
     } catch {}
   }, [receiptId, email, phone, country, firstName, lastName, line1, line2, city, stateCode, zipCode]);
-
-  // Background pre-warm Stripe Onramp initialization as soon as valid email is present
-  const hasPrewarmedRef = useRef(false);
-  useEffect(() => {
-    if (hasPrewarmedRef.current || isSimulationMode || !canRestartCheckout) return;
-    if (email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-      if (!propPaymentElement && onHeadlessSubmitEmailPhone) {
-        hasPrewarmedRef.current = true;
-        console.log("[ACCORDION STATE] Pre-warming Stripe Onramp for valid email:", email);
-        onHeadlessSubmitEmailPhone(email.trim(), phone || "", country || "US", `${firstName} ${lastName}`.trim()).catch((err) => {
-          console.warn("[ACCORDION STATE] Pre-warm attempt encountered error:", err);
-        });
-      }
-    }
-  }, [email, phone, country, firstName, lastName, propPaymentElement, onHeadlessSubmitEmailPhone, isSimulationMode, canRestartCheckout]);
 
   // Manual or Watchdog Reconnection Trigger for Step 3 Payment Element
   const handlePaymentTimeoutRetry = useCallback(() => {

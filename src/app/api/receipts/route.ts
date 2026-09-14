@@ -72,6 +72,9 @@ export async function GET(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   const url = new URL(req.url);
   const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get("limit") || 1000)));
+  if (!Number.isFinite(limit) || !Number.isInteger(limit)) {
+    return NextResponse.json({ error: "invalid_limit" }, { status: 400, headers: { "x-correlation-id": correlationId, "Cache-Control": "private, no-store" } });
+  }
   const startParam = Number(url.searchParams.get("start") || 0);
   const endParam = Number(url.searchParams.get("end") || 0);
   const searchQuery = String(url.searchParams.get("search") || url.searchParams.get("q") || "").trim().toLowerCase();

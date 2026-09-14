@@ -26,6 +26,7 @@ import {
 } from "@/lib/payment-split-routing";
 import { deriveStripeKycSnapshot, highestKycTier, normalizeKycTier, type StripeKycSnapshot } from "@/lib/stripe-kyc-tracking";
 import { applyStripeKycSnapshotToReceipt } from "@/lib/receipt-kyc-tracking";
+import { resolveReceiptCustomerEmail } from "@/lib/receipt-customer-email";
 import {
   resolveStripeSettlementAmount,
   resolveStripeSourceAmount,
@@ -1160,7 +1161,7 @@ export async function POST(req: NextRequest) {
       }
 
       const stripeEmail = String(stripeSession.customer_information?.email || stripeSession.customer_details?.email || "").trim().toLowerCase();
-      const storedEmail = String(receipt.customerEmail || receipt.email || "").trim().toLowerCase();
+      const storedEmail = resolveReceiptCustomerEmail(receipt, receipt.email) || "";
       if (stripeEmail && email && stripeEmail !== email) {
         return NextResponse.json({ ok: false, error: "stripe_customer_email_mismatch" }, { status: 409 });
       }

@@ -18,7 +18,17 @@ const clone = value => value == null ? value : structuredClone(value);
 // Execute the route and its real claim/status/amount helpers. Only database,
 // wallet, network, lifecycle, and notification boundaries are replaced: no
 // request or transfer can leave this harness.
-function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors = [], afterErrors = 0, funding = "debit", debitSplit = SPLIT } = {}) {
+function createHarness({
+  balances = [9_000_000n],
+  balanceErrors = [],
+  sendErrors = [],
+  afterErrors = 0,
+  funding = "debit",
+  debitSplit = SPLIT,
+  receiptOverrides = {},
+  stripeCustomerEmail = "buyer@example.test",
+  requestEmail = "buyer@example.test",
+} = {}) {
   const documents = new Map([[RECEIPT_KEY, {
     id: `receipt:${RECEIPT_ID}`,
     receiptId: RECEIPT_ID,
@@ -34,6 +44,7 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
     splitAddress: SPLIT,
     splitAddressCredit: debitSplit,
     brandKey: "portalpay",
+    ...receiptOverrides,
   }]]);
   const callbacks = [];
   const calls = { balance: [], send: [], fetch: [], writes: [], containers: [], timers: [], errors: [], emails: [] };
@@ -97,7 +108,7 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
         id: SESSION_ID,
         status: state.stripeStatus,
         payment_details: funding === "us_bank_account" ? { type: "us_bank_account", us_bank_account: {} } : { type: "card", card: { funding } },
-        customer_information: { email: "buyer@example.test" },
+        customer_information: { email: stripeCustomerEmail },
         metadata: { receiptId: RECEIPT_ID, merchantWallet: MERCHANT, checkoutMode: "ecommerce" },
         transaction_details: {
           wallet_address: BUYER,
@@ -193,7 +204,7 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
     async post() {
       const response = await route.POST({ json: async () => ({
         sessionId: SESSION_ID, receiptId: RECEIPT_ID, merchantWallet: MERCHANT,
-        email: "buyer@example.test", amount: 9, brandKey: "portalpay", checkoutMode: "ecommerce",
+        email: requestEmail, amount: 9, brandKey: "portalpay", checkoutMode: "ecommerce",
       }) });
       return { status: response.status, data: await response.json() };
     },
@@ -203,6 +214,19 @@ function createHarness({ balances = [9_000_000n], balanceErrors = [], sendErrors
     },
   };
 }
+
+test("background polling accepts a legacy stripeEmail without replacing its canonical identity", async () => {
+  const email = "legacy@example.test";
+  const harness = createHarness({
+    receiptOverrides: { customerEmail: undefined, stripeEmail: email },
+    stripeCustomerEmail: email,
+    requestEmail: email,
+  });
+  assert.equal((await harness.post()).status, 200);
+  await harness.runAfter();
+  assert.equal(harness.receipt().customerEmail, undefined);
+  assert.equal(harness.receipt().stripeEmail, email);
+});
 
 test("a background polling deadline retains pending status without failure email or sweep", async () => {
   const harness = createHarness();

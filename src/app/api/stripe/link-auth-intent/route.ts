@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { storeStripeLinkAuthIntentBinding } from "@/lib/stripe-link-identity";
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log("[LINK AUTH] Creating LinkAuthIntent for:", email.slice(0, 3) + "***");
+    console.log("[LINK AUTH] Creating LinkAuthIntent for the Step 1 customer");
 
     const linkRes = await fetch("https://login.link.com/v1/link_auth_intent", {
       method: "POST",
@@ -86,11 +87,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    console.log("[LINK AUTH] LinkAuthIntent created:", data.id, "expires:", data.expires_at);
+    const authIntentId = String(data.id || "").trim();
+    if (!authIntentId) {
+      return NextResponse.json(
+        { ok: false, error: "invalid_link_auth_response" },
+        { status: 502 }
+      );
+    }
+
+    try {
+      await storeStripeLinkAuthIntentBinding(authIntentId, email, data.expires_at);
+    } catch (bindingError) {
+      console.error("[LINK AUTH] Could not persist the server-side identity binding");
+      return NextResponse.json(
+        { ok: false, error: "link_identity_binding_unavailable" },
+        { status: 503 }
+      );
+    }
+
+    console.log("[LINK AUTH] LinkAuthIntent created and bound server-side");
 
     return NextResponse.json({
       ok: true,
-      authIntentId: data.id,
+      authIntentId,
       expiresAt: data.expires_at,
     });
   } catch (e: any) {

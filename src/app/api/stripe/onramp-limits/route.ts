@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { getPublicClientIp } from "@/lib/request-client-ip";
+import { resolveReceiptCustomerEmail } from "@/lib/receipt-customer-email";
 
 export const dynamic = "force-dynamic";
 
@@ -12,14 +13,13 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { receiptId, walletAddress, network, email, stripeSessionId, paymentMethodDetails } = body;
+    const { receiptId, walletAddress, network, stripeSessionId, paymentMethodDetails } = body;
 
     if (!receiptId || !walletAddress || !network) {
       return NextResponse.json({ ok: false, error: "missing_required_parameters" }, { status: 400 });
     }
 
-    const requestedEmail = String(email || "").trim().toLowerCase();
-    const container = await getContainer();
+    const container = await getContainer(undefined, undefined, { profile: "critical" });
 
     // 1. Fetch receipt document from Cosmos
     const findQuery = {
@@ -31,8 +31,6 @@ export async function POST(req: NextRequest) {
     if (!receipt) {
       return NextResponse.json({ ok: false, error: "receipt_not_found" }, { status: 404 });
     }
-    const customerEmail = String(receipt.customerEmail || receipt.stripeEmail || requestedEmail || "anonymous").trim().toLowerCase();
-
     // 2. Fetch merchant configuration to check if trackTransactionLimits is enabled
     const brandKey = receipt.brandKey || "portalpay";
     const isPlatform = !brandKey || brandKey === "portalpay" || brandKey === "basaltsurge";
@@ -139,6 +137,9 @@ export async function POST(req: NextRequest) {
     let currentReceipt = receipt;
     let saved = false;
     for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+      // Re-resolve after every conditional-write retry. A concurrent Step 1
+      // update must win over the receipt snapshot used for the limits request.
+      const customerEmail = resolveReceiptCustomerEmail(currentReceipt) || "anonymous";
       const sessions = Array.isArray(currentReceipt.customerSessions)
         ? [...currentReceipt.customerSessions]
         : [];
@@ -174,20 +175,37 @@ export async function POST(req: NextRequest) {
         sessions.push(sessionEntry);
       }
 
-      const nextReceipt = {
-        ...currentReceipt,
-        customerSessions: sessions.slice(-100),
-        ...(customerEmail !== "anonymous" ? { stripeEmail: customerEmail, customerEmail } : {}),
-        ...(!currentReceipt.stripeSessionId && mayAssignSessionId ? { stripeSessionId: cleanSessionId } : {}),
-        updatedAt: now,
-      };
+      const operations: any[] = [
+        { op: "set", path: "/customerSessions", value: sessions.slice(-100) },
+        { op: "set", path: "/updatedAt", value: now },
+      ];
+      if (customerEmail !== "anonymous") {
+        if (currentReceipt.customerEmail !== customerEmail) {
+          operations.push({ op: "set", path: "/customerEmail", value: customerEmail });
+        }
+        if (currentReceipt.stripeEmail !== customerEmail) {
+          operations.push({ op: "set", path: "/stripeEmail", value: customerEmail });
+        }
+      }
+      if (!currentReceipt.stripeSessionId && mayAssignSessionId && cleanSessionId) {
+        operations.push({ op: "set", path: "/stripeSessionId", value: cleanSessionId });
+      }
 
       try {
-        await container.item(currentReceipt.id, currentReceipt.wallet).replace(
-          nextReceipt,
-          currentReceipt._etag
-            ? { accessCondition: { type: "IfMatch", condition: currentReceipt._etag } }
-            : undefined,
+        await container.item(currentReceipt.id, currentReceipt.wallet).patch(
+          operations,
+          {
+            matchFields: {
+              customerEmail: currentReceipt.customerEmail ?? null,
+              stripeEmail: currentReceipt.stripeEmail ?? null,
+              stripeSessionId: currentReceipt.stripeSessionId ?? null,
+              stripePaymentAttemptSessionId: currentReceipt.stripePaymentAttemptSessionId ?? null,
+              updatedAt: currentReceipt.updatedAt ?? null,
+            },
+            ...(currentReceipt._etag
+              ? { accessCondition: { type: "IfMatch", condition: currentReceipt._etag } }
+              : {}),
+          } as any,
         );
         saved = true;
       } catch (writeError: any) {

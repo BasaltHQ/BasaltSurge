@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { markEmailVerified } from "../thirdweb-verify/route";
+import { stripeLinkEmailMatchesFingerprint } from "@/lib/stripe-link-identity";
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +13,7 @@ const STRIPE_API_VERSION = "2026-06-24.dahlia";
  * Cryptographically validates the short-lived Stripe Link OAuth token to prevent
  * unauthorized guest wallet connection attempts.
  * 
- * Body: { email: string, customerId: string, oauthToken: string }
+ * Body: { email: string, customerId: string }
  * Returns: { ok, verificationToken }
  */
 export async function POST(req: NextRequest) {
@@ -20,7 +21,6 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     const email = String(body.email || "").trim().toLowerCase();
     const customerId = String(body.customerId || "").trim();
-    const oauthToken = String(body.oauthToken || "").trim();
 
     if (!email || !email.includes("@")) {
       return NextResponse.json(
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!oauthToken || !customerId) {
+    if (!customerId) {
       return NextResponse.json(
         { ok: false, error: "unauthorized_session" },
         { status: 401 }
@@ -45,7 +45,31 @@ export async function POST(req: NextRequest) {
     }
 
     // ─── Cryptographic Verification Check ───
-    // Verify that the OAuth token is valid and associated with the customer session on Stripe
+    // The browser cannot nominate the OAuth credential or the email it proves.
+    // Both were bound server-side through the LinkAuthIntent exchange.
+    const tokenModule = await import("@/app/api/stripe/link-auth-tokens/route");
+    let identityBinding = await tokenModule.getOAuthIdentityBinding(customerId);
+    if (!identityBinding?.emailFingerprint
+      || !stripeLinkEmailMatchesFingerprint(email, identityBinding.emailFingerprint)) {
+      return NextResponse.json(
+        { ok: false, error: "link_customer_email_mismatch", reauthenticate: true },
+        { status: 403 }
+      );
+    }
+    let oauthToken = identityBinding.accessToken;
+    if (!oauthToken) {
+      oauthToken = await tokenModule.refreshOAuthToken(customerId);
+      identityBinding = await tokenModule.getOAuthIdentityBinding(customerId);
+    }
+    if (!oauthToken || !identityBinding?.emailFingerprint
+      || !stripeLinkEmailMatchesFingerprint(email, identityBinding.emailFingerprint)) {
+      return NextResponse.json(
+        { ok: false, error: "stripe_customer_reauthentication_required", reauthenticate: true },
+        { status: 403 }
+      );
+    }
+
+    // Verify the stored OAuth token is active and associated with the customer on Stripe.
     const response = await fetch(
       `https://api.stripe.com/v1/crypto/customers/${encodeURIComponent(customerId)}`,
       {
@@ -86,7 +110,7 @@ export async function POST(req: NextRequest) {
     // Stateless signed token (expires in 10 minutes)
     const verificationToken = markEmailVerified(email, customSecret);
 
-    console.log("[MARK VERIFIED] SECURE: Email verified via active Stripe Link OAuth token:", email.slice(0, 3) + "***");
+    console.log("[MARK VERIFIED] Email verified through the server-bound Stripe Link identity");
 
     return NextResponse.json({
       ok: true,

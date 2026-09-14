@@ -85,6 +85,7 @@ vcrun.py
 
 /scripts/*
 !/scripts/check-platform-analytics.cjs
+!/scripts/check-merchant-orders-db.cjs
 !/scripts/start-scheduler.js
 /scratch/
 

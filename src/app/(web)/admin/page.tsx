@@ -1,4 +1,5 @@
 "use client";
+import { useMerchantOrders } from "@/hooks/use-merchant-orders";
 
 import React, { useEffect, useMemo, useState, useRef } from "react";
 import { useActiveAccount } from "thirdweb/react";
@@ -2394,24 +2395,7 @@ function ReserveAnalytics() {
 }
 
 // ---------------- Receipts Admin (used in Orders tab for history/QR) ----------------
-function ReceiptsAdmin() {
-  const [receipts, setReceipts] = React.useState<Array<{
-    receiptId: string;
-    totalUsd: number;
-    currency: string;
-    lineItems?: { label: string; priceUsd: number; qty?: number; thumb?: string; itemId?: string; sku?: string }[];
-    createdAt: number;
-    brandName?: string;
-    status?: string;
-    jurisdictionCode?: string;
-    taxRate?: number;
-    taxComponents?: string[];
-    employeeId?: string;
-    tipAmount?: number;
-    shippingAddress?: any;
-    tracking?: { carrier?: string; trackingNumber?: string; trackingUrl?: string; shippedAt?: number; updatedAt?: number };
-  }>>([]);
-  const [loading, setLoading] = React.useState(false);
+function ReceiptsAdmin({ merchantWallet }: { merchantWallet: string }) {
   const [error, setError] = React.useState("");
   const [seeding, setSeeding] = React.useState(false);
   const [purging, setPurging] = React.useState(false);
@@ -2481,6 +2465,17 @@ function ReceiptsAdmin() {
   const [receiptSortField, setReceiptSortField] = React.useState<"createdAt" | "totalUsd" | "receiptId" | "status" | "brand">("createdAt");
   const [receiptSortOrder, setReceiptSortOrder] = React.useState<"asc" | "desc">("desc");
 
+  const ordersQuery = new URLSearchParams(receiptsTab === "shipping" ? {
+    limit: "50", shipping: "true", sort: "createdAt", direction: "desc",
+  } : {
+    limit: "50", search: receiptSearchQuery, status: receiptStatusFilter,
+    employeeId: receiptStaffFilter, minAmount: receiptMinAmount, maxAmount: receiptMaxAmount,
+    sort: receiptSortField, direction: receiptSortOrder,
+  }).toString();
+  const orders = useMerchantOrders(merchantWallet, ordersQuery);
+  const { receipts, loading } = orders;
+  const canManageOrders = operatorWallet === merchantWallet;
+
   const isReceiptFilterActive = React.useMemo(() => {
     return (
       !!receiptSearchQuery.trim() ||
@@ -2528,7 +2523,7 @@ function ReceiptsAdmin() {
   React.useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/site/config", { cache: "no-store", headers: { "x-wallet": account?.address || "" } });
+        const r = await fetch(`/api/site/config?wallet=${encodeURIComponent(merchantWallet)}`, { cache: "no-store", headers: { "x-wallet": merchantWallet } });
         const j = await r.json().catch(() => ({} as any));
         const t = j?.config?.theme || {};
         setThemeConfig(t);
@@ -2541,41 +2536,12 @@ function ReceiptsAdmin() {
   React.useEffect(() => {
     (async () => {
       try {
-        const r = await fetch("/api/merchant/team", { headers: { "x-wallet": account?.address || "" } });
+        const r = await fetch("/api/merchant/team", { headers: { "x-wallet": merchantWallet } });
         const j = await r.json().catch(() => ({}));
         setTeam(Array.isArray(j?.items) ? j.items : []);
       } catch { }
     })();
   }, [account?.address]);
-
-  async function loadReceipts() {
-    try {
-      setLoading(true);
-      setError("");
-      let apiUrl = `/api/receipts?limit=1000`;
-      if (receiptSearchQuery.trim()) apiUrl += `&search=${encodeURIComponent(receiptSearchQuery.trim())}`;
-      if (receiptStatusFilter && receiptStatusFilter !== "all") apiUrl += `&status=${encodeURIComponent(receiptStatusFilter)}`;
-      if (receiptStaffFilter && receiptStaffFilter !== "all") apiUrl += `&employeeId=${encodeURIComponent(receiptStaffFilter)}`;
-      if (receiptMinAmount) apiUrl += `&minAmount=${encodeURIComponent(receiptMinAmount)}`;
-      if (receiptMaxAmount) apiUrl += `&maxAmount=${encodeURIComponent(receiptMaxAmount)}`;
-
-      const r = await fetch(apiUrl, {
-        cache: "no-store",
-        credentials: "include",
-        headers: {
-          "x-wallet": account?.address || "",
-        },
-      });
-      const j = await r.json().catch(() => ({}));
-      const arr = Array.isArray(j?.receipts) ? j.receipts : [];
-      setReceipts(arr);
-      if (j?.degraded) setError(j?.reason || "Degraded; using in-memory data");
-    } catch (e: any) {
-      setError(e?.message || "Failed to load receipts");
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function seed() {
     try {
@@ -2627,33 +2593,52 @@ function ReceiptsAdmin() {
     }
   }
 
+  async function loadReceipts() {
+    setError("");
+    setExpandedRowIds([]);
+    await orders.refresh();
+  }
+
   React.useEffect(() => {
-    loadReceipts();
-  }, [account?.address, receiptSearchQuery, receiptStatusFilter, receiptStaffFilter, receiptMinAmount, receiptMaxAmount]);
+    setError("");
+    setExpandedRowIds([]);
+  }, [ordersQuery, merchantWallet]);
 
   async function openQR(rec: any) {
     try {
-      const id = String(rec?.receiptId || "");
-      if (!id) {
-        setSelected(rec);
-        setQrOpen(true);
-        return;
-      }
-      const r = await fetch(`/api/receipts/${encodeURIComponent(id)}`, { cache: "no-store", credentials: "include" });
-      const j = await r.json().catch(() => ({}));
-      const full = j?.receipt || rec;
+      const full = await orders.getDetails(rec);
       setSelected(full);
-    } catch {
-      setSelected(rec);
+      setQrOpen(true);
+    } catch (e: any) {
+      if (e?.name !== "AbortError") setError(e?.message || "Order details could not be loaded.");
     }
-    setQrOpen(true);
+  }
+
+  async function toggleReceipt(rec: any) {
+    if (expandedRowIds.includes(rec.receiptId)) {
+      setExpandedRowIds(previous => previous.filter(id => id !== rec.receiptId));
+      return;
+    }
+    try {
+      await orders.getDetails(rec);
+      setExpandedRowIds(previous => previous.includes(rec.receiptId) ? previous : [...previous, rec.receiptId]);
+    } catch (e: any) {
+      if (e?.name !== "AbortError") setError(e?.message || "Order details could not be loaded.");
+    }
   }
   function closeQR() {
     setQrOpen(false);
     setSelected(null);
   }
 
-  function openEdit(rec: any) {
+  async function openEdit(rec: any) {
+    if (!canManageOrders) return;
+    try {
+      rec = await orders.getDetails(rec);
+    } catch (e: any) {
+      if (e?.name !== "AbortError") setError(e?.message || "Order details could not be loaded.");
+      return;
+    }
     try {
       setSelected(rec);
       const baseItems = Array.isArray(rec?.lineItems)
@@ -2803,7 +2788,14 @@ function ReceiptsAdmin() {
     }
   }
 
-  function openRefund(rec: any) {
+  async function openRefund(rec: any) {
+    if (!canManageOrders) return;
+    try {
+      rec = await orders.getDetails(rec);
+    } catch (e: any) {
+      if (e?.name !== "AbortError") setError(e?.message || "Order details could not be loaded.");
+      return;
+    }
     try {
       setSelected(rec);
       const baseItems = Array.isArray(rec?.lineItems)
@@ -3047,7 +3039,7 @@ function ReceiptsAdmin() {
 
   function getPortalLink(receiptId: string) {
     const tParams = new URLSearchParams();
-    if (operatorWallet) tParams.set("recipient", operatorWallet);
+    if (merchantWallet) tParams.set("recipient", merchantWallet);
     // Use current origin to ensure correct environment (dev/prod)
     const origin = typeof window !== "undefined" ? window.location.origin : "";
     return `${origin}/portal/${encodeURIComponent(receiptId)}?${tParams.toString()}`;
@@ -3084,109 +3076,10 @@ function ReceiptsAdmin() {
   }, [items]);
   const totalUsd = +Number(selected?.totalUsd || 0).toFixed(2);
 
-  const filteredAndSortedReceipts = React.useMemo(() => {
-    let list = (receipts || []).filter(
-      (r: any) => !(testHidden && String(r?.receiptId || "").toUpperCase() === "TEST")
-    );
-
-    // 1. Search Query Filter
-    const q = (receiptSearchQuery || "").trim().toLowerCase();
-    if (q) {
-      list = list.filter((r: any) => {
-        const idMatches = String(r.receiptId || "").toLowerCase().includes(q);
-        const brandMatches = String(resolveBrandName(r) || "").toLowerCase().includes(q);
-        const statusMatches = String(r.status || "").toLowerCase().includes(q);
-        const staffMatches = String(r.employeeId || "").toLowerCase().includes(q);
-        const jurMatches = String(r.jurisdictionCode || "").toLowerCase().includes(q);
-        const buyerMatches = String(r.buyerWallet || "").toLowerCase().includes(q);
-        const shipNameMatches = String(r.shippingAddress?.name || "").toLowerCase().includes(q);
-        const shipEmailMatches = String(r.shippingAddress?.email || "").toLowerCase().includes(q);
-        const itemsMatch = Array.isArray(r.lineItems) && r.lineItems.some((it: any) => String(it.label || "").toLowerCase().includes(q));
-        
-        return idMatches || brandMatches || statusMatches || staffMatches || jurMatches || buyerMatches || shipNameMatches || shipEmailMatches || itemsMatch;
-      });
-    }
-
-    // 2. Status Filter
-    if (receiptStatusFilter && receiptStatusFilter !== "all") {
-      list = list.filter((r: any) => {
-        const s = String(r.status || "").toLowerCase();
-        if (receiptStatusFilter === "paid") {
-          return s === "paid" || s === "checkout_success" || s === "tx_mined" || s === "reconciled" || s === "recipient_validated";
-        }
-        if (receiptStatusFilter === "pending") {
-          return s.includes("pending") || s === "generated" || s === "checkout_initialized" || s === "link_opened" || s === "buyer_logged_in";
-        }
-        if (receiptStatusFilter === "shipped") {
-          return s === "shipped";
-        }
-        if (receiptStatusFilter === "delivered") {
-          return s === "delivered" || s === "completed";
-        }
-        if (receiptStatusFilter === "refunded") {
-          return s.includes("refund");
-        }
-        if (receiptStatusFilter === "failed") {
-          return s === "failed" || s === "tx_mismatch";
-        }
-        return s === receiptStatusFilter.toLowerCase();
-      });
-    }
-
-    // 3. Staff Filter
-    if (receiptStaffFilter && receiptStaffFilter !== "all") {
-      list = list.filter((r: any) => {
-        if (receiptStaffFilter === "admin") return r.employeeId === "admin" || !r.employeeId;
-        return String(r.employeeId || "") === receiptStaffFilter;
-      });
-    }
-
-    // 4. Min / Max Amount Filter
-    const minAmt = parseFloat(receiptMinAmount);
-    if (!isNaN(minAmt)) {
-      list = list.filter((r: any) => Number(r.totalUsd || 0) >= minAmt);
-    }
-    const maxAmt = parseFloat(receiptMaxAmount);
-    if (!isNaN(maxAmt)) {
-      list = list.filter((r: any) => Number(r.totalUsd || 0) <= maxAmt);
-    }
-
-    // 5. Sorting
-    list = [...list].sort((a: any, b: any) => {
-      let valA: any = 0;
-      let valB: any = 0;
-
-      switch (receiptSortField) {
-        case "receiptId":
-          valA = String(a.receiptId || "").toLowerCase();
-          valB = String(b.receiptId || "").toLowerCase();
-          break;
-        case "brand":
-          valA = String(resolveBrandName(a) || "").toLowerCase();
-          valB = String(resolveBrandName(b) || "").toLowerCase();
-          break;
-        case "totalUsd":
-          valA = Number(a.totalUsd || 0);
-          valB = Number(b.totalUsd || 0);
-          break;
-        case "status":
-          valA = String(a.status || "").toLowerCase();
-          valB = String(b.status || "").toLowerCase();
-          break;
-        case "createdAt":
-        default:
-          valA = Number(a.createdAt || 0);
-          valB = Number(b.createdAt || 0);
-          break;
-      }
-
-      if (valA < valB) return receiptSortOrder === "asc" ? -1 : 1;
-      if (valA > valB) return receiptSortOrder === "asc" ? 1 : -1;
-      return 0;
-    });
-
-    return list;
-  }, [receipts, testHidden, receiptSearchQuery, receiptStatusFilter, receiptStaffFilter, receiptMinAmount, receiptMaxAmount, receiptSortField, receiptSortOrder, resolveBrandName]);
+  // Filtering and ordering belong to the database, before pagination.
+  const filteredAndSortedReceipts = receipts.filter(
+    (r: any) => !(testHidden && String(r.receiptId || "").toUpperCase() === "TEST")
+  );
 
   const handleSortClick = (field: "createdAt" | "totalUsd" | "receiptId" | "status" | "brand") => {
     if (receiptSortField === field) {
@@ -3213,7 +3106,7 @@ function ReceiptsAdmin() {
       <div className="flex items-center justify-between">
         <h2 className="text-xl font-semibold">Receipts</h2>
         <div className="flex items-center gap-2">
-          {isSuperadminRecipient && (
+          {isSuperadminRecipient && canManageOrders && (
             <>
               <button onClick={seed} disabled={seeding || (receipts && receipts.length > 0)} className="h-10 px-4 rounded-xl border border-foreground/[0.05] bg-foreground/[0.02] hover:bg-foreground/[0.05] transition-colors font-semibold text-sm">
                 {seeding ? "Seeding…" : "Seed Receipt"}
@@ -3233,7 +3126,7 @@ function ReceiptsAdmin() {
           )}
         </div>
       </div>
-      {error && <div className="microtext text-amber-600">{error}</div>}
+      {(error || orders.error) && <div role="alert" className="microtext text-amber-600">{error || orders.error}</div>}
       <div className="flex items-center gap-2 mb-4 border-b pb-2">
         <button
           onClick={() => setReceiptsTab("history")}
@@ -3368,7 +3261,7 @@ function ReceiptsAdmin() {
           <div className="flex items-center justify-between text-xs text-muted-foreground pt-1 border-t border-foreground/[0.03]">
             <span>
               Showing <strong className="text-foreground font-semibold">{filteredAndSortedReceipts.length}</strong> of{" "}
-              <strong className="text-foreground font-semibold">{(receipts || []).length}</strong> receipts
+              <strong className="text-foreground font-semibold">{(receipts || []).length}</strong> receipts on this page
             </span>
             {isReceiptFilterActive && (
               <span className="text-primary font-medium flex items-center gap-1 text-[11px]">
@@ -3379,6 +3272,12 @@ function ReceiptsAdmin() {
         </div>
       )}
 
+      {!canManageOrders && <p className="microtext text-muted-foreground">Viewing this merchant's orders. Order changes require the merchant owner's account.</p>}
+      <div className="flex items-center justify-between gap-3 text-sm" aria-label="Order pagination">
+        <button className="rounded-lg border px-3 py-2" disabled={loading || orders.page <= 1} onClick={orders.previousPage}>Previous</button>
+        <span role="status">{loading ? "Loading orders..." : `Page ${orders.page} · ${receipts.length} orders${orders.hasMore ? " · More available" : ""}`}</span>
+        <button className="rounded-lg border px-3 py-2" disabled={loading || !orders.hasMore} onClick={orders.nextPage}>Next</button>
+      </div>
       {receiptsTab === "shipping" ? (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
           {/* To Ship Column */}
@@ -3417,8 +3316,9 @@ function ReceiptsAdmin() {
                       setTrackNumber("");
                       setTrackUrl("");
                       setTrackError("");
-                      setTrackingOpen(true);
+                      if (canManageOrders) setTrackingOpen(true);
                     }}
+                    disabled={!canManageOrders}
                     className="w-full h-10 mt-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 text-xs font-semibold hover:bg-amber-500/20 transition-colors flex items-center justify-center gap-1.5"
                   >
                     <Plus className="w-3.5 h-3.5" /> Add Tracking
@@ -3471,7 +3371,9 @@ function ReceiptsAdmin() {
 
                   <div className="flex gap-2 mt-2">
                     <button
+                      disabled={!canManageOrders}
                       onClick={async () => {
+                        if (!canManageOrders) return;
                         try {
                           const r = await fetch(`/api/receipts/${encodeURIComponent(rec.receiptId)}`, {
                             method: "PATCH",
@@ -3486,7 +3388,7 @@ function ReceiptsAdmin() {
                       <RefreshCw className="w-3.5 h-3.5" /> Delivered
                     </button>
                     <div className="flex-1">
-                      <ResendTrackingBtn receipt={rec} operatorWallet={operatorWallet} />
+                      {canManageOrders && <ResendTrackingBtn receipt={rec} operatorWallet={operatorWallet} />}
                     </div>
                   </div>
                 </div>
@@ -3604,7 +3506,7 @@ function ReceiptsAdmin() {
                     <React.Fragment key={rec.receiptId || `receipt-${idx}`}>
                       <tr
                         className="border-t hover:bg-foreground/5 cursor-pointer transition-colors"
-                        onClick={() => setExpandedRowIds((prev) => isExpanded ? prev.filter(id => id !== rec.receiptId) : [...prev, rec.receiptId])}
+                        onClick={() => toggleReceipt(rec)}
                       >
                         <td className="px-3 py-2 font-mono flex items-center gap-2">
                           <span className="text-muted-foreground w-4 flex justify-center">{isExpanded ? "▼" : "▶"}</span>
@@ -3665,14 +3567,14 @@ function ReceiptsAdmin() {
                             <button
                               onClick={() => openEdit(rec)}
                               className="h-8 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] hover:bg-foreground/[0.05] transition-colors font-semibold text-xs"
-                              title="Edit Order"
+                              title="Edit Order" disabled={!canManageOrders || loading}
                             >
                               ✎ Edit
                             </button>
                             <button
                               onClick={() => openRefund(rec)}
                               className="h-8 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] hover:bg-foreground/[0.05] transition-colors font-semibold text-xs"
-                              title="Refund"
+                              title="Refund" disabled={!canManageOrders || loading}
                             >
                               ↺ Refund
                             </button>
@@ -3703,7 +3605,7 @@ function ReceiptsAdmin() {
                                 }}
                                 className="h-8 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] hover:bg-red-500/10 hover:border-red-500/20 hover:text-red-500 transition-colors font-semibold text-xs"
                                 title="Delete"
-                                disabled={isBlockedStatus(rec.status)}
+                                disabled={!canManageOrders || isBlockedStatus(rec.status)}
                               >
                                 🗑 Delete
                               </button>
@@ -3968,7 +3870,7 @@ function ReceiptsAdmin() {
                       setTrackNumber((selected as any)?.tracking?.trackingNumber || "");
                       setTrackUrl((selected as any)?.tracking?.trackingUrl || "");
                       setTrackError("");
-                      setTrackingOpen(true);
+                      if (canManageOrders) setTrackingOpen(true);
                     }}
                     className="receipt-button"
                   >
@@ -4059,7 +3961,7 @@ function ReceiptsAdmin() {
                       }
                       // Update local state
                       setSelected((prev: any) => prev ? { ...prev, tracking: j.tracking, status: "shipped" } : prev);
-                      setReceipts((prev) => prev.map((rx) => rx.receiptId === selected.receiptId ? { ...rx, tracking: j.tracking, status: "shipped" } as any : rx));
+                      await loadReceipts();
                       setTrackingOpen(false);
                     } catch (e: any) {
                       setTrackError(e?.message || "Failed");
@@ -11641,7 +11543,7 @@ function OrdersPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
       )
       }
 
-      <ReceiptsAdmin />
+      <ReceiptsAdmin key={merchantWallet} merchantWallet={merchantWallet} />
     </div>
   );
 }

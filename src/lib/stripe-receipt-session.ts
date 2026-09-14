@@ -3,6 +3,7 @@ import { isStripePaymentAcceptedStatus, isStripeFulfillmentCompleteStatus, shoul
 import { resolveStripeOnrampFunding } from "@/lib/payment-split-routing";
 import { isStripeSourceAmountSufficient, resolveStripeSourceAmount } from "@/lib/stripe-onramp-amounts";
 import { isDefinitiveOnrampDecline, isTerminalOnrampError, onrampErrorDetails, onrampErrorCode } from "@/lib/stripe-onramp-errors";
+import { normalizeReceiptCustomerEmail, resolveReceiptCustomerEmail } from "@/lib/receipt-customer-email";
 
 const normalize = (value: unknown) => String(value || "").trim().toLowerCase();
 const receiptKey = (value: unknown) => normalize(value).replace(/^receipt:/, "");
@@ -80,7 +81,7 @@ export function assertStripeReceiptUnpaid(receipt: any): void {
 
 export function stripeReceiptWriteCondition(current: any) {
   return {
-    matchFields: Object.fromEntries(["stripeSessionId", "stripeSessionStatus", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode", "status", "transactionHash", "leg1TxHash", "leg2TxHash", "lastUpdatedAt"]
+    matchFields: Object.fromEntries(["stripeSessionId", "stripeSessionStatus", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode", "cryptoCustomerId", "status", "transactionHash", "leg1TxHash", "leg2TxHash", "lastUpdatedAt"]
       .map(key => [key, current[key] ?? null])),
     ...(current._etag ? { accessCondition: { type: "IfMatch", condition: current._etag } } : {}),
   };
@@ -100,7 +101,7 @@ export async function persistStripeReceiptUpdate(container: any, receipt: any): 
   });
   if (shouldIgnoreCanonicalStatusTransition(current.status, receipt.status) && !achCorrection) throw new Error("receipt_status_changed");
   const fields = Object.fromEntries(Object.entries(receipt).filter(([key, value]) => value !== undefined
-    && !key.startsWith("_") && !["id", "wallet", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode", "stripeCheckoutDiagnostic"].includes(key)));
+    && !key.startsWith("_") && !["id", "wallet", "customerEmail", "stripeEmail", "cryptoCustomerId", "stripePaidSessionId", "stripePaymentAttemptSessionId", "stripePaymentAttemptKind", "stripeCheckoutRequestId", "stripeCheckoutDeclineCode", "stripeCheckoutDiagnostic"].includes(key)));
   if (receipt.stripeSessionId && isStripePaymentAcceptedStatus(receipt.stripeSessionStatus)) fields.stripePaidSessionId = receipt.stripeSessionId;
   // Workers update provider/settlement observations, not the merchant's order.
   for (const key of ["totalUsd", "tipAmount", "lineItems", "pricing"]) delete fields[key];
@@ -119,12 +120,34 @@ export async function persistStripeReceiptUpdate(container: any, receipt: any): 
 }
 
 /** Attach a newly created session without replaying a stale receipt snapshot. */
-export async function attachCreatedStripeSession(container: any, snapshot: any, session: any, reserveEmbedded = false): Promise<void> {
+export async function attachCreatedStripeSession(
+  container: any,
+  snapshot: any,
+  session: any,
+  reserveEmbedded = false,
+  expectedCustomerEmail?: string,
+  expectedCryptoCustomerId?: string,
+): Promise<void> {
+  const expectedEmail = normalizeReceiptCustomerEmail(expectedCustomerEmail);
+  const providerCustomerId = String(session?.crypto_customer_id || "").trim();
+  const expectedCustomerId = String(expectedCryptoCustomerId || "").trim();
+  if (expectedCustomerId && providerCustomerId !== expectedCustomerId) {
+    throw Object.assign(new Error("The Stripe session belongs to a different Link customer."), {
+      code: "stripe_session_customer_binding_failed",
+      statusCode: 409,
+    });
+  }
   for (let attempt = 0; attempt < 3; attempt++) {
     const item = container.item(snapshot.id, snapshot.wallet);
     const { resource: current } = await item.read();
     if (!current) throw new Error("receipt_not_found");
     if (snapshot.pricing && JSON.stringify(snapshot.pricing) !== JSON.stringify(current.pricing)) throw new Error("receipt_pricing_changed");
+    if (expectedEmail && resolveReceiptCustomerEmail(current) !== expectedEmail) {
+      throw Object.assign(new Error("The receipt email changed before the Stripe session could be attached."), {
+        code: "receipt_customer_email_mismatch",
+        statusCode: 409,
+      });
+    }
     try { assertStripeReceiptUnpaid(current); }
     catch { throw Object.assign(new Error("receipt_already_has_accepted_payment"), { code: "receipt_already_paid", statusCode: 409 }); }
     if (current.stripePaymentAttemptSessionId && current.stripePaymentAttemptSessionId !== session.id) throw paymentInProgress(current);
@@ -139,13 +162,19 @@ export async function attachCreatedStripeSession(container: any, snapshot: any, 
       onrampAmount: snapshot.onrampAmount,
       orderTotalUsd: current.orderTotalUsd ?? snapshot.orderTotalUsd,
       checkoutMode: snapshot.checkoutMode,
+      ...(providerCustomerId ? { cryptoCustomerId: providerCustomerId } : {}),
       lastUpdatedAt: Date.now(),
       ...(reserveEmbedded ? { stripePaymentAttemptSessionId: session.id, stripePaymentAttemptKind: "embedded" } : {}),
     };
     try {
+      const writeCondition = stripeReceiptWriteCondition(current);
+      // Session attachment and Step 1 identity form one logical binding. These
+      // extra fields make an email change invalidate this exact attachment.
+      writeCondition.matchFields.customerEmail = current.customerEmail ?? null;
+      writeCondition.matchFields.stripeEmail = current.stripeEmail ?? null;
       await item.patch(Object.entries(fields).filter(([, value]) => value !== undefined)
         .map(([key, value]) => ({ op: "set", path: `/${key}`, value })),
-      stripeReceiptWriteCondition(current));
+      writeCondition);
       return;
     } catch (error: any) {
       if (Number(error?.code || error?.statusCode) !== 412 || attempt === 2) throw error;
@@ -287,11 +316,13 @@ export async function recoverStripeReceiptSession(
 ): Promise<any> {
   if (!session.id || !receipt.stripeSessionId || receipt.stripeSessionId === session.id) return receipt;
   const metadata = session.metadata || {};
+  const providerCustomerId = String(session.crypto_customer_id || "").trim();
   if (!isStripePaymentAcceptedStatus(session.status)
     || receiptKey(metadata.receiptId) !== receiptKey(receipt.receiptId || receipt.id)
     || !normalize(metadata.merchantWallet || metadata.wallet)
     || normalize(metadata.merchantWallet || metadata.wallet) !== normalize(receipt.wallet || receipt.merchantWallet)
-    || (receipt.brandKey && normalize(metadata.brandKey) !== normalize(receipt.brandKey))) {
+    || (receipt.brandKey && normalize(metadata.brandKey) !== normalize(receipt.brandKey))
+    || (receipt.cryptoCustomerId && providerCustomerId !== String(receipt.cryptoCustomerId))) {
     throw new Error("stripe_session_recovery_metadata_mismatch");
   }
   const oldId = receipt.stripeSessionId;
