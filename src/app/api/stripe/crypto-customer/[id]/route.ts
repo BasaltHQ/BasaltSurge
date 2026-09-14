@@ -8,7 +8,7 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const STRIPE_API_VERSION = "2026-06-24.dahlia";
+const STRIPE_API_VERSION = "2026-08-26.dahlia";
 
 const KYC_TRACKING_FIELD_GROUPS = [
   [
@@ -217,13 +217,13 @@ export async function GET(
     let tokenRefreshed = false;
 
     const errorMsg = String(customer.error?.message || "").toLowerCase();
-    const isOAuthError = response.status === 401 || 
-                         response.status === 403 ||
-                         errorMsg.includes("oauth") || 
-                         errorMsg.includes("permission") ||
-                         errorMsg.includes("forbidden") ||
-                         customer.error?.param === "HTTP_HEADER[Stripe-OAuth-Token]" ||
-                         customer.error?.code === "parameter_missing";
+    const isOAuthError = response.status === 401 ||
+      response.status === 403 ||
+      errorMsg.includes("oauth") ||
+      errorMsg.includes("permission") ||
+      errorMsg.includes("forbidden") ||
+      customer.error?.param === "HTTP_HEADER[Stripe-OAuth-Token]" ||
+      customer.error?.code === "parameter_missing";
 
     if (isOAuthError && id) {
       console.log("[CRYPTO CUSTOMER] OAuth token expired or returned 401/403. Attempting background token refresh...");
@@ -275,7 +275,8 @@ export async function GET(
         customerId: id,
         transient: true,
         ...(tokenRefreshed ? { refreshedToken: oauthToken } : {}),
-      }, { status: 503,
+      }, {
+        status: 503,
         headers: {
           "Retry-After": "2",
           "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",

@@ -122,9 +122,11 @@ export async function GET(req: NextRequest) {
         const linked = await readOptional(container, `stripe_audit:${journal.linkedRunId}`);
         if (linked && (!scope || linked.brandKey?.toLowerCase() === scope)) journal = linked;
       }
-      return NextResponse.json({ ok: true, runId: journal.runId || journal.id.slice("stripe_audit:".length), status: journal.status,
+      return NextResponse.json({
+        ok: true, runId: journal.runId || journal.id.slice("stripe_audit:".length), status: journal.status,
         row: journal.row, details: journal.outcomes || [], error: journal.error,
-        startedAt: journal.startedAt, finishedAt: journal.finishedAt }, { headers: { "Cache-Control": "no-store" } });
+        startedAt: journal.startedAt, finishedAt: journal.finishedAt
+      }, { headers: { "Cache-Control": "no-store" } });
     }
     const cursor = params.get("cursor") || "";
     if (cursor && !/^cos_[a-zA-Z0-9]+$/.test(cursor)) throw new Error("invalid_cursor");
@@ -142,7 +144,7 @@ export async function GET(req: NextRequest) {
     const key = process.env.STRIPE_API_KEY;
     if (!key) throw new Error("stripe_not_configured");
     const response = await fetch(`https://api.stripe.com/v1/crypto/onramp_sessions?${query}`, {
-      headers: { Authorization: `Bearer ${key}`, "Stripe-Version": "2026-06-24.dahlia" }, signal: AbortSignal.timeout(20_000), cache: "no-store",
+      headers: { Authorization: `Bearer ${key}`, "Stripe-Version": "2026-08-26.dahlia" }, signal: AbortSignal.timeout(20_000), cache: "no-store",
     });
     if (!response.ok) throw new Error(response.status === 429 ? "Stripe rate limit reached. Resume the scan shortly." : `Stripe session list failed (HTTP ${response.status}).`);
     const data = await readJsonResponse(response, "Stripe session list");
@@ -223,31 +225,31 @@ export async function POST(req: NextRequest) {
 }
 
 async function reconcileVerifiedReceipt(req: NextRequest, container: any, journal: any, session: any, receipt: any, assessment: any) {
-      const runId = journal.runId;
-      if (receipt.stripeSessionId && receipt.stripeSessionId !== session.id) receipt = await recoverStripeReceiptSession(container, receipt, session);
-      if (!receipt.stripeSessionId) {
-        await container.item(receipt.id, receipt.wallet).patch([{ op: "set", path: "/stripeSessionId", value: session.id }], stripeReceiptWriteCondition(receipt));
-      }
-      // Provider payment acceptance is independent of wallet balance or sweep success.
-      // Persist it first, so a failed/underfunded settlement cannot leave a paid buyer pending.
-      receipt = await recordVerifiedPayment(container, receipt, session);
-      // Use the established admin-authorized reconciler and its transfer claims.
-      // No new signing, transfer or balance-draining implementation is introduced.
-      const url = new URL("/api/cron/reconcile-stuck", req.url);
-      url.searchParams.set("receiptId", assessment.receiptId);
-      const headers = new Headers(req.headers);
-      headers.delete("content-length"); headers.set("content-type", "application/json");
-      const result = isAuditSettlementHash(receipt.transactionHash || receipt.leg2TxHash)
-        ? NextResponse.json({ results: [{ receiptId: assessment.receiptId, status: "settled", reason: "existing_settlement_preserved" }] })
-        : await (await import("@/app/api/cron/reconcile-stuck/route")).POST(new NextRequest(url, { method: "POST", headers, body: JSON.stringify({ receiptId: assessment.receiptId }) }));
-      const outcome = await readJsonResponse(result, "Receipt reconciler");
-      const { resource: latest } = await container.item(receipt.id, receipt.wallet).read();
-      const row = inspectStripeAuditSession(session, latest);
-      const settlementHash = latest?.transactionHash || latest?.leg2TxHash;
-      const status = isAuditSettlementHash(settlementHash) ? "settled" : latest?.status === "paid" ? "paid_settlement_pending" : "needs_review";
-      const details = (outcome.results || []).filter((r: any) => !r.receiptId || String(r.receiptId).replace(/^receipt:/, "") === assessment.receiptId)
-        .map((r: any) => ({ status: r.status, reason: r.reason || r.error || "" }));
-      const error = result.ok ? null : "Receipt reconciliation failed. Inspect the action log before retrying.";
-      await container.item(journal.id, "audit").patch([{ op: "set", path: "/status", value: result.ok ? status : "failed" }, { op: "set", path: "/finishedAt", value: Date.now() }, { op: "set", path: "/outcomes", value: details }, { op: "set", path: "/row", value: row }, { op: "set", path: "/error", value: error }]);
-      return NextResponse.json({ ok: result.ok, runId, status, row, details, error: result.ok ? undefined : "Receipt reconciliation failed. Inspect the action log before retrying." }, { status: result.ok ? 200 : 502 });
+  const runId = journal.runId;
+  if (receipt.stripeSessionId && receipt.stripeSessionId !== session.id) receipt = await recoverStripeReceiptSession(container, receipt, session);
+  if (!receipt.stripeSessionId) {
+    await container.item(receipt.id, receipt.wallet).patch([{ op: "set", path: "/stripeSessionId", value: session.id }], stripeReceiptWriteCondition(receipt));
+  }
+  // Provider payment acceptance is independent of wallet balance or sweep success.
+  // Persist it first, so a failed/underfunded settlement cannot leave a paid buyer pending.
+  receipt = await recordVerifiedPayment(container, receipt, session);
+  // Use the established admin-authorized reconciler and its transfer claims.
+  // No new signing, transfer or balance-draining implementation is introduced.
+  const url = new URL("/api/cron/reconcile-stuck", req.url);
+  url.searchParams.set("receiptId", assessment.receiptId);
+  const headers = new Headers(req.headers);
+  headers.delete("content-length"); headers.set("content-type", "application/json");
+  const result = isAuditSettlementHash(receipt.transactionHash || receipt.leg2TxHash)
+    ? NextResponse.json({ results: [{ receiptId: assessment.receiptId, status: "settled", reason: "existing_settlement_preserved" }] })
+    : await (await import("@/app/api/cron/reconcile-stuck/route")).POST(new NextRequest(url, { method: "POST", headers, body: JSON.stringify({ receiptId: assessment.receiptId }) }));
+  const outcome = await readJsonResponse(result, "Receipt reconciler");
+  const { resource: latest } = await container.item(receipt.id, receipt.wallet).read();
+  const row = inspectStripeAuditSession(session, latest);
+  const settlementHash = latest?.transactionHash || latest?.leg2TxHash;
+  const status = isAuditSettlementHash(settlementHash) ? "settled" : latest?.status === "paid" ? "paid_settlement_pending" : "needs_review";
+  const details = (outcome.results || []).filter((r: any) => !r.receiptId || String(r.receiptId).replace(/^receipt:/, "") === assessment.receiptId)
+    .map((r: any) => ({ status: r.status, reason: r.reason || r.error || "" }));
+  const error = result.ok ? null : "Receipt reconciliation failed. Inspect the action log before retrying.";
+  await container.item(journal.id, "audit").patch([{ op: "set", path: "/status", value: result.ok ? status : "failed" }, { op: "set", path: "/finishedAt", value: Date.now() }, { op: "set", path: "/outcomes", value: details }, { op: "set", path: "/row", value: row }, { op: "set", path: "/error", value: error }]);
+  return NextResponse.json({ ok: result.ok, runId, status, row, details, error: result.ok ? undefined : "Receipt reconciliation failed. Inspect the action log before retrying." }, { status: result.ok ? 200 : 502 });
 }

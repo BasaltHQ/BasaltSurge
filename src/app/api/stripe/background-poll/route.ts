@@ -43,13 +43,13 @@ import {
 export const dynamic = 'force-dynamic';
 export const runtime = "nodejs";
 
-const STRIPE_API_VERSION = "2026-06-24.dahlia";
+const STRIPE_API_VERSION = "2026-08-26.dahlia";
 const BASE_USDC_ADDRESS = process.env.NEXT_PUBLIC_BASE_USDC_ADDRESS || "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 const activeBackgroundPolls = new Set<string>();
 const SETTLEMENT_ATTEMPTS = 6;
 const SETTLEMENT_RETRY_DELAY_MS = 5000;
 
-class SettlementSubmissionUncertainError extends Error {}
+class SettlementSubmissionUncertainError extends Error { }
 
 export type SettlementExecutionContext = {
   source: string;
@@ -145,7 +145,7 @@ export async function executeGaslessTransferServer(
       const envClientId = process.env[`NEXT_PUBLIC_THIRDWEB_CLIENT_ID_${bKey}`] || process.env[`THIRDWEB_CLIENT_ID_${bKey}`];
       const envSecretKey = process.env[`THIRDWEB_SECRET_KEY_${bKey}`];
       const envAuthSecret = process.env[`THIRDWEB_AUTH_ENDPOINT_SECRET_${bKey}`];
-      
+
       if (envClientId) clientId = envClientId;
       if (envSecretKey) secretKey = envSecretKey;
       if (envAuthSecret) authEndpointSecret = envAuthSecret;
@@ -216,156 +216,156 @@ export async function executeGaslessTransferServer(
 
     let retainClaimUntilExpiry = false;
     try {
-    if (executionContext?.beforeExecute) {
-      const shouldExecute = await executionContext.beforeExecute(account.address);
-      if (!shouldExecute) {
-        console.log(`[BACKGROUND POLL] Settlement receipts were already journaled for ${account.address}; skipping stale transfer attempt.`);
+      if (executionContext?.beforeExecute) {
+        const shouldExecute = await executionContext.beforeExecute(account.address);
+        if (!shouldExecute) {
+          console.log(`[BACKGROUND POLL] Settlement receipts were already journaled for ${account.address}; skipping stale transfer attempt.`);
+          return null;
+        }
+      }
+
+      // Link the email to the guest wallet profile in Cosmos DB, scoped by brandKey if present
+      try {
+        const container = await getContainer();
+        const walletAddress = account.address.toLowerCase();
+        const bKey = brandKey ? String(brandKey).trim().toLowerCase() : "";
+        const idLegacy = `${walletAddress}:user`;
+        const id = bKey ? `${walletAddress}:user:${bKey}` : idLegacy;
+
+        let doc: any;
+        try {
+          const { resource } = await container.item(id, walletAddress).read<any>();
+          doc = resource;
+        } catch { }
+
+        if (!doc) {
+          try {
+            const { resource } = await container.item(idLegacy, walletAddress).read<any>();
+            doc = resource;
+            if (doc) {
+              // Adjust id if brand scoped
+              doc.id = id;
+            }
+          } catch { }
+        }
+
+        if (!doc) {
+          doc = {
+            id,
+            type: "user",
+            wallet: walletAddress,
+            firstSeen: Date.now(),
+          };
+        }
+
+        doc.contact = {
+          ...(doc.contact || {}),
+          email: fromWalletEmail.trim().toLowerCase(),
+        };
+        doc.lastSeen = Date.now();
+        if (bKey) doc.brandKey = bKey;
+        if (kycLevel) {
+          doc.kycLevel = kycLevel;
+        }
+
+        await container.items.upsert(doc);
+        console.log(`[BACKGROUND POLL] Successfully registered/updated user profile for ${walletAddress} (email: ${fromWalletEmail}, brandKey: ${bKey})`);
+      } catch (profileErr) {
+        console.warn("[BACKGROUND POLL] Failed to update user profile in Cosmos DB:", profileErr);
+      }
+
+      const usdcContract = getContract({
+        client: twClient,
+        chain: base,
+        address: BASE_USDC_ADDRESS,
+      });
+
+      // Query balance
+      let balance = BigInt(0);
+      try {
+        balance = await readContract({
+          contract: usdcContract,
+          method: "function balanceOf(address account) view returns (uint256)",
+          params: [account.address],
+        });
+        console.log(`[BACKGROUND POLL] USDC balance: ${balance.toString()}`);
+      } catch (balErr) {
+        console.warn("[BACKGROUND POLL] Failed to read balance:", balErr);
+        // An unavailable balance is not evidence that an earlier transfer
+        // emptied the wallet. Let the caller retry this read.
+        throw balErr;
+      }
+
+      const requiredUnits = usdcAmountToBaseUnits(usdcAmount);
+      let amountInUnits = requiredUnits;
+
+      if (balance === BigInt(0)) {
+        console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance on-chain. Checking for existing completed Leg 2 transfer on Base...`);
+        // Retry up to 3 times with a short 2-second delay to account for Base RPC block indexing latency
+        for (let retry = 0; retry < 3; retry++) {
+          if (retry > 0) {
+            await new Promise(r => setTimeout(r, 2000));
+          }
+          const existingLeg2Tx = await findLeg2OnChainTx(account.address, toAddress, usdcAmount);
+          if (existingLeg2Tx) {
+            if (executionContext?.onSubmitted) {
+              try {
+                await executionContext.onSubmitted(existingLeg2Tx, account.address);
+              } catch (submissionError) {
+                retainClaimUntilExpiry = true;
+                throw submissionError;
+              }
+            }
+            console.log(`🎉 [BACKGROUND POLL] Found completed Leg 2 transaction on Base (attempt ${retry + 1}): ${existingLeg2Tx}`);
+            return existingLeg2Tx;
+          }
+        }
+        console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance and no prior Leg 2 transfer found. Skipping.`);
         return null;
       }
-    }
 
-    // Link the email to the guest wallet profile in Cosmos DB, scoped by brandKey if present
-    try {
-      const container = await getContainer();
-      const walletAddress = account.address.toLowerCase();
-      const bKey = brandKey ? String(brandKey).trim().toLowerCase() : "";
-      const idLegacy = `${walletAddress}:user`;
-      const id = bKey ? `${walletAddress}:user:${bKey}` : idLegacy;
-
-      let doc: any;
-      try {
-        const { resource } = await container.item(id, walletAddress).read<any>();
-        doc = resource;
-      } catch {}
-
-      if (!doc) {
-        try {
-          const { resource } = await container.item(idLegacy, walletAddress).read<any>();
-          doc = resource;
-          if (doc) {
-            // Adjust id if brand scoped
-            doc.id = id;
-          }
-        } catch {}
+      if (sweepAll && balance > BigInt(0)) {
+        // Sweep full balance to clear dust for guest EOA wallet
+        amountInUnits = balance;
       }
 
-      if (!doc) {
-        doc = {
-          id,
-          type: "user",
-          wallet: walletAddress,
-          firstSeen: Date.now(),
-        };
-      }
+      if (balance < amountInUnits) return null;
 
-      doc.contact = {
-        ...(doc.contact || {}),
-        email: fromWalletEmail.trim().toLowerCase(),
-      };
-      doc.lastSeen = Date.now();
-      if (bKey) doc.brandKey = bKey;
-      if (kycLevel) {
-        doc.kycLevel = kycLevel;
-      }
-
-      await container.items.upsert(doc);
-      console.log(`[BACKGROUND POLL] Successfully registered/updated user profile for ${walletAddress} (email: ${fromWalletEmail}, brandKey: ${bKey})`);
-    } catch (profileErr) {
-      console.warn("[BACKGROUND POLL] Failed to update user profile in Cosmos DB:", profileErr);
-    }
-
-    const usdcContract = getContract({
-      client: twClient,
-      chain: base,
-      address: BASE_USDC_ADDRESS,
-    });
-
-    // Query balance
-    let balance = BigInt(0);
-    try {
-      balance = await readContract({
+      console.log(`[BACKGROUND POLL] Transferring ${amountInUnits.toString()} units to ${toAddress}`);
+      const tx = prepareContractCall({
         contract: usdcContract,
-        method: "function balanceOf(address account) view returns (uint256)",
-        params: [account.address],
+        method: "function transfer(address to, uint256 amount) returns (bool)",
+        params: [toAddress, amountInUnits],
       });
-      console.log(`[BACKGROUND POLL] USDC balance: ${balance.toString()}`);
-    } catch (balErr) {
-      console.warn("[BACKGROUND POLL] Failed to read balance:", balErr);
-      // An unavailable balance is not evidence that an earlier transfer
-      // emptied the wallet. Let the caller retry this read.
-      throw balErr;
-    }
 
-    const requiredUnits = usdcAmountToBaseUnits(usdcAmount);
-    let amountInUnits = requiredUnits;
-
-    if (balance === BigInt(0)) {
-      console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance on-chain. Checking for existing completed Leg 2 transfer on Base...`);
-      // Retry up to 3 times with a short 2-second delay to account for Base RPC block indexing latency
-      for (let retry = 0; retry < 3; retry++) {
-        if (retry > 0) {
-          await new Promise(r => setTimeout(r, 2000));
-        }
-        const existingLeg2Tx = await findLeg2OnChainTx(account.address, toAddress, usdcAmount);
-        if (existingLeg2Tx) {
-          if (executionContext?.onSubmitted) {
-            try {
-              await executionContext.onSubmitted(existingLeg2Tx, account.address);
-            } catch (submissionError) {
-              retainClaimUntilExpiry = true;
-              throw submissionError;
-            }
-          }
-          console.log(`🎉 [BACKGROUND POLL] Found completed Leg 2 transaction on Base (attempt ${retry + 1}): ${existingLeg2Tx}`);
-          return existingLeg2Tx;
-        }
-      }
-      console.log(`[BACKGROUND POLL] Wallet ${account.address} has 0 USDC balance and no prior Leg 2 transfer found. Skipping.`);
-      return null;
-    }
-
-    if (sweepAll && balance > BigInt(0)) {
-      // Sweep full balance to clear dust for guest EOA wallet
-      amountInUnits = balance;
-    }
-
-    if (balance < amountInUnits) return null;
-
-    console.log(`[BACKGROUND POLL] Transferring ${amountInUnits.toString()} units to ${toAddress}`);
-    const tx = prepareContractCall({
-      contract: usdcContract,
-      method: "function transfer(address to, uint256 amount) returns (bool)",
-      params: [toAddress, amountInUnits],
-    });
-
-    let result: { transactionHash: string };
-    try {
-      result = await sendTransaction({
-        account,
-        transaction: tx,
-      });
-    } catch (submissionError) {
-      // The relayer can accept a sponsored transfer before hash polling
-      // fails. A fresh send may duplicate it; keep the wallet claim and leave
-      // recovery to reconciliation instead of immediately submitting again.
-      retainClaimUntilExpiry = true;
-      throw new SettlementSubmissionUncertainError(
-        submissionError instanceof Error ? submissionError.message : "settlement_submission_uncertain"
-      );
-    }
-
-    console.log(`[BACKGROUND POLL] Transaction complete: ${result.transactionHash}`);
-    if (executionContext?.onSubmitted) {
+      let result: { transactionHash: string };
       try {
-        await executionContext.onSubmitted(result.transactionHash, account.address);
+        result = await sendTransaction({
+          account,
+          transaction: tx,
+        });
       } catch (submissionError) {
-        // Keep the claim active until its TTL when the chain submission could
-        // not be journaled. A later reconciler will recover the hash on-chain.
+        // The relayer can accept a sponsored transfer before hash polling
+        // fails. A fresh send may duplicate it; keep the wallet claim and leave
+        // recovery to reconciliation instead of immediately submitting again.
         retainClaimUntilExpiry = true;
-        throw submissionError;
+        throw new SettlementSubmissionUncertainError(
+          submissionError instanceof Error ? submissionError.message : "settlement_submission_uncertain"
+        );
       }
-    }
-    return result.transactionHash;
+
+      console.log(`[BACKGROUND POLL] Transaction complete: ${result.transactionHash}`);
+      if (executionContext?.onSubmitted) {
+        try {
+          await executionContext.onSubmitted(result.transactionHash, account.address);
+        } catch (submissionError) {
+          // Keep the claim active until its TTL when the chain submission could
+          // not be journaled. A later reconciler will recover the hash on-chain.
+          retainClaimUntilExpiry = true;
+          throw submissionError;
+        }
+      }
+      return result.transactionHash;
     } finally {
       if (!retainClaimUntilExpiry) {
         try {
@@ -808,7 +808,7 @@ async function runBackgroundPoll(params: {
         try {
           const { resource } = await container.item(docId, merchantWallet).read();
           receipt = resource;
-        } catch {}
+        } catch { }
 
         if (!receipt) {
           try {
@@ -945,9 +945,9 @@ async function runBackgroundPoll(params: {
           : "fulfillment_processing";
         const fallbackAcceptedStatus = paymentAcceptedByStripe
           ? resolveStripeAcceptedReceiptStatus(fallbackStripeStatus, {
-              isAch: fallbackFunding === "us_bank_account",
-              checkoutMode,
-            })
+            isAch: fallbackFunding === "us_bank_account",
+            checkoutMode,
+          })
           : null;
         const nextStatus = paymentAcceptedByStripe
           ? (fallbackAcceptedStatus || "paid")
@@ -1091,7 +1091,7 @@ export async function POST(req: NextRequest) {
         try {
           const { resource } = await container.item(docId, merchantWallet).read();
           receipt = resource;
-        } catch {}
+        } catch { }
       }
 
       // Existing receipts are not uniformly partitioned by the merchant wallet.
