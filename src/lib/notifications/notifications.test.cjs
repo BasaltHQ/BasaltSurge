@@ -12,7 +12,7 @@ function loadFile(filename, dependencies, env = {}) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, {
     module, exports: module.exports, URL, Headers, Request, Response, Buffer, crypto, Date,
-    process: { env }, console: { error() {}, log() {} },
+    process: { env }, console: { error() {}, log() {}, warn() {} },
     require(name) { return dependencies(name); },
   }, { filename });
   return module.exports;
@@ -309,4 +309,96 @@ test('changing the recipient starts a new subscription without delivering old pe
   const { doc } = await response.json();
   assert.ok(new Date(doc.subscribedAt).getTime() > before);
   assert.equal(h.load('worker.ts').eventRecipients({ ...h.event({ merchantWallet: admin }), occurredAt: before + 1 }, [doc]).length, 0);
+});
+
+test('CSV validation normalizes and deduplicates addresses and rejects malformed lists', () => {
+  const { parseNotificationEmails } = harness().load('settings.ts');
+  assert.deepEqual(Array.from(parseNotificationEmails(' One@Example.com, two@example.com, ONE@example.com ')), ['one@example.com', 'two@example.com']);
+  for (const value of ['bad', 'one@example.com,', 'one@example.com;two@example.com', 'one@example.com, bad', ['one@example.com']]) {
+    assert.throws(() => parseNotificationEmails(value));
+  }
+  assert.equal(parseNotificationEmails('   ').length, 0);
+});
+
+test('event overrides replace the overall list and blank overrides inherit it', () => {
+  const h = harness();
+  const doc = subscription({ email: 'one@example.com, TWO@example.com, one@example.com', eventEmails: { purchase_completed: 'finance@example.com', low_stock: ' ' }, settings: { low_stock: true } });
+  const recipients = event => Array.from(h.load('worker.ts').eventRecipients({ ...h.event({ event }), occurredAt: Date.now() }, [doc]), item => item.email);
+  assert.deepEqual(recipients('purchase_completed'), ['finance@example.com']);
+  assert.deepEqual(recipients('low_stock'), ['one@example.com', 'two@example.com']);
+  doc.settings.purchase_completed = false;
+  assert.deepEqual(recipients('purchase_completed'), []);
+});
+
+test('API saves normalized CSV and overrides, retains omitted overrides and rejects invalid entries', async () => {
+  const h = harness(); const api = h.load('../../app/api/notifications/settings/route.ts');
+  const save = body => api.POST(new Request('https://acme.test/api/notifications/settings', { method: 'POST', body: JSON.stringify(body) }));
+  const response = await save({ email: 'One@Example.com, two@example.com, one@example.com', eventEmails: { purchase_completed: 'FINANCE@example.com', low_stock: '', unknown: 'ignored' } });
+  assert.equal(response.status, 200);
+  const { doc } = await response.json();
+  assert.equal(doc.email, 'one@example.com, two@example.com');
+  assert.equal(doc.eventEmails.purchase_completed, 'finance@example.com');
+  assert.equal(doc.eventEmails.unknown, undefined);
+  assert.equal((await save({ email: doc.email })).status, 200);
+  const loaded = await (await api.GET(new Request('https://acme.test/api/notifications/settings'))).json();
+  assert.equal(loaded.eventEmails.purchase_completed, 'finance@example.com');
+  assert.equal((await save({ email: doc.email, eventEmails: { purchase_completed: 'valid@example.com, broken' } })).status, 400);
+  assert.equal((await save({ email: doc.email, eventEmails: [] })).status, 400);
+  assert.equal((await save({ email: 'bad, one@example.com' })).status, 400);
+});
+
+test('adding recipients retains existing pending deliveries without backfilling new inboxes', async () => {
+  const h = harness({ docs: [subscription({ wallet: admin, id: `notification_settings:merchant:acme:${admin}` })] });
+  const response = await h.load('../../app/api/notifications/settings/route.ts').POST(new Request('https://acme.test/api/notifications/settings', { method: 'POST', body: JSON.stringify({ email: 'owner@example.com, new@example.com', eventEmails: { low_stock: 'stock@example.com' } }) }));
+  const { doc } = await response.json();
+  const recipients = h.load('worker.ts').eventRecipients;
+  const oldEvent = { ...h.event({ merchantWallet: admin }), occurredAt: before + 1 };
+  assert.deepEqual(Array.from(recipients(oldEvent, [doc]), r => r.email), ['owner@example.com']);
+  assert.deepEqual(Array.from(recipients({ ...oldEvent, occurredAt: Date.now() + 1 }, [doc]), r => r.email), ['owner@example.com', 'new@example.com']);
+});
+
+test('CSV delivery reports partial acceptance and retries only the failed inbox', async () => {
+  const h = harness({ docs: [subscription({ email: 'owner@example.com, second@example.com' })], failSend: data => data.to === 'second@example.com' });
+  await h.load('outbox.ts').enqueueNotification(h.event());
+  await h.load('worker.ts').processNotificationOutbox();
+  const api = h.load('../../app/api/notifications/settings/route.ts');
+  const get = () => api.GET(new Request('https://acme.test/api/notifications/settings', { headers: { 'x-merchant-wallet': merchant } }));
+  const partial = (await (await get()).json()).delivery;
+  assert.equal(partial.accepted, 1);
+  assert.equal(partial.total, 2);
+  assert.equal(partial.retrying, true);
+  h.options.failSend = null;
+  [...h.docs.values()].find(doc => doc.type === 'notification_event').nextAttemptAt = 0;
+  await h.load('worker.ts').processNotificationOutbox();
+  assert.deepEqual(h.sends.map(send => send.to), ['owner@example.com', 'second@example.com']);
+  assert.equal((await (await get()).json()).delivery.status, 'accepted');
+});
+
+test('support admin routing uses the matching event override and isolates partner brands', async () => {
+  const h = harness({ docs: [subscription({ level: 'partner', eventEmails: { support_ticket_created: 'new@example.com', support_ticket_reply: 'reply@example.com, two@example.com' } }), subscription({ level: 'partner', wallet: admin, brandKey: 'other', email: 'foreign@example.com' })] });
+  const support = h.load('support-dispatcher.ts');
+  const ticket = { id: 'ticket', user: 'Customer', subject: 'Help', message: 'Help', brandKey: 'acme' };
+  await support.notifyNewTicketCreated(ticket);
+  assert.deepEqual(h.sends.map(send => send.to), ['new@example.com']);
+  h.sends.length = 0;
+  await support.notifyCustomerReply(ticket, 'Thanks');
+  assert.deepEqual(h.sends.map(send => send.to), ['reply@example.com', 'two@example.com']);
+});
+
+test('merchant support replies use wallet CSV overrides and honor disabled notifications', async () => {
+  const doc = subscription({ eventEmails: { support_ticket_reply: 'support@example.com, owner@example.com' } });
+  const h = harness({ docs: [doc] });
+  const ticket = { id: 'ticket', user: merchant, wallet: merchant, email: 'contact@example.com', subject: 'Help', message: 'Help', brandKey: 'acme' };
+  await h.load('support-dispatcher.ts').notifyAdminReply(ticket, 'Response');
+  assert.deepEqual(h.sends.map(send => send.to), ['support@example.com', 'owner@example.com']);
+  h.sends.length = 0;
+  h.docs.get(`${doc.wallet}:${doc.id}`).enabled = false;
+  await h.load('support-dispatcher.ts').notifyAdminReply(ticket, 'Response');
+  assert.equal(h.sends.length, 0);
+});
+
+test('one failed support inbox does not block the remaining CSV recipients', async () => {
+  const h = harness({ docs: [subscription({ email: 'first@example.com, second@example.com' })], failSend: data => data.to === 'first@example.com' });
+  await h.load('support-dispatcher.ts').notifyAdminReply({ id: 'ticket', user: merchant, wallet: merchant, subject: 'Help', message: 'Help', brandKey: 'acme' }, 'Response');
+  assert.deepEqual(h.sends.map(send => send.to), ['second@example.com']);
 });

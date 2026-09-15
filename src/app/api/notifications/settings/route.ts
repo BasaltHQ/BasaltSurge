@@ -4,7 +4,7 @@ import { requireThirdwebAuth } from "@/lib/auth";
 import { resolveAdminRole } from "@/lib/authz-server";
 import { getMerchantBrandScope, requireMerchantPermission } from "@/lib/merchant-team-access";
 import { requireCsrf } from "@/lib/security";
-import { DEFAULT_SETTINGS, notificationSettingsId, type NotificationLevel } from "@/lib/notifications/settings";
+import { DEFAULT_SETTINGS, notificationSettingsId, notificationEnabled, notificationRecipients, notificationSubscriptions, parseNotificationEmails, recipientSubscribedAt, type NotificationLevel } from "@/lib/notifications/settings";
 import { notificationDigest } from "@/lib/notifications/outbox";
 
 async function context(req: NextRequest, rawLevel: unknown) {
@@ -56,11 +56,13 @@ export async function GET(req: NextRequest) {
       }).fetchAll();
       const event = events[0];
       if (event && event.occurredAt >= new Date(doc.subscribedAt || doc.createdAt || doc.updatedAt || 0).getTime()) {
-        const accepted = event.delivered?.find((entry: any) => entry.key === notificationDigest(String(doc.email).trim().toLowerCase()));
-        delivery = { status: accepted ? "accepted" : event.status === "sent" ? "skipped" : event.status, retrying: !accepted && event.status === "pending" && event.attempts > 0, at: accepted?.acceptedAt || event.occurredAt };
+        const recipients = notificationEnabled(doc, event.event) ? notificationRecipients(doc, event.event).filter(email => recipientSubscribedAt(doc, event.event, email) <= event.occurredAt) : [];
+        const accepted = recipients.flatMap(email => event.delivered?.filter((entry: any) => entry.key === notificationDigest(email)) || []);
+        const complete = recipients.length > 0 && accepted.length === recipients.length;
+        delivery = { status: complete ? "accepted" : !recipients.length || event.status === "sent" ? "skipped" : event.status, accepted: accepted.length, total: recipients.length, retrying: !complete && recipients.length > 0 && event.status === "pending" && event.attempts > 0, at: Math.max(event.occurredAt, ...accepted.map((entry: any) => entry.acceptedAt)) };
       }
     }
-    return NextResponse.json({ ...scope, email: doc?.email || "", enabled: doc?.enabled ?? true, settings: { ...DEFAULT_SETTINGS[scope.level], ...doc?.settings }, delivery }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ ...scope, email: doc?.email || "", eventEmails: doc?.eventEmails || {}, enabled: doc?.enabled ?? true, settings: { ...DEFAULT_SETTINGS[scope.level], ...doc?.settings }, delivery }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) { return failure(error); }
 }
 
@@ -69,17 +71,28 @@ export async function POST(req: NextRequest) {
     requireCsrf(req);
     const body = await req.json();
     const scope = await context(req, body.level);
-    const email = String(body.email || "").trim().toLowerCase();
+    let email: string;
+    try { email = parseNotificationEmails(body.email).join(", "); }
+    catch (error: any) { throw Object.assign(error, { status: 400 }); }
     const enabled = body.enabled !== false;
-    if ((enabled || email) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw Object.assign(new Error("valid_recipient_email_required"), { status: 400 });
+    if (enabled && !email) throw Object.assign(new Error("At least one overall recipient email is required."), { status: 400 });
     const settings = { ...DEFAULT_SETTINGS[scope.level] };
     for (const key of Object.keys(settings)) if (typeof body.settings?.[key] === "boolean") settings[key] = body.settings[key];
     const container = await getContainer();
     const previous = await readSettings(container, scope);
+    const eventEmails: Record<string, string> = {};
+    const overrides = body.eventEmails === undefined ? previous?.eventEmails || {} : body.eventEmails;
+    if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) throw Object.assign(new Error("Invalid notification recipient overrides."), { status: 400 });
+    for (const key of Object.keys(settings)) {
+      try { eventEmails[key] = parseNotificationEmails(overrides[key]).join(", "); }
+      catch (error: any) { throw Object.assign(new Error(`${key}: ${error.message}`), { status: 400 }); }
+    }
     const now = new Date().toISOString();
-    const newSubscription = !previous?.email || previous.enabled === false || String(previous.email).trim().toLowerCase() !== email;
-    const subscribedAt = newSubscription ? now : previous.subscribedAt || previous.createdAt || previous.updatedAt || now;
-    const doc = { ...scope, type: "notification_settings", email, enabled, settings, subscribedAt, createdAt: previous?.createdAt || previous?.updatedAt || now, updatedAt: now };
+    const next = { ...scope, email, enabled, settings, eventEmails };
+    const recipientSubscriptions = notificationSubscriptions(previous, next, now);
+    const since = Object.values(recipientSubscriptions).flat().map(entry => new Date(entry.since).getTime());
+    const subscribedAt = new Date(Math.min(Date.parse(now), ...since)).toISOString();
+    const doc = { ...next, type: "notification_settings", recipientSubscriptions, subscribedAt, createdAt: previous?.createdAt || previous?.updatedAt || now, updatedAt: now };
     await container.items.upsert(doc);
     return NextResponse.json({ ok: true, doc });
   } catch (error) { return failure(error); }
