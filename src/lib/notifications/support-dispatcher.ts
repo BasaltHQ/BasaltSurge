@@ -1,6 +1,13 @@
 import { getContainer } from "@/lib/cosmos";
 import { sendEmail } from "@/lib/aws/ses";
 import { generateHtmlEmailTemplate } from "./email-template";
+import { currentNotificationSettings, notificationEnabled, notificationRecipients, notificationSettingsId, parseNotificationEmails } from "./settings";
+
+// Direct support delivery must attempt every inbox even if one send fails.
+async function sendSupportEmail(message: Parameters<typeof sendEmail>[0]) {
+  try { await sendEmail(message); }
+  catch (error) { console.error("[Support Dispatcher] Recipient delivery failed:", error); }
+}
 
 export interface SupportTicketData {
   id: string;
@@ -68,7 +75,7 @@ async function resolveBrandAssets(brandKey: string = "basaltsurge") {
 /**
  * Resolves admin / support email recipients for a given brand.
  */
-async function resolveAdminRecipients(brandKey: string, brandContactEmail?: string): Promise<string[]> {
+async function resolveAdminRecipients(brandKey: string, event: string, brandContactEmail?: string): Promise<string[]> {
   const bk = (brandKey || "basaltsurge").toLowerCase().trim();
   const recipients = new Set<string>();
 
@@ -82,17 +89,14 @@ async function resolveAdminRecipients(brandKey: string, brandContactEmail?: stri
     const container = await getContainer();
     const { resources: settingsDocs } = await container.items
       .query({
-        query: "SELECT c.email, c.level, c.enabled, c.settings FROM c WHERE (c.level = 'platform' OR (c.level = 'partner' AND c.brandKey = @bk)) AND c.type = 'notification_settings'",
+        query: "SELECT * FROM c WHERE (c.level = 'platform' OR (c.level = 'partner' AND c.brandKey = @bk)) AND c.type = 'notification_settings'",
         parameters: [{ name: "@bk", value: bk }],
       })
       .fetchAll();
 
-    for (const doc of settingsDocs || []) {
-      if (doc.enabled !== false && doc.email && doc.email.includes("@")) {
-        // Check if support_ticket_created is explicitly disabled
-        if (doc.settings?.support_ticket_created !== false) {
-          recipients.add(doc.email.trim().toLowerCase());
-        }
+    for (const doc of currentNotificationSettings(settingsDocs || [])) {
+      if (notificationEnabled(doc, event)) {
+        for (const email of notificationRecipients(doc, event)) recipients.add(email);
       }
     }
   } catch (err) {
@@ -122,18 +126,28 @@ async function resolveAdminRecipients(brandKey: string, brandContactEmail?: stri
 /**
  * Resolves customer's email address from ticket.user, wallet, or user records.
  */
-async function resolveCustomerEmail(ticket: SupportTicketData, brandKey: string): Promise<string | null> {
+async function resolveCustomerEmails(ticket: SupportTicketData, brandKey: string): Promise<string[]> {
+  // Wallet preferences control routing even when a ticket also includes a contact email.
+  const wallet = (ticket.wallet || (ticket.user?.startsWith("0x") ? ticket.user : "")).trim().toLowerCase();
+  if (wallet) {
+    const container = await getContainer();
+    const { resource } = await container.item(notificationSettingsId("merchant", brandKey, wallet), wallet).read<any>().catch((error: any) => {
+      if (Number(error?.code || error?.statusCode) === 404) return { resource: null };
+      throw error;
+    });
+    if (resource) return notificationEnabled(resource, "support_ticket_reply") ? notificationRecipients(resource, "support_ticket_reply") : [];
+  }
   // Explicit email provided on ticket
   if (ticket.email && ticket.email.includes("@")) {
-    return ticket.email.trim().toLowerCase();
+    return parseNotificationEmails(ticket.email);
   }
 
   const user = (ticket.user || ticket.wallet || "").trim();
-  if (!user) return null;
+  if (!user) return [];
 
   // Direct email address provided as user identifier
   if (user.includes("@") && !user.startsWith("0x")) {
-    return user.toLowerCase();
+    return parseNotificationEmails(user);
   }
 
   // Wallet address lookup in notification_settings, shop:config, and client_requests
@@ -142,20 +156,11 @@ async function resolveCustomerEmail(ticket: SupportTicketData, brandKey: string)
       const container = await getContainer();
       const w = user.toLowerCase();
 
-      // Check merchant/user notification settings
-      const notifDocId = `notification_settings:merchant:${brandKey}:${w}`;
-      try {
-        const { resource } = await container.item(notifDocId, w).read<any>();
-        if (resource?.email && resource.email.includes("@")) {
-          return resource.email.trim().toLowerCase();
-        }
-      } catch {}
-
       // Check shop:config
       try {
         const { resource } = await container.item("shop:config", w).read<any>();
         if (resource?.email && resource.email.includes("@")) {
-          return resource.email.trim().toLowerCase();
+          return parseNotificationEmails(resource.email);
         }
       } catch {}
 
@@ -168,14 +173,14 @@ async function resolveCustomerEmail(ticket: SupportTicketData, brandKey: string)
         .fetchAll();
 
       if (reqs?.[0]?.email && reqs[0].email.includes("@")) {
-        return reqs[0].email.trim().toLowerCase();
+        return parseNotificationEmails(reqs[0].email);
       }
     } catch (err) {
       console.warn("[Support Dispatcher] Customer email lookup fallback:", err);
     }
   }
 
-  return null;
+  return [];
 }
 
 /**
@@ -184,7 +189,7 @@ async function resolveCustomerEmail(ticket: SupportTicketData, brandKey: string)
 export async function notifyNewTicketCreated(ticket: SupportTicketData): Promise<void> {
   try {
     const { brandKey, brandName, brandColor, logoUrl, logoShape, contactEmail } = await resolveBrandAssets(ticket.brandKey);
-    const adminRecipients = await resolveAdminRecipients(brandKey, contactEmail);
+    const adminRecipients = await resolveAdminRecipients(brandKey, "support_ticket_created", contactEmail);
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "https://surge.basalthq.com";
     const adminPanelUrl = `${baseUrl}/admin?tab=supportAdmin`;
 
@@ -214,19 +219,18 @@ export async function notifyNewTicketCreated(ticket: SupportTicketData): Promise
 
     // Send to all resolved admin/staff emails
     for (const recipient of adminRecipients) {
-      await sendEmail({
+      await sendSupportEmail({
         to: recipient,
         subject,
         html: htmlContent,
         fromName: `${brandName} Support Desk`,
         brandKey,
       });
-      console.log(`[Support Dispatcher] Alerted admin ${recipient} for new ticket #${shortId}`);
     }
 
     // Also send an automated acknowledgment receipt to customer if their email is available
-    const customerEmail = await resolveCustomerEmail(ticket, brandKey);
-    if (customerEmail && !adminRecipients.includes(customerEmail)) {
+    const customerEmails = await resolveCustomerEmails(ticket, brandKey);
+    for (const customerEmail of customerEmails.filter(email => !adminRecipients.includes(email))) {
       const customerReceiptHtml = generateHtmlEmailTemplate({
         brandName,
         brandColor,
@@ -244,14 +248,13 @@ export async function notifyNewTicketCreated(ticket: SupportTicketData): Promise
         ctaUrl: `${baseUrl}/admin?tab=support`,
       });
 
-      await sendEmail({
+      await sendSupportEmail({
         to: customerEmail,
         subject: `[${brandName}] Support Request Received (#${shortId})`,
         html: customerReceiptHtml,
         fromName: `${brandName} Support`,
         brandKey,
       });
-      console.log(`[Support Dispatcher] Sent receipt to customer ${customerEmail} for ticket #${shortId}`);
     }
   } catch (err) {
     console.error("[Support Dispatcher] Failed to notify new ticket created:", err);
@@ -264,7 +267,7 @@ export async function notifyNewTicketCreated(ticket: SupportTicketData): Promise
 export async function notifyCustomerReply(ticket: SupportTicketData, replyMessage: string, replyAuthor?: string): Promise<void> {
   try {
     const { brandKey, brandName, brandColor, logoUrl, logoShape, contactEmail } = await resolveBrandAssets(ticket.brandKey);
-    const adminRecipients = await resolveAdminRecipients(brandKey, contactEmail);
+    const adminRecipients = await resolveAdminRecipients(brandKey, "support_ticket_reply", contactEmail);
     const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || "https://surge.basalthq.com";
     const adminPanelUrl = `${baseUrl}/admin?tab=supportAdmin`;
 
@@ -290,14 +293,13 @@ export async function notifyCustomerReply(ticket: SupportTicketData, replyMessag
     });
 
     for (const recipient of adminRecipients) {
-      await sendEmail({
+      await sendSupportEmail({
         to: recipient,
         subject,
         html: htmlContent,
         fromName: `${brandName} Support Desk`,
         brandKey,
       });
-      console.log(`[Support Dispatcher] Alerted admin ${recipient} for customer reply on #${shortId}`);
     }
   } catch (err) {
     console.error("[Support Dispatcher] Failed to notify customer reply:", err);
@@ -310,8 +312,8 @@ export async function notifyCustomerReply(ticket: SupportTicketData, replyMessag
 export async function notifyAdminReply(ticket: SupportTicketData, replyMessage: string, agentName?: string): Promise<void> {
   try {
     const { brandKey, brandName, brandColor, logoUrl, logoShape } = await resolveBrandAssets(ticket.brandKey);
-    const customerEmail = await resolveCustomerEmail(ticket, brandKey);
-    if (!customerEmail) {
+    const customerEmails = await resolveCustomerEmails(ticket, brandKey);
+    if (!customerEmails.length) {
       console.log(`[Support Dispatcher] Skipping customer notification: no email resolved for ${ticket.user}`);
       return;
     }
@@ -338,14 +340,13 @@ export async function notifyAdminReply(ticket: SupportTicketData, replyMessage: 
       ctaUrl: `${baseUrl}/admin?tab=support`,
     });
 
-    await sendEmail({
+    for (const customerEmail of customerEmails) await sendSupportEmail({
       to: customerEmail,
       subject,
       html: htmlContent,
       fromName: `${brandName} Support`,
       brandKey,
     });
-    console.log(`[Support Dispatcher] Sent agent reply email to customer ${customerEmail} for ticket #${shortId}`);
   } catch (err) {
     console.error("[Support Dispatcher] Failed to notify admin reply to customer:", err);
   }

@@ -23,6 +23,10 @@ External wallet releases are discovered when the split index is refreshed. The e
 
 ## Delivery and settings
 
+- Overall recipients accept comma-separated bare email addresses (up to 50 per list). Addresses are trimmed, normalized and deduplicated; malformed entries are rejected. Existing single-email settings remain compatible.
+- Every notification type has an optional recipient override, accepting one address or a CSV list. A blank override inherits the overall list; a populated override replaces it for that type. At least one overall recipient is required while notifications are enabled.
+- Sends are separate for each inbox. Adding or changing recipients starts only those new event/address subscriptions at save time, preserving pending delivery to existing recipients.
+- Support ticket notifications also use these lists and per-type overrides. Existing brand-contact/environment support destinations remain independent. Wallet-linked merchant support responses honor saved preferences; tickets without wallet preferences use their contact email. Support dispatch remains direct and is not included in the outbox status/retry display.
 - Source handlers await durable queue insertion. A stable event ID prevents repeated reconciliation/indexing from creating another alert.
 - `POST /api/cron/notifications` requires `x-cron-secret` matching `CRON_SECRET`. `scripts/start-scheduler.js` invokes it every minute, preserving the existing schedules for financial jobs. Deployment must run the application server/scheduler with that secret configured.
 - The worker processes up to 50 queued events per run. Mongo uses deterministic `_id` values and atomic leases; Cosmos uses conditional writes with ETags. Successful recipients are recorded separately, so another recipient's failure does not resend their email.
@@ -30,7 +34,7 @@ External wallet releases are discovered when the split index is refreshed. The e
 - Settings are resolved by brand, level and merchant wallet. Partner broadcasts reach enabled partner subscriptions in that brand. Delegated merchant settings require `manage:settings` permission.
 - Platform `portalpay` settings remain readable; the latest preferences win when a canonical `basaltsurge` record exists.
 - A new subscription does not receive historical events. Receipt scans overlap ten minutes and checkpoint only after successful queue insertion. The first scan starts with recent receipts rather than replaying historical sales.
-- The panel shows queued, retrying, skipped, or provider-accepted status for the latest alert. SES acceptance is not an inbox-delivery receipt.
+- The panel shows queued, retrying, skipped, or provider-accepted status and accepted/total recipient counts for the latest queued alert. SES acceptance is not an inbox-delivery receipt.
 - Like other email queues without provider idempotency, a process failure after SES accepts a message but before its result is saved can result in a duplicate retry. Queuing failures are logged; receipt/release monitors retry insertion without advancing their checkpoints.
 
 ## Regression checks

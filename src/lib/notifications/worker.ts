@@ -3,7 +3,7 @@ import { getContainer } from "@/lib/cosmos";
 import { sendEmail } from "@/lib/aws/ses";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { generateHtmlEmailTemplate } from "./email-template";
-import { currentNotificationSettings, notificationBrand, notificationEnabled } from "./settings";
+import { currentNotificationSettings, notificationBrand, notificationEnabled, notificationRecipients, recipientSubscribedAt } from "./settings";
 import { notificationDigest } from "./outbox";
 import { eventTime } from "./events";
 
@@ -20,10 +20,10 @@ export function eventRecipients(event: any, settings: any[]): any[] {
     if (event.merchantWallet && String(doc.wallet).toLowerCase() !== event.merchantWallet) continue;
     if (!notificationEnabled(doc, event.event)) continue;
     // A newly subscribed recipient should not get historical events or reindex backfills.
-    const subscribedAt = new Date(doc.subscribedAt || doc.createdAt || doc.updatedAt || 0).getTime();
-    if (subscribedAt > event.occurredAt) continue;
-    const email = String(doc.email).trim().toLowerCase();
-    if (!unique.has(email)) unique.set(email, { ...doc, email });
+    for (const email of notificationRecipients(doc, event.event)) {
+      if (recipientSubscribedAt(doc, event.event, email) > event.occurredAt) continue;
+      if (!unique.has(email)) unique.set(email, { ...doc, email });
+    }
   }
   return [...unique.values()];
 }

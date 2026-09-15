@@ -6,7 +6,7 @@ import { Bell, Mail, Shield, Save, CheckCircle, AlertTriangle, Eye, RefreshCw, S
 import { useBrand } from "@/contexts/BrandContext";
 import { isPlatformCtx, isPartnerCtx, isPlatformSuperAdmin } from "@/lib/authz";
 import { resolveWalletRole } from "@/lib/authz";
-import { DEFAULT_SETTINGS } from "@/lib/notifications/settings";
+import { DEFAULT_SETTINGS, parseNotificationEmails } from "@/lib/notifications/settings";
 
 // Define the alert definitions for each level
 interface NotificationEventDef {
@@ -22,17 +22,22 @@ const EVENTS_BY_LEVEL: Record<string, NotificationEventDef[]> = {
     { key: "low_stock", title: "Low Stock Alert", description: "Alert when a saved inventory quantity reaches its threshold (5 units by default)." },
     { key: "team_pin_changed", title: "Employee PIN Modified", description: "Security alert when a terminal operator's access PIN is updated." },
     { key: "live_client_message", title: "Live Customer Message", description: "Receive an email alert when a client messages live during checkout." },
+    { key: "support_ticket_reply", title: "Support Ticket Reply", description: "Receive support responses for tickets associated with your merchant wallet." },
   ],
   partner: [
     { key: "merchant_signup", title: "New Merchant Application", description: "Alert when a merchant requests to onboard onto your whitelabel container." },
     { key: "split_deployed", title: "Split Contract Created", description: "Get notified when a new revenue-split contract is deployed on-chain." },
     { key: "device_offline", title: "Device Offline Alert", description: "Alert when a configured device misses three minutes of heartbeats." },
+    { key: "support_ticket_created", title: "New Support Ticket", description: "Receive an alert when a customer opens a support ticket." },
+    { key: "support_ticket_reply", title: "Customer Support Reply", description: "Receive an alert when a customer replies to a support ticket." },
   ],
   platform: [
     { key: "partner_signup", title: "New Partner Container", description: "Platform warning when a new partner requests whitelist deployment." },
     { key: "contract_upgraded", title: "Smart Contract Upgrade", description: "Alert when a payment splitter contract version is published." },
     { key: "node_error", title: "Decentralized Node Error", description: "Alert when a node reports degraded or critical performance, at most once per severity per hour." },
     { key: "system_status", title: "Platform System Status", description: "Receive published platform-wide announcements and maintenance updates." },
+    { key: "support_ticket_created", title: "New Support Ticket", description: "Receive an alert when a customer opens a support ticket." },
+    { key: "support_ticket_reply", title: "Customer Support Reply", description: "Receive an alert when a customer replies to a support ticket." },
   ],
 };
 
@@ -136,6 +141,7 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
   // Selection states
   const activeLevel = level;
   const [email, setEmail] = useState<string>("");
+  const [eventEmails, setEventEmails] = useState<Record<string, string>>({});
   const [enabled, setEnabled] = useState<boolean>(true);
   const [settings, setSettings] = useState<Record<string, boolean>>({});
   
@@ -147,7 +153,7 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<boolean>(false);
-  const [delivery, setDelivery] = useState<{ status: string; retrying: boolean; at: number } | null>(null);
+  const [delivery, setDelivery] = useState<{ status: string; retrying: boolean; at: number; accepted?: number; total?: number } | null>(null);
 
   // Brand config parameters for rendering custom HTML template inside preview iframe
   const [previewBrandName, setPreviewBrandName] = useState<string>("BasaltSurge");
@@ -180,6 +186,7 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
         }
 
         setEmail(j.email || "");
+        setEventEmails(j.eventEmails || {});
         setEnabled(j.enabled ?? true);
         setSettings(j.settings || {});
         setDelivery(j.delivery || null);
@@ -283,10 +290,11 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
       setError("");
       setSuccess(false);
 
-      if ((enabled || email) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
-        setError("Please enter a valid email address.");
-        setSaving(false);
-        return;
+      const recipients = parseNotificationEmails(email);
+      if (enabled && !recipients.length) throw new Error("Enter at least one overall recipient email.");
+      for (const ev of EVENTS_BY_LEVEL[activeLevel]) {
+        try { parseNotificationEmails(eventEmails[ev.key]); }
+        catch (error: any) { throw new Error(`${ev.title}: ${error.message}`); }
       }
 
       const r = await fetch("/api/notifications/settings", {
@@ -299,6 +307,7 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
         body: JSON.stringify({
           level: activeLevel,
           email,
+          eventEmails,
           enabled,
           settings,
         }),
@@ -310,6 +319,8 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
         return;
       }
 
+      setEmail(j.doc.email);
+      setEventEmails(j.doc.eventEmails || {});
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
@@ -558,15 +569,16 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
 
                 <div className="space-y-1.5 pt-2">
                   <label htmlFor="notification-email" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Notification Email Address
+                    Overall Recipients (CSV)
                   </label>
                   <div className="relative">
                     <input
                       id="notification-email"
-                      type="email"
+                      type="text"
+                      inputMode="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
-                      placeholder="e.g., alert-recipient@domain.com"
+                      placeholder="owner@example.com, operations@example.com"
                       disabled={!enabled}
                       className="w-full h-12 pl-11 pr-4 bg-black/40 border border-white/10 rounded-xl focus:outline-none focus:ring-1 focus:ring-[var(--pp-secondary)] transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                     />
@@ -575,10 +587,11 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground leading-normal">
-                    Alerts go to this inbox through our email service. No sender or DNS setup is needed. Queued alerts and offline devices are checked every minute; failed sends are retried.
+                    Separate email addresses with commas (up to 50). Each recipient receives a separate email. Alerts use this list unless you set an override below. No DNS setup is needed.
                   </p>
                   {delivery && <p className={`text-xs ${delivery.retrying ? "text-amber-500" : "text-muted-foreground"}`} role="status">
                     Latest alert: {delivery.retrying ? "Delivery failed; retrying automatically" : delivery.status === "accepted" ? "Accepted by email provider" : delivery.status === "pending" ? "Queued for sending" : "Skipped: disabled or no longer applicable"}
+                    {!!delivery.total && ` (${delivery.accepted || 0}/${delivery.total} recipients accepted)`}
                     {" · "}{new Date(delivery.at).toLocaleString()}
                   </p>}
                 </div>
@@ -588,7 +601,7 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5 space-y-4">
                 <div className="flex items-center gap-2 border-b border-white/5 pb-3">
                   <Shield className="w-4 h-4 text-[var(--pp-secondary)]" />
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-white/80">Alert Specific Toggles</h3>
+                  <h3 className="text-sm font-bold uppercase tracking-wider text-white/80">Notification Types & Recipients</h3>
                 </div>
 
                 <div className="divide-y divide-white/5">
@@ -596,9 +609,22 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
                     const isChecked = settings[ev.key] ?? DEFAULT_SETTINGS[activeLevel][ev.key];
                     return (
                       <div key={ev.key} className="flex items-start justify-between py-4 first:pt-0 last:pb-0 gap-4">
-                        <div className="space-y-0.5">
+                        <div className="space-y-1.5 min-w-0 flex-1">
                           <label className="text-sm font-semibold">{ev.title}</label>
                           <div className="text-[11px] text-muted-foreground leading-normal max-w-md">{ev.description}</div>
+                          <label htmlFor={`notification-email-${ev.key}`} className="block pt-2 text-xs text-muted-foreground">Recipient override (optional)</label>
+                          <input
+                            id={`notification-email-${ev.key}`}
+                            type="text"
+                            inputMode="email"
+                            value={eventEmails[ev.key] || ""}
+                            onChange={(e) => setEventEmails(prev => ({ ...prev, [ev.key]: e.target.value }))}
+                            disabled={!enabled || !isChecked}
+                            placeholder="Leave blank to use overall recipients"
+                            aria-describedby={`notification-email-help-${ev.key}`}
+                            className="w-full p-3 bg-black/40 border border-white/10 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-[var(--pp-secondary)] disabled:opacity-50"
+                          />
+                          <p id={`notification-email-help-${ev.key}`} className="text-[10px] text-muted-foreground">One email or a comma-separated list. Replaces the overall list for this type.</p>
                         </div>
                         <button
                           type="button"
