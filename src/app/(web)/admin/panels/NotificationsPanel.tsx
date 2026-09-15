@@ -264,9 +264,10 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
         }
       })();
     } else if (activeLevel === "partner") {
-      setPreviewBrandName("Partner Whitelabel");
-      setPreviewBrandColor("#a855f7"); // purple accent for partner
-      setPreviewLogoUrl("");
+      // BrandContext is hydrated with the current partner's saved brand config.
+      setPreviewBrandName(brand.name);
+      setPreviewBrandColor(brand.colors.primary);
+      setPreviewLogoUrl(brand.logos.app || brand.logos.symbol || "");
       setPreviewLogoShape("square");
     } else {
       setPreviewBrandName("BasaltSurge Platform");
