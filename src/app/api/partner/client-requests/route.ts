@@ -468,7 +468,7 @@ export async function GET(req: NextRequest) {
 
         // Read brand config from DB/Cosmos
         const { getBrandConfigFromCosmos } = await import("@/lib/brand-config");
-        const { brand: dbBrand } = await getBrandConfigFromCosmos(brandKey);
+        const { brand: dbBrand, overrides: brandOverrides } = await getBrandConfigFromCosmos(brandKey);
 
         const dbPlatformFeeBps = typeof dbBrand?.platformFeeBps === "number" ? dbBrand.platformFeeBps : undefined;
         const dbCreditPlatformFeeBps = typeof dbBrand?.creditPlatformFeeBps === "number" ? dbBrand.creditPlatformFeeBps : undefined;
@@ -534,7 +534,8 @@ export async function GET(req: NextRequest) {
         parseJson(process.env.AGENT_WALLETS_JSON, envAgents, creditBpsVal);
 
         const { getSanitizedCreditSplitBps, getEnv, isDualSplitEnabled } = await import("@/lib/env");
-        const isDualSplit = dbBrand?.dualSplitEnabled !== undefined ? Boolean(dbBrand.dualSplitEnabled) : isDualSplitEnabled();
+        // Effective brand defaults include false; only a persisted setting overrides the container mode.
+        const isDualSplit = typeof brandOverrides?.dualSplitEnabled === "boolean" ? brandOverrides.dualSplitEnabled : isDualSplitEnabled();
         const creditBps = getSanitizedCreditSplitBps();
         const creditPlatformBps = dbCreditPlatformFeeBps !== undefined ? dbCreditPlatformFeeBps : (creditBps?.platform ?? 125);
         const debitPlatformBps = dbPlatformFeeBps !== undefined ? dbPlatformFeeBps : (getEnv().PLATFORM_BPS ?? 125);
@@ -900,8 +901,8 @@ export async function PATCH(req: NextRequest) {
                         // Dual Split Sync
                         const { isDualSplitEnabled, getEnv } = await import("@/lib/env");
                         const { getBrandConfigFromCosmos } = await import("@/lib/brand-config");
-                        const { brand: brandDoc } = await getBrandConfigFromCosmos(existingDoc?.brandKey || brandKey);
-                        const isDual = brandDoc?.dualSplitEnabled !== undefined ? Boolean(brandDoc.dualSplitEnabled) : isDualSplitEnabled();
+                        const { overrides: brandOverrides } = await getBrandConfigFromCosmos(existingDoc?.brandKey || brandKey);
+                        const isDual = typeof brandOverrides?.dualSplitEnabled === "boolean" ? brandOverrides.dualSplitEnabled : isDualSplitEnabled();
                         if (isDual) {
                             const clientCredit = splitConfig.splitConfigCredit;
                             const debitPlatformBps = typeof clientCredit?.platformBps === "number"
@@ -1020,8 +1021,8 @@ export async function PATCH(req: NextRequest) {
 
                     const { isDualSplitEnabled, getEnv } = await import("@/lib/env");
                     const { getBrandConfigFromCosmos } = await import("@/lib/brand-config");
-                    const { brand: brandDoc } = await getBrandConfigFromCosmos(request?.brandKey || brandKey);
-                    const isDual = brandDoc?.dualSplitEnabled !== undefined ? Boolean(brandDoc.dualSplitEnabled) : isDualSplitEnabled();
+                    const { overrides: brandOverrides } = await getBrandConfigFromCosmos(request?.brandKey || brandKey);
+                    const isDual = typeof brandOverrides?.dualSplitEnabled === "boolean" ? brandOverrides.dualSplitEnabled : isDualSplitEnabled();
                     if (isDual) {
                         const clientCredit = splitConfig.splitConfigCredit;
                         const debitPlatformBps = typeof clientCredit?.platformBps === "number"
