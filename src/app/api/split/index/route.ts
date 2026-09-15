@@ -285,7 +285,7 @@ export async function POST(req: NextRequest) {
     const indexDoc = {
       id: `split_index_${merchantWallet.toLowerCase()}`,
       type: "split_index",
-      brandKey: getBrandKey(),
+      brandKey: getBrandKey(req),
       merchantWallet: merchantWallet.toLowerCase(),
       splitAddress: splitAddress.toLowerCase(), // Current active split
 
@@ -322,6 +322,10 @@ export async function POST(req: NextRequest) {
     };
 
     await container.items.upsert(indexDoc);
+    const { notifySplitRelease } = await import("@/lib/notifications/events");
+    for (const tx of allTransactions) {
+      await notifySplitRelease(tx, merchantWallet, getBrandKey(req));
+    }
 
     // Also create/update individual transaction records for granular querying
     let indexed = 0;

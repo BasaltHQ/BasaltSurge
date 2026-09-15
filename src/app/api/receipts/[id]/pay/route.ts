@@ -94,23 +94,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
                 await container.items.upsert(nextDoc);
 
-                // Trigger merchant notification asynchronously
-                const { triggerNotification } = await import("@/lib/notifications/dispatcher");
-                triggerNotification("merchant", wallet, "purchase_completed", {
-                    title: "Purchase Completed",
-                    subtitle: `Receipt #${nextDoc.receiptId}`,
-                    message: "A new cash transaction has been completed and attributed to your merchant terminal.",
-                    details: [
-                        { label: "Receipt ID", value: nextDoc.receiptId, isCode: true },
-                        { label: "Total Amount", value: `$${Number(nextDoc.totalUsd || 0).toFixed(2)}` },
-                        { label: "Payment Method", value: "Cash" },
-                        { label: "Served By", value: nextDoc.serverName || "Terminal" },
-                        { label: "Timestamp", value: new Date(nextDoc.paidAt).toLocaleString() },
-                    ],
-                    ctaText: "View Admin Console",
-                    ctaUrl: `${process.env.NEXT_PUBLIC_SITE_URL || "https://surge.basalthq.com"}/admin`,
-                }).catch((err) => console.error("[Notification Trigger Error]", err));
-
+                const { notifyReceiptPaid } = await import("@/lib/notifications/events");
+                const { getBrandKey } = await import("@/config/brands");
+                await notifyReceiptPaid(nextDoc, getBrandKey(req));
                 return NextResponse.json({ ok: true, receipt: nextDoc });
             }
         } catch (e) {

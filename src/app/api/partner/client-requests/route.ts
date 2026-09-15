@@ -673,6 +673,11 @@ export async function POST(req: NextRequest) {
 
         await container.items.create(doc);
 
+        const { enqueueNotification } = await import("@/lib/notifications/outbox");
+        await enqueueNotification({ level: "partner", brandKey, event: "merchant_signup", eventId: doc.id, occurredAt: doc.createdAt,
+            data: { title: "New Merchant Application", message: "A merchant application is ready for review.", details: [{ label: "Business", value: shopName }, { label: "Request", value: doc.id }] },
+        });
+
         return json({ ok: true, requestId: doc.id, status: "pending" });
     } catch (e: any) {
         console.error("[client-requests] POST Error:", e);

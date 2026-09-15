@@ -381,7 +381,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
       if (!merchantContext && recipientWallet && /^0x[a-f0-9]{40}$/i.test(recipientWallet)) {
         const { triggerNotification } = await import("@/lib/notifications/dispatcher");
         const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://surge.basalthq.com";
-        triggerNotification("merchant", recipientWallet, "live_client_message", {
+        await triggerNotification("merchant", recipientWallet, "live_client_message", {
           title: "Live Customer Message",
           subtitle: convo.subject?.id ? `Subject: ${convo.subject.id}` : `Conversation #${conversationId.slice(-8)}`,
           message: textBody || "Sent an attachment",
@@ -392,7 +392,7 @@ export async function POST(req: NextRequest, context: { params: Promise<{ id: st
           ],
           ctaText: "Reply in Admin Console",
           ctaUrl: `${appUrl}/admin?tab=messages-merchant`
-        }).catch(err => console.error("[Messages API] Notification error:", err));
+        }, { brandKey: convo.brandKey, eventId: msgDoc.id, occurredAt: ts }).catch(err => console.error("[Messages API] Notification error:", err));
       }
     } catch {}
 

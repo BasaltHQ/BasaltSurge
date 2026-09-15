@@ -152,6 +152,11 @@ export async function PATCH(req: NextRequest) {
 
         if (ops.length > 0) {
             await container.item(body.id, pkValue).patch(ops as any);
+            if (body.pin && ops.some(op => op.path === "/pinHash" && op.value !== doc.pinHash)) {
+                const { notifyPinChanged } = await import("@/lib/notifications/events");
+                const { getBrandKey } = await import("@/config/brands");
+                await notifyPinChanged(doc, w, getBrandKey(req), randomUUID());
+            }
         }
 
         return NextResponse.json({ success: true });

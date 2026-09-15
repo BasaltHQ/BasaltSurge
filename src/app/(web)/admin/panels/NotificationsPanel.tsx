@@ -6,6 +6,7 @@ import { Bell, Mail, Shield, Save, CheckCircle, AlertTriangle, Eye, RefreshCw, S
 import { useBrand } from "@/contexts/BrandContext";
 import { isPlatformCtx, isPartnerCtx, isPlatformSuperAdmin } from "@/lib/authz";
 import { resolveWalletRole } from "@/lib/authz";
+import { DEFAULT_SETTINGS } from "@/lib/notifications/settings";
 
 // Define the alert definitions for each level
 interface NotificationEventDef {
@@ -18,20 +19,20 @@ const EVENTS_BY_LEVEL: Record<string, NotificationEventDef[]> = {
   merchant: [
     { key: "purchase_completed", title: "Purchase Completed", description: "Receive an email whenever a customer pays a terminal receipt or shop order." },
     { key: "split_released", title: "Funds Released", description: "Receive an alert when on-chain split earnings are transferred to your wallet." },
-    { key: "low_stock", title: "Low Stock Alert", description: "Get warned if an inventory item falls below the minimum required quantity." },
+    { key: "low_stock", title: "Low Stock Alert", description: "Alert when a saved inventory quantity reaches its threshold (5 units by default)." },
     { key: "team_pin_changed", title: "Employee PIN Modified", description: "Security alert when a terminal operator's access PIN is updated." },
     { key: "live_client_message", title: "Live Customer Message", description: "Receive an email alert when a client messages live during checkout." },
   ],
   partner: [
     { key: "merchant_signup", title: "New Merchant Application", description: "Alert when a merchant requests to onboard onto your whitelabel container." },
     { key: "split_deployed", title: "Split Contract Created", description: "Get notified when a new revenue-split contract is deployed on-chain." },
-    { key: "device_offline", title: "Device Offline Alert", description: "Receive a warning if a provisioned terminal or handheld goes offline." },
+    { key: "device_offline", title: "Device Offline Alert", description: "Alert when a configured device misses three minutes of heartbeats." },
   ],
   platform: [
     { key: "partner_signup", title: "New Partner Container", description: "Platform warning when a new partner requests whitelist deployment." },
-    { key: "contract_upgraded", title: "Smart Contract Upgrade", description: "Alert when core protocol contracts are deployed or updated on Base." },
-    { key: "node_error", title: "Decentralized Node Error", description: "Alert if a protocol node fails heartbeat or reports performance degradation." },
-    { key: "system_status", title: "Platform System Status", description: "Maintenance, downtime, and critical platform-wide security announcements." },
+    { key: "contract_upgraded", title: "Smart Contract Upgrade", description: "Alert when a payment splitter contract version is published." },
+    { key: "node_error", title: "Decentralized Node Error", description: "Alert when a node reports degraded or critical performance, at most once per severity per hour." },
+    { key: "system_status", title: "Platform System Status", description: "Receive published platform-wide announcements and maintenance updates." },
   ],
 };
 
@@ -124,12 +125,13 @@ function isLightColor(color: string): boolean {
   return true;
 }
 
-export default function NotificationsPanel({ level }: { level: "merchant" | "partner" | "platform" }) {
+export default function NotificationsPanel({ level, merchantWallet }: { level: "merchant" | "partner" | "platform"; merchantWallet?: string }) {
   const account = useActiveAccount();
   const brand = useBrand();
   
   // Resolve access settings
-  const wallet = (account?.address || "").toLowerCase();
+  const wallet = (level === "merchant" ? merchantWallet || account?.address || "" : account?.address || "").toLowerCase();
+  const actorWallet = (account?.address || "").toLowerCase();
 
   // Selection states
   const activeLevel = level;
@@ -145,6 +147,7 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
   const [saving, setSaving] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
   const [success, setSuccess] = useState<boolean>(false);
+  const [delivery, setDelivery] = useState<{ status: string; retrying: boolean; at: number } | null>(null);
 
   // Brand config parameters for rendering custom HTML template inside preview iframe
   const [previewBrandName, setPreviewBrandName] = useState<string>("BasaltSurge");
@@ -164,7 +167,7 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
         setSuccess(false);
 
         const r = await fetch(`/api/notifications/settings?level=${activeLevel}`, {
-          headers: { "x-wallet": wallet },
+          headers: { "x-wallet": actorWallet, ...(activeLevel === "merchant" ? { "x-merchant-wallet": wallet } : {}) },
           cache: "no-store",
         });
         const j = await r.json().catch(() => ({}));
@@ -179,6 +182,7 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
         setEmail(j.email || "");
         setEnabled(j.enabled ?? true);
         setSettings(j.settings || {});
+        setDelivery(j.delivery || null);
 
         // Select the first event by default for mockup preview
         const firstEvent = EVENTS_BY_LEVEL[activeLevel]?.[0]?.key || "";
@@ -191,7 +195,24 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
     })();
 
     return () => { cancelled = true; };
-  }, [activeLevel, wallet]);
+  }, [activeLevel, wallet, actorWallet, brand?.key]);
+
+  useEffect(() => {
+    if (!wallet || !actorWallet) return;
+    let cancelled = false;
+    const timer = setInterval(async () => {
+      try {
+        const response = await fetch(`/api/notifications/settings?level=${activeLevel}`, {
+          headers: { "x-wallet": actorWallet, ...(activeLevel === "merchant" ? { "x-merchant-wallet": wallet } : {}) }, cache: "no-store",
+        });
+        if (response.ok) {
+          const data = await response.json();
+          if (!cancelled) setDelivery(data.delivery || null);
+        }
+      } catch { /* Preserve the last known delivery state during network interruptions. */ }
+    }, 30_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [activeLevel, wallet, actorWallet, brand?.key]);
 
   // Load Brand configs to style email previewer faithfulness
   useEffect(() => {
@@ -262,7 +283,7 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
       setError("");
       setSuccess(false);
 
-      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      if ((enabled || email) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
         setError("Please enter a valid email address.");
         setSaving(false);
         return;
@@ -272,7 +293,8 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-wallet": wallet,
+          "x-wallet": actorWallet,
+          ...(activeLevel === "merchant" ? { "x-merchant-wallet": wallet } : {}),
         },
         body: JSON.stringify({
           level: activeLevel,
@@ -300,7 +322,7 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
   const handleToggle = (key: string) => {
     setSettings((prev) => ({
       ...prev,
-      [key]: !prev[key],
+      [key]: !(prev[key] ?? DEFAULT_SETTINGS[activeLevel][key]),
     }));
   };
 
@@ -553,8 +575,12 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
                     </div>
                   </div>
                   <p className="text-[10px] text-muted-foreground leading-normal">
-                    This email will receive automated transaction receipts, contract deployment notices, or platform event updates.
+                    Alerts go to this inbox through our email service. No sender or DNS setup is needed. Queued alerts and offline devices are checked every minute; failed sends are retried.
                   </p>
+                  {delivery && <p className={`text-xs ${delivery.retrying ? "text-amber-500" : "text-muted-foreground"}`} role="status">
+                    Latest alert: {delivery.retrying ? "Delivery failed; retrying automatically" : delivery.status === "accepted" ? "Accepted by email provider" : delivery.status === "pending" ? "Queued for sending" : "Skipped: disabled or no longer applicable"}
+                    {" · "}{new Date(delivery.at).toLocaleString()}
+                  </p>}
                 </div>
               </div>
 
@@ -567,7 +593,7 @@ export default function NotificationsPanel({ level }: { level: "merchant" | "par
 
                 <div className="divide-y divide-white/5">
                   {(EVENTS_BY_LEVEL[activeLevel] || []).map((ev) => {
-                    const isChecked = settings[ev.key] !== false; // defaults to true
+                    const isChecked = settings[ev.key] ?? DEFAULT_SETTINGS[activeLevel][ev.key];
                     return (
                       <div key={ev.key} className="flex items-start justify-between py-4 first:pt-0 last:pb-0 gap-4">
                         <div className="space-y-0.5">

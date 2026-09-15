@@ -734,6 +734,18 @@ export async function POST(req: NextRequest) {
             txHash: submittedTxHash,
           });
 
+          const releasedMerchant = splitToMerchant[splitAddr];
+          if (releasedMerchant) {
+            const { enqueueNotification } = await import("@/lib/notifications/outbox");
+            await enqueueNotification({
+              level: "merchant", brandKey: splitToBrand[splitAddr] || runBrandKey, merchantWallet: releasedMerchant,
+              event: "split_released", eventId: `${submittedTxHash}:${asset.symbol}:${releasedMerchant.toLowerCase()}`,
+              data: { title: "Funds Released", message: "Your payment splitter's distribution was confirmed on-chain.", details: [
+                { label: "Token", value: asset.symbol }, { label: "Transaction", value: submittedTxHash, isCode: true },
+              ] },
+            });
+          }
+
           distributions.push({
             splitAddress: splitAddr,
             merchantWallet: splitToMerchant[splitAddr] || null,

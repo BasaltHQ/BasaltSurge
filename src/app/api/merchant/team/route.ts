@@ -180,6 +180,10 @@ export async function PATCH(req: NextRequest) {
 
             try {
                 await container.item(body.id, pkValue).patch(ops as any);
+                if (body.pin && ops.some(op => op.path === "/pinHash" && op.value !== doc.pinHash)) {
+                    const { notifyPinChanged } = await import("@/lib/notifications/events");
+                    await notifyPinChanged(doc, merchantWallet, getMerchantBrandScope(req).brandKey, randomUUID());
+                }
             } catch (e: any) {
                 // If patch fails (likely due to partition move or mismatch), try hard replace sequence?
                 // Or just fail. 

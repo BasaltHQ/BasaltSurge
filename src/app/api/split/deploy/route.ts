@@ -868,6 +868,8 @@ export async function POST(req: NextRequest) {
           recipients: nextConfigOverride.split?.recipients || recipients,
         };
         await c.items.upsert(nextConfigOverride);
+        const { notifySplitDeployed } = await import("@/lib/notifications/events");
+        await notifySplitDeployed(nextConfigOverride, prev, isCredit, brandKey);
         
         // Also write legacy mirror (site:config)
         const legacyMirrorOverride: any = {
@@ -1000,6 +1002,8 @@ export async function POST(req: NextRequest) {
       recipients: nextConfig.split?.recipients || recipients,
     };
     await c.items.upsert(nextConfig);
+    const { notifySplitDeployed } = await import("@/lib/notifications/events");
+    await notifySplitDeployed(nextConfig, prev, isCredit, brandKey);
 
     const legacyMirror: any = {
       ...nextConfig,

@@ -54,6 +54,13 @@ export async function POST(req: NextRequest) {
     const { getContainer } = await import('@/lib/cosmos');
     const container = await getContainer();
     await container.items.upsert(metrics);
+    if (metrics.healthStatus === 'degraded' || metrics.healthStatus === 'critical') {
+      const { enqueueNotification } = await import('@/lib/notifications/outbox');
+      // One alert per node/severity/hour while it remains unhealthy.
+      await enqueueNotification({ level: 'platform', brandKey: 'basaltsurge', event: 'node_error', eventId: `${caller.nodeId}:${metrics.healthStatus}:${Math.floor(now / 3_600_000)}`,
+        data: { title: 'Node Health Alert', message: `A node reported ${metrics.healthStatus} performance.`, details: [{ label: 'Node', value: caller.nodeId }] },
+      });
+    }
 
     // Check if node should be tagged for decommission
     let decommissionWarning: string | null = null;
