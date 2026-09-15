@@ -63,6 +63,12 @@ export async function POST(req: NextRequest) {
         };
 
         await container.items.upsert(update);
+        if (update.status === "PUBLISHED" && update.target === "ALL") {
+            const { enqueueNotification } = await import("@/lib/notifications/outbox");
+            await enqueueNotification({ level: "platform", brandKey: "basaltsurge", event: "system_status", eventId: update.id,
+                data: { title: String(update.title || "Platform Update"), message: String(update.content || "A platform update has been published.") },
+            });
+        }
 
         return NextResponse.json({ ok: true, update });
     } catch (e: any) {

@@ -44,7 +44,7 @@ function matches(document, filter) {
 
 function harness(options = {}) {
     const documents = structuredClone(options.documents || []);
-    const writes = [], guards = [], queries = [];
+    const writes = [], guards = [], queries = [], notifications = [];
     let containerCalls = 0;
     const container = {
         read: async () => ({ resource: { partitionKey: { paths: [options.partitionKey || "/wallet"] } } }),
@@ -87,6 +87,7 @@ function harness(options = {}) {
         "@/lib/merchant-team-access": guard,
         "@/types/merchant-features": merchantFeatures,
         "node:crypto": crypto,
+        "@/lib/notifications/events": { notifyPinChanged: async (...args) => notifications.push(args) },
     };
     const team = load(path.join(__dirname, "route.ts"), dependencies);
     const roles = load(path.join(__dirname, "../roles/route.ts"), dependencies);
@@ -98,7 +99,7 @@ function harness(options = {}) {
         });
         return (route === "team" ? team : roles)[method](req);
     }
-    return { request, writes, guards, queries, documents, containerCalls: () => containerCalls };
+    return { request, writes, guards, queries, documents, notifications, containerCalls: () => containerCalls };
 }
 
 const teamMember = {
@@ -247,4 +248,17 @@ test("database failures do not fall back to unscoped member or role writes", asy
         assert.equal((await h.request(route, method, method === "DELETE" ? undefined : { id: teamMember.id }, merchant, "?id=member-id")).status, 500);
         assert.equal(h.writes.length, 0);
     }
+});
+
+test('PIN changes enqueue a scoped security alert only after the member is updated', async () => {
+    const h = harness({ documents: [teamMember] });
+    const response = await h.request('team', 'PATCH', { id: teamMember.id, pin: '5678' });
+    assert.equal(response.status, 200);
+    assert.equal(h.notifications.length, 1);
+    assert.equal(h.notifications[0][1], merchant);
+    assert.equal(h.notifications[0][2], 'basaltsurge');
+    assert.equal(h.writes[0].operation, 'patch');
+    const unchanged = harness({ documents: [{ ...teamMember, pinHash: crypto.createHash('sha256').update('5678').digest('hex') }] });
+    assert.equal((await unchanged.request('team', 'PATCH', { id: teamMember.id, pin: '5678' })).status, 200);
+    assert.equal(unchanged.notifications.length, 0);
 });

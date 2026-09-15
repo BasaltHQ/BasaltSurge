@@ -375,6 +375,13 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ brandKey:
 
     await writeBrandVersions(updated);
 
+    if (typeof publishVersion === "number") {
+      const { enqueueNotification } = await import("@/lib/notifications/outbox");
+      await enqueueNotification({ level: "platform", brandKey: "basaltsurge", event: "contract_upgraded", eventId: `split-version:${key}:${publishVersion}`,
+        data: { title: "Split Contract Version Published", message: "A payment splitter contract version was published.", details: [{ label: "Brand", value: key }, { label: "Version", value: String(publishVersion) }] },
+      });
+    }
+
     return NextResponse.json({
       ok: true,
       brandKey: key,

@@ -14,7 +14,7 @@ class FixedDate extends Date {
 // Execute the real scheduler with all network, filesystem, env-file and timer
 // boundaries replaced. These tests cannot contact a service or modify receipts.
 function harness({ env = {}, response = {}, state: initialState, once = false, holdPath } = {}) {
-  let state = initialState || { lastAutocloseDate: '2026-09-06', lastReindexTime: now, lastReconcileTime: 0 };
+  let state = initialState || { lastAutocloseDate: '2026-09-06', lastReindexTime: now, lastReconcileTime: 0, lastNotificationsTime: now };
   let clockNow = now;
   const heldRequests = [];
   const requests = [];
@@ -108,7 +108,7 @@ test('native scheduler reaches the Passenger socket with the application host an
   assert.equal(h.requests[0].headers.Host, 'partner.example');
   assert.equal(h.requests[0].headers['x-cron-secret'], 'test-cron-secret');
   assert.equal(h.state.lastReconcileTime, now);
-  assert.deepEqual(h.timers.map(timer => timer.delay), [15000, 600000]);
+  assert.deepEqual(h.timers.map(timer => timer.delay), [15000, 60000]);
 });
 
 test('native TCP scheduler uses the actual server port even when PORT differs', async () => {
@@ -152,7 +152,7 @@ test('reconciliation runs before slower maintenance jobs when all three are due'
   const h = harness({ state: {} });
   await h.scheduler.checkAndRun();
   assert.deepEqual(h.requests.map(request => request.path), [
-    '/api/cron/reconcile-stuck', '/api/cron/autoclose', '/api/split/reindex-all',
+    '/api/cron/reconcile-stuck', '/api/cron/notifications', '/api/cron/autoclose', '/api/split/reindex-all',
   ]);
   assert.equal(h.state.lastReconcileTime, now);
   assert.equal(h.state.lastAutocloseDate, '2026-09-06');
@@ -193,4 +193,14 @@ test('successful reconciliation is not submitted again until it becomes due', as
   await h.scheduler.checkAndRun();
   await h.scheduler.checkAndRun();
   assert.equal(h.requests.length, 1);
+});
+
+test('notifications run every minute while reconciliation retains its ten-minute cadence', async () => {
+  const h = harness();
+  await h.scheduler.checkAndRun();
+  h.advance(60000);
+  await h.scheduler.checkAndRun();
+  assert.equal(h.requests.filter(request => request.path === '/api/cron/notifications').length, 1);
+  assert.equal(h.requests.filter(request => request.path === '/api/cron/reconcile-stuck').length, 1);
+  assert.equal(h.state.lastNotificationsTime, now + 60000);
 });

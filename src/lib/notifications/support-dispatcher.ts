@@ -82,7 +82,7 @@ async function resolveAdminRecipients(brandKey: string, brandContactEmail?: stri
     const container = await getContainer();
     const { resources: settingsDocs } = await container.items
       .query({
-        query: "SELECT c.email, c.level, c.enabled, c.settings FROM c WHERE (c.level = 'platform' OR c.brandKey = @bk) AND c.type = 'notification_settings'",
+        query: "SELECT c.email, c.level, c.enabled, c.settings FROM c WHERE (c.level = 'platform' OR (c.level = 'partner' AND c.brandKey = @bk)) AND c.type = 'notification_settings'",
         parameters: [{ name: "@bk", value: bk }],
       })
       .fetchAll();

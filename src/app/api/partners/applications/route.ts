@@ -169,6 +169,10 @@ export async function POST(req: NextRequest) {
   try {
     const c = await getContainer();
     await c.items.upsert(doc);
+    const { enqueueNotification } = await import("@/lib/notifications/outbox");
+    await enqueueNotification({ level: "platform", brandKey: "basaltsurge", event: "partner_signup", eventId: id, occurredAt: now,
+      data: { title: "New Partner Application", message: "A partner application is ready for review.", details: [{ label: "Company", value: companyName }, { label: "Brand", value: brandKey }] },
+    });
     // Success response
     return json(
       { ok: true, id, brandKey, correlationId },

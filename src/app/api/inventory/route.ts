@@ -435,7 +435,7 @@ export async function POST(req: NextRequest) {
     // Stamp brandKey for partner containers on new/updated items (legacy items remain without brandKey)
     let brandKey: string | undefined = undefined;
     try {
-      brandKey = getBrandKey();
+      brandKey = getBrandKey(req);
     } catch {
       brandKey = undefined;
     }
@@ -516,7 +516,13 @@ export async function POST(req: NextRequest) {
 
     try {
       const container = await getContainer();
+      const { resource: previousItem } = await container.item(doc.id, doc.wallet).read().catch((error: any) => {
+        if (Number(error?.code || error?.statusCode) === 404) return { resource: null };
+        throw error;
+      });
       await container.items.upsert(doc as any);
+      const { notifyLowStock } = await import("@/lib/notifications/events");
+      await notifyLowStock(doc, previousItem);
       return NextResponse.json({ ok: true, item: doc }, { headers: { "x-correlation-id": correlationId } });
     } catch (e: any) {
       const saved = upsertInventoryItem(doc as InventoryItemMem);

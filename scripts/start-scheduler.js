@@ -162,6 +162,8 @@ async function checkAndRun() {
   const tenMinutesMs = 10 * 60 * 1000;
   schedule('lastReconcileTime', nowMs - (state.lastReconcileTime || 0) >= tenMinutesMs,
     '/api/cron/reconcile-stuck', 'POST', nowMs);
+  schedule('lastNotificationsTime', nowMs - (state.lastNotificationsTime || 0) >= 60_000,
+    '/api/cron/notifications', 'POST', nowMs);
 
   // Autoclose: once a day, target hour: 8 UTC.
   const todayStr = now.toISOString().split('T')[0];
@@ -201,8 +203,8 @@ function init({ address = null } = {}) {
   });
   setTimeout(run, 15000);
 
-  // Check every 10 minutes
-  setInterval(run, 10 * 60 * 1000);
+  // Notification delivery needs minute-level checks; other jobs keep their own cadence.
+  setInterval(run, 60 * 1000);
 }
 
 module.exports = { init, checkAndRun };

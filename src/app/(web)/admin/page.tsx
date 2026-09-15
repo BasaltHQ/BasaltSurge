@@ -11956,7 +11956,7 @@ export default function AdminPage() {
           </div>
         )}
         {activeTab === "notificationsMerchant" && canViewMerchantPanel("notificationsMerchant") && (
-          <NotificationsPanel level="merchant" />
+          <NotificationsPanel key={`notifications:${effectiveMerchantWallet}`} level="merchant" merchantWallet={effectiveMerchantWallet} />
         )}
         {activeTab === "notificationsPartner" && (
           <NotificationsPanel level="partner" />
