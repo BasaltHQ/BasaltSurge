@@ -28,6 +28,7 @@ const RECEIPT_PROJECTION = Object.fromEntries([
   "statusHistory", "lifecycleHistory", "failureReason", "customerSessions",
   "customerEmail", "stripeEmail", "email", "wallet", "merchantWallet", "shopSlug",
   "parentUrl", "merchantName", "shopName", "ipAddress", "buyerWallet", "stripeSessionId",
+  "sessionId", "stripePaidSessionId", "stripePaymentAttemptSessionId",
   "paymentId", "thirdwebMetadata.paymentId", "transactionHash", "txHash", "leg2TxHash",
   "leg1TxHash", "onrampTxHash",
 ].map(field => [field, 1]));
@@ -314,6 +315,9 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         createdAt: r.createdAt,
         email: r.customerEmail || r.stripeEmail || r.email || "anonymous",
         stripeSessionId: r.stripeSessionId || null,
+        sessionId: r.sessionId || null,
+        stripePaidSessionId: r.stripePaidSessionId || null,
+        stripePaymentAttemptSessionId: r.stripePaymentAttemptSessionId || null,
         transactionHash: r.transactionHash || r.txHash || r.leg2TxHash || r.leg1TxHash || r.onrampTxHash || null,
         txHash: r.txHash || null,
         leg1TxHash: r.leg1TxHash || null,

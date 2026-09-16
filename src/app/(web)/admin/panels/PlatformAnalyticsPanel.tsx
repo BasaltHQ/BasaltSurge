@@ -138,6 +138,8 @@ interface Stat {
   dedupedTotalCreated?: number;
   dedupedTotalPaid?: number;
   dedupedTotalFailed?: number;
+  dedupedTotalAbandoned?: number;
+  abandonmentRate?: number;
   trueIntegrationRate?: number;
   trueProcessRate?: number;
   completionRate?: number;
@@ -2038,7 +2040,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
           {([['true_integration','Checkout completion · unique',trueIntegrationRate],['integration','Receipt completion · raw',integrationRate],['process','Resolved outcomes · unique',processRate]] as const).map(([key,label,value]) => <button type="button" key={key} aria-pressed={successRateMode === key} onClick={() => setSuccessRateMode(key)} className={`rounded-lg border px-3 py-2 text-xs ${successRateMode === key ? "border-indigo-400/50 bg-indigo-500/20 text-white" : "border-white/10 text-zinc-400"}`}>{label} <span className="ml-2 font-mono">{analyticsMetricValue(displayStats || {}, key)?.toFixed(1) ?? "—"}%</span></button>)}
           <button type="button" onClick={() => { rememberDialogFocus(); setIsAlgorithmModalOpen(true); }} className="rounded-lg border border-white/10 px-3 py-2 text-xs">Definitions</button>
         </div>
-        <p className="max-w-md text-xs text-zinc-400">{successRateMode === "true_integration" ? "Paid unique intents / all unique intents, including open and failed." : successRateMode === "integration" ? "Paid receipt records / all raw records, including revisions." : "Paid unique intents / paid + failed unique intents. Unresolved intents are excluded."}</p>
+        <p className="max-w-md text-xs text-zinc-400">{successRateMode === "true_integration" ? "Full funnel conversion: Paid unique intents / all unique intents (including open/abandoned carts)." : successRateMode === "integration" ? "Unfiltered receipts: Paid records / all raw records (including revisions)." : "Payment gateway success: Paid intents / (Paid + Failed intents). Excludes pending/abandoned carts."}</p>
       </section>}
       <section className="analytics-workspace-stack" hidden={workspace !== "overview" && workspace !== "conversion"}>
       {serverComparison?.available && <p className="mb-4 text-xs text-zinc-400">Compared with {new Date(serverComparison.start).toLocaleString(undefined, { timeZone: effectiveTimezone })} to {new Date(serverComparison.end).toLocaleString(undefined, { timeZone: effectiveTimezone })}, using the same filters and equal elapsed time.</p>}
@@ -2050,6 +2052,14 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
             <p className="mt-3 text-xs text-zinc-400">{rateChange === null ? "No comparable previous period" : (rateChange >= 0 ? "+" : "") + rateChange.toFixed(1) + " percentage points vs previous period"}</p>
             <p className="mt-2 text-xs text-zinc-400">{successRateMode === "integration" ? displayStats.totalPaid : displayStats.dedupedTotalPaid} paid / {successRateMode === "integration" ? displayStats.totalCreated : successRateMode === "process" ? (displayStats.dedupedTotalPaid ?? 0) + (displayStats.dedupedTotalFailed ?? 0) : displayStats.dedupedTotalCreated} {successRateMode === "integration" ? "receipts" : successRateMode === "process" ? "resolved unique intents" : "unique intents"}</p>
             <p className="mt-2 text-xs text-zinc-500">{displayStats.totalCreated.toLocaleString()} raw receipts · {(displayStats.totalCreated - (displayStats.dedupedTotalCreated ?? displayStats.totalCreated)).toLocaleString()} revisions</p>
+            {displayStats.abandonmentRate !== undefined && (
+              <p className="mt-2 text-xs font-medium text-amber-400/90">
+                {displayStats.abandonmentRate.toFixed(1)}% cart abandonment · {(displayStats.dedupedTotalAbandoned ?? 0).toLocaleString()} uncompleted intents
+              </p>
+            )}
+            {timeRange === "today" && (
+              <p className="mt-1 text-[11px] text-zinc-500 italic">Includes active in-flight checkouts from today</p>
+            )}
           </div>
           <div className="glass-pane rounded-xl border p-5">
             <h3 className="text-sm text-zinc-400">Gross volume (GMV)</h3><p className="mt-3 text-3xl font-semibold tabular-nums">{money(displayStats.totalGmv)}</p>
@@ -2978,6 +2988,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between text-xs text-muted-foreground pt-1 gap-1">
                   <span>Raw Receipt Completion: <span className="font-mono text-white">(Paid Records / All Raw Records) × 100</span></span>
                   <span>Resolved Outcome Rate: <span className="font-mono text-white">(Paid Intents / (Paid + Failed Intents)) × 100</span></span>
+                  <span>Cart Abandonment Rate: <span className="font-mono text-white">(Uncompleted / All Intents) × 100</span></span>
                 </div>
               </div>
 

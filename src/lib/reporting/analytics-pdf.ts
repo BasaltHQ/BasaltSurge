@@ -13,6 +13,8 @@ export interface AnalyticsReportStat {
   dedupedTotalCreated?: number;
   dedupedTotalPaid?: number;
   dedupedTotalFailed?: number;
+  dedupedTotalAbandoned?: number;
+  abandonmentRate?: number;
   trueIntegrationRate?: number;
   trueProcessRate?: number;
   completionRate?: number;

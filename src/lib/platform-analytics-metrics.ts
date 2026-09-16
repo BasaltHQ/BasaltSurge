@@ -11,6 +11,9 @@ export interface AnalyticsReceiptLike {
   buyerWallet?: unknown;
   ipAddress?: unknown;
   stripeSessionId?: unknown;
+  sessionId?: unknown;
+  stripePaidSessionId?: unknown;
+  stripePaymentAttemptSessionId?: unknown;
   paymentId?: unknown;
   transactionHash?: unknown;
   txHash?: unknown;
@@ -57,7 +60,9 @@ export interface AnalyticsDeduplicationResult<T extends AnalyticsReceiptLike> {
   dedupedTotalCreated: number;
   dedupedTotalPaid: number;
   dedupedTotalFailed: number;
+  dedupedTotalAbandoned: number;
   completionRate: number;
+  abandonmentRate: number;
   resolvedSuccessRate: number;
   // Backward-compatible response names used by existing reports and clients.
   trueIntegrationRate: number;
@@ -85,6 +90,8 @@ const ACCEPTED_PAYMENT_STATUSES = new Set([
   "reconciled",
   "settled",
   "completed",
+  "success",
+  "succeeded",
 ]);
 
 const FAILED_PAYMENT_STATUSES = new Set(["failed", "rejected"]);
@@ -120,8 +127,16 @@ function normalizedReceiptKeys(receipt: AnalyticsReceiptLike): string[] {
 
 function normalizedStripeSessions(receipt: AnalyticsReceiptLike): string[] {
   const values = new Set<string>();
-  const primary = normalized(receipt.stripeSessionId);
-  if (primary && primary !== "n/a") values.add(primary);
+  const candidates = [
+    receipt.stripeSessionId,
+    receipt.sessionId,
+    receipt.stripePaidSessionId,
+    receipt.stripePaymentAttemptSessionId,
+  ];
+  for (const item of candidates) {
+    const key = normalized(item);
+    if (key && key !== "n/a") values.add(key);
+  }
   if (Array.isArray(receipt.customerSessions)) {
     receipt.customerSessions.forEach(session => {
       const nested = normalized(session?.stripeSessionId || session?.sessionId);
@@ -208,7 +223,9 @@ export function deduplicateAnalyticsReceipts<T extends AnalyticsReceiptLike>(
       dedupedTotalCreated: 0,
       dedupedTotalPaid: 0,
       dedupedTotalFailed: 0,
+      dedupedTotalAbandoned: 0,
       completionRate: 0,
+      abandonmentRate: 0,
       resolvedSuccessRate: 0,
       trueIntegrationRate: 0,
       trueProcessRate: 0,
@@ -370,8 +387,12 @@ export function deduplicateAnalyticsReceipts<T extends AnalyticsReceiptLike>(
   const dedupedTotalCreated = clusters.length;
   const dedupedTotalPaid = clusters.filter(cluster => cluster.isPaid).length;
   const dedupedTotalFailed = clusters.filter(cluster => cluster.isFailed).length;
+  const dedupedTotalAbandoned = Math.max(0, dedupedTotalCreated - dedupedTotalPaid - dedupedTotalFailed);
   const completionRate = dedupedTotalCreated > 0
     ? +((dedupedTotalPaid / dedupedTotalCreated) * 100).toFixed(1)
+    : 0;
+  const abandonmentRate = dedupedTotalCreated > 0
+    ? +((dedupedTotalAbandoned / dedupedTotalCreated) * 100).toFixed(1)
     : 0;
   const resolvedTotal = dedupedTotalPaid + dedupedTotalFailed;
   const resolvedSuccessRate = resolvedTotal > 0
@@ -383,7 +404,9 @@ export function deduplicateAnalyticsReceipts<T extends AnalyticsReceiptLike>(
     dedupedTotalCreated,
     dedupedTotalPaid,
     dedupedTotalFailed,
+    dedupedTotalAbandoned,
     completionRate,
+    abandonmentRate,
     resolvedSuccessRate,
     trueIntegrationRate: completionRate,
     trueProcessRate: resolvedSuccessRate,
