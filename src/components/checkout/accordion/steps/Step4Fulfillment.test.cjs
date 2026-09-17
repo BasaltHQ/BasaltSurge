@@ -27,6 +27,13 @@ vm.runInNewContext(compiled, {
     if (name === "react-dom") return { createPortal: child => ({ type: "portal", props: { children: child } }) };
     if (name === "../utils") return { getContrastingTextColor: () => "#fff" };
     if (name === "../checkoutPhase") return phaseModule.exports;
+    if (name === "../errorTaxonomy") {
+      const errors = { exports: {} };
+      vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.join(__dirname, '../../../../lib/stripe-onramp-errors.ts'), 'utf8'), {
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      }).outputText, { module: errors, exports: errors.exports });
+      return { parseOnrampError: error => error ? errors.exports.resolveOnrampError(error) : null };
+    }
     if (["lucide-react", "../AccordionCard", "../AccordionContent"].includes(name)) return new Proxy({}, { get: (_, key) => String(key) });
     throw new Error(`Unexpected module: ${name}`);
   },

@@ -4214,15 +4214,13 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       });
     },
     onError: (error) => {
-      const errMsg = String((error as any)?.message || error || "").toLowerCase();
       console.error("[STRIPE HEADLESS] Error:", error);
 
-      if (
-        errMsg.includes("can't support your link account") ||
-        errMsg.includes("unsupportable_customer") ||
-        errMsg.includes("crypto_onramp_unsupportable_customer") ||
-        errMsg.includes("unsupported link account")
-      ) {
+      // The hook is reconciling a submitted payment. This notification is not
+      // proof of failure and must not mark the receipt failed or reset the SDK.
+      if ((error as any)?.paymentOutcome === "unknown") return;
+
+      if ((error as any)?.code === "crypto_onramp_unsupportable_customer") {
         setShowUnsupportedLinkModal(true);
       } else {
         postStatus("failed", {

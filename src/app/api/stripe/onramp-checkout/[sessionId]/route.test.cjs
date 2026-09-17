@@ -187,7 +187,8 @@ test("invalid purchase-confirmation state never returns a stale client secret", 
   const result = await h.post();
   assert.equal(result.status, 409);
   assert.equal(result.data.ok, false);
-  assert.equal(result.data.code, "stripe_payment_confirmation_state_pending");
+  assert.equal(result.data.code, "checkout_failed");
+  assert.equal(result.data.error, "The payment intent for the purchase attempt is not in a valid state for purchase confirmation.");
   assert.equal(result.data.status, "requires_payment");
   assert.equal(result.data.client_secret, null);
   assert.equal(result.data.sessionId, "cos_current");

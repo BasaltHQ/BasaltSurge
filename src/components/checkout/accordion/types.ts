@@ -148,6 +148,7 @@ export interface CheckoutHeaderProps {
 }
 
 export interface Step1Props {
+  errorDetails?: OnrampErrorDetails | null;
   contactAuthenticationRequired?: boolean;
   phoneVerificationFailed?: boolean;
   onRetryContactVerification?: () => void | Promise<void>;
@@ -180,6 +181,7 @@ export interface Step1ContactProps extends Step1Props {
 }
 
 export interface Step2Props {
+  errorDetails?: OnrampErrorDetails | null;
   onReviewContactVerification?: () => void;
   firstName: string;
   setFirstName: StateSetter<string>;
@@ -290,6 +292,7 @@ export interface Step3PaymentProps extends Step3Props {
 }
 
 export interface Step4Props {
+  errorDetails?: OnrampErrorDetails | null;
   onCheckPaymentStatus?: () => Promise<void>;
   receiptId?: string;
   amountUsd?: number;

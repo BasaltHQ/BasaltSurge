@@ -187,7 +187,7 @@ export async function POST(
     if (response.status >= 400 && response.status < 500) definitiveDecline = data.error;
 
     // Auto-refresh token if Stripe returns 401/unauthorized due to expired oauth token
-    if ((response.status === 401 || (data.error && String(data.error.message || "").toLowerCase().includes("oauth"))) && providerCustomerId) {
+    if (response.status === 401 && providerCustomerId) {
       console.log("[ONRAMP CHECKOUT] OAuth token expired or rejected. Attempting background token refresh...");
       const tokenModule = await import("@/app/api/stripe/link-auth-tokens/route");
       const refreshedToken = await tokenModule.refreshOAuthToken(providerCustomerId);
@@ -276,9 +276,10 @@ export async function POST(
     }
 
     if (!response.ok) {
-      const errMessage = String(data.error?.message || "").toLowerCase();
-      if (errMessage.includes("valid state") || errMessage.includes("purchase confirmation")) {
-        console.log("[ONRAMP CHECKOUT] Purchase confirmation state is invalid. Reconciling the session via GET...");
+      if (data.error?.type === "invalid_request_error") {
+        // The error type warrants a read-only observation, not an inferred
+        // confirmation-state failure or permission to repeat checkout.
+        console.log("[ONRAMP CHECKOUT] Reconciling the rejected request via GET...");
         const getHeaders: Record<string, string> = {
           "Authorization": `Bearer ${stripeKey}`,
           "Stripe-Version": STRIPE_API_VERSION,
@@ -309,20 +310,20 @@ export async function POST(
 
           // Never return a client secret obtained from this reconciliation GET:
           // performCheckout requires the checkout POST response's secret.
-          // Pending attempts may retry this endpoint on the same session;
-          // terminal/provider failures remain ordinary errors.
+          // Preserve the provider error; a generic request error does not
+          // establish why authentication failed or authorize another POST.
           const getLastError = getSessionData.transaction_details?.last_error || null;
           const getErrorDetails = onrampErrorDetails(getLastError);
           const isTerminalStatus = ["rejected", "canceled", "cancelled", "expired"].includes(normalizedStatus);
           if (getLastError) definitiveDecline = getLastError;
           return NextResponse.json({
             ok: false,
-            error: getErrorDetails.message || (isTerminalStatus
+            error: getErrorDetails.message || data.error?.message || (isTerminalStatus
               ? "Stripe could not complete this payment."
               : "Stripe is still resolving the existing payment confirmation."),
-            code: getErrorDetails.code || (isTerminalStatus
+            code: getErrorDetails.code || data.error?.code || (isTerminalStatus
               ? "stripe_payment_confirmation_terminal"
-              : "stripe_payment_confirmation_state_pending"),
+              : "checkout_failed"),
             client_secret: null,
             lastError: getLastError,
             transactionDetails: getSessionData.transaction_details || null,

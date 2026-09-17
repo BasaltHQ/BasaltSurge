@@ -27,6 +27,7 @@ import { AccordionCard } from "../AccordionCard";
 import { AccordionContent } from "../AccordionContent";
 import { AccordionStepHeader } from "../AccordionStepHeader";
 import { Step2IdentityProps } from "../types";
+import { parseOnrampError } from "../errorTaxonomy";
 import { StripeEmbedContainer } from "../StripeEmbedContainer";
 import { isValidIsoCountryCode, micaIdentifierLabel, normalizeMicaIdentifier, validateMicaIdentifier } from "@/lib/stripe-kyc-tracking";
 
@@ -97,6 +98,7 @@ export function Step2Identity({
   missingIdentityFields,
   dobStatus,
   activeError,
+  errorDetails,
   onFetchSuggestions,
   onSelectSuggestion,
   onSubmit,
@@ -197,16 +199,8 @@ export function Step2Identity({
   const normalizedState = (stateCode || "").trim().toUpperCase();
   const isUnsupportedState = (country || "US").toUpperCase() === "US" && (normalizedState === "HI" || normalizedState === "HAWAII");
 
-  const hasAddressError = Boolean(
-    activeError && (
-      activeError.toLowerCase().includes("address") ||
-      activeError.toLowerCase().includes("postal") ||
-      activeError.toLowerCase().includes("street") ||
-      activeError.toLowerCase().includes("city") ||
-      activeError.toLowerCase().includes("zip") ||
-      activeError.toLowerCase().includes("state")
-    )
-  );
+  const errorPolicy = parseOnrampError(errorDetails || activeError);
+  const hasAddressError = errorPolicy?.kycTargetTier === "l0";
 
   const isDocVerifyRequired = Boolean(
     (showVerifyDocs || isL2Requirement) && !isL2Approved && !showFullForm && !showStepUpForm && !needsL1Fields && (!isUS || isL1Approved)
@@ -504,21 +498,20 @@ export function Step2Identity({
         ) : (
           /* Full Demographic or Step-Up KYC Form */
           <form onSubmit={onSubmit} className="space-y-3.5">
-            {/* Limit Upgrade Step-Up Notice Banner */}
-            {activeError && (activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum") || activeError.toLowerCase().includes("exceeds")) && (
+            {errorPolicy?.isAmountLimit && (
               <div className="p-3.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-300 space-y-1.5 animate-in fade-in duration-200 text-left">
                 <div className="flex items-center gap-2 text-sm font-bold text-blue-400">
                   <Shield className="w-4 h-4" />
-                  <span>Higher Purchase Limit Required</span>
+                  <span>Purchase Amount Notice</span>
                 </div>
                 <p className="text-xs leading-relaxed text-blue-200/90">
-                  This purchase exceeds your current tier limit. Complete identity verification below to unlock higher limits for this order.
+                  {errorPolicy.guidance}
                 </p>
               </div>
             )}
 
             {/* Top Step-Up Notice Banner */}
-            {showStepUpForm && !(activeError && (activeError.toLowerCase().includes("limit") || activeError.toLowerCase().includes("maximum"))) && (
+            {showStepUpForm && !errorPolicy?.isAmountLimit && (
               <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 space-y-1 animate-in fade-in duration-200 text-left">
                 <div className="flex items-center gap-2 text-sm font-bold text-amber-400">
                   <Shield className="w-4 h-4" />
