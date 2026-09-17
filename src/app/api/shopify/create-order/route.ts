@@ -57,16 +57,80 @@ export async function POST(req: NextRequest) {
     const displayName = brandKey.toLowerCase() === "portalpay" ? "PortalPay" : "BasaltSurge";
     const brandName = shopDoc.name || `${displayName} Store`;
 
-    // 2. Parse cart items
-    const lineItems = cart.items.map((item: any) => {
-      const variantTitle = item.variant_title ? ` - ${item.variant_title}` : "";
-      return {
-        sku: item.sku || `shopify_${item.variant_id}`,
-        label: `${item.product_title || item.title || "Product"}${variantTitle}`,
-        priceUsd: Number(item.price) / 100, // Shopify prices are in cents
-        qty: Math.max(1, Number(item.quantity) || 1)
-      };
-    });
+    // 2. Parse cart items and ensure they exist in inventory without duplicates
+    const { resources: existingItems } = await container.items
+      .query({
+        query: "SELECT * FROM c WHERE c.type = 'inventory_item' AND c.wallet = @w",
+        parameters: [{ name: "@w", value: wallet }]
+      })
+      .fetchAll();
+
+    const itemByVariantId = new Map<string, any>();
+    const itemBySku = new Map<string, any>();
+    const itemById = new Map<string, any>();
+
+    for (const it of existingItems) {
+      if (it.id) itemById.set(String(it.id), it);
+      if (it.shopifyProductVariantId) itemByVariantId.set(String(it.shopifyProductVariantId), it);
+      if (it.sku) itemBySku.set(String(it.sku).trim().toLowerCase(), it);
+    }
+
+    const orderItems: Array<{ sku: string; qty: number }> = [];
+
+    for (const cartItem of cart.items) {
+      const variantId = String(cartItem.variant_id || cartItem.id || "");
+      const rawSku = String(cartItem.sku || "").trim();
+      const canonicalSku = rawSku || (variantId ? `shopify_${variantId}` : `shopify_${Date.now()}`);
+      const qty = Math.max(1, Number(cartItem.quantity) || 1);
+
+      // Check if item already exists by variant ID, SKU, or deterministic ID
+      const deterministicId = variantId ? `inventory:${wallet}:${variantId}` : `inventory:${wallet}:${canonicalSku}`;
+      const existing = (variantId ? itemByVariantId.get(variantId) : null) ||
+                       (rawSku ? itemBySku.get(rawSku.toLowerCase()) : null) ||
+                       itemById.get(deterministicId);
+
+      if (existing) {
+        orderItems.push({
+          sku: existing.sku || canonicalSku,
+          qty
+        });
+      } else {
+        const now = Date.now();
+        const variantTitle = cartItem.variant_title && cartItem.variant_title !== "Default Title" ? ` - ${cartItem.variant_title}` : "";
+        const productName = `${cartItem.product_title || cartItem.title || "Product"}${variantTitle}`;
+        const priceUsd = Number(cartItem.price) / 100;
+        const imageUrl = cartItem.image ? String(cartItem.image) : undefined;
+
+        const newInventoryDoc = {
+          id: deterministicId,
+          type: "inventory_item",
+          wallet,
+          sku: canonicalSku,
+          name: productName,
+          priceUsd,
+          currency: "USD" as const,
+          stockQty: -1,
+          images: imageUrl ? [imageUrl] : undefined,
+          createdAt: now,
+          updatedAt: now,
+          brandKey: brandKey.toLowerCase(),
+          shopifyProductVariantId: variantId || undefined,
+          shopifyProductId: cartItem.product_id ? String(cartItem.product_id) : undefined
+        };
+
+        await container.items.upsert(newInventoryDoc);
+
+        if (variantId) itemByVariantId.set(variantId, newInventoryDoc);
+        if (canonicalSku) itemBySku.set(canonicalSku.toLowerCase(), newInventoryDoc);
+        itemById.set(deterministicId, newInventoryDoc);
+
+        orderItems.push({
+          sku: canonicalSku,
+          qty
+        });
+        console.log(`[Shopify Create Order] Auto-provisioned item ${canonicalSku} (${productName}) for wallet ${wallet}`);
+      }
+    }
 
     // Compute total price (Shopify total_price is in cents)
     const totalUsd = Number(cart.total_price || 0) / 100;
@@ -90,10 +154,7 @@ export async function POST(req: NextRequest) {
         "x-correlation-id": correlationId
       },
       body: JSON.stringify({
-        items: cart.items.map((item: any) => ({
-          sku: item.sku || `shopify_${item.variant_id}`,
-          qty: Math.max(1, Number(item.quantity) || 1)
-        })),
+        items: orderItems,
         redirectUrl: returnUrl,
         returnUrl: returnUrl,
         brandKey: brandKey.toLowerCase(),
