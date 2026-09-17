@@ -100,17 +100,114 @@ export async function POST(req: NextRequest) {
 
           const data = await shopifyRes.json();
           const shopifyProducts = Array.isArray(data.products) ? data.products : [];
+
+          // Fetch Shopify collections (custom & smart) to map collections to categories
+          const collectionTitleMap = new Map<string, string>();
+          const productCollectionsMap = new Map<string, string[]>();
+
+          try {
+            const [customRes, smartRes, collectsRes] = await Promise.all([
+              fetch(`https://${shop}/admin/api/2024-10/custom_collections.json?limit=250`, {
+                headers: { "X-Shopify-Access-Token": accessToken, "Content-Type": "application/json" }
+              }).catch(() => null),
+              fetch(`https://${shop}/admin/api/2024-10/smart_collections.json?limit=250`, {
+                headers: { "X-Shopify-Access-Token": accessToken, "Content-Type": "application/json" }
+              }).catch(() => null),
+              fetch(`https://${shop}/admin/api/2024-10/collects.json?limit=250`, {
+                headers: { "X-Shopify-Access-Token": accessToken, "Content-Type": "application/json" }
+              }).catch(() => null)
+            ]);
+
+            if (customRes && customRes.ok) {
+              const customData = await customRes.json().catch(() => ({}));
+              for (const col of customData.custom_collections || []) {
+                if (col.id && col.title) collectionTitleMap.set(String(col.id), String(col.title).trim());
+              }
+            }
+
+            if (smartRes && smartRes.ok) {
+              const smartData = await smartRes.json().catch(() => ({}));
+              for (const col of smartData.smart_collections || []) {
+                if (col.id && col.title) collectionTitleMap.set(String(col.id), String(col.title).trim());
+              }
+            }
+
+            if (collectsRes && collectsRes.ok) {
+              const collectsData = await collectsRes.json().catch(() => ({}));
+              for (const c of collectsData.collects || []) {
+                const pId = String(c.product_id);
+                const colTitle = collectionTitleMap.get(String(c.collection_id));
+                if (colTitle) {
+                  const existing = productCollectionsMap.get(pId) || [];
+                  if (!existing.includes(colTitle)) {
+                    existing.push(colTitle);
+                    productCollectionsMap.set(pId, existing);
+                  }
+                }
+              }
+            }
+          } catch (colErr) {
+            console.warn("[Shopify Sync] Error resolving collections via REST:", colErr);
+          }
+
+          // Also attempt GraphQL query to resolve smart collections rules directly per product
+          try {
+            const gqlRes = await fetch(`https://${shop}/admin/api/2024-10/graphql.json`, {
+              method: "POST",
+              headers: {
+                "X-Shopify-Access-Token": accessToken,
+                "Content-Type": "application/json"
+              },
+              body: JSON.stringify({
+                query: `{
+                  products(first: 250) {
+                    nodes {
+                      id
+                      legacyResourceId
+                      collections(first: 10) {
+                        nodes {
+                          title
+                        }
+                      }
+                    }
+                  }
+                }`
+              })
+            }).catch(() => null);
+
+            if (gqlRes && gqlRes.ok) {
+              const gqlData = await gqlRes.json().catch(() => ({}));
+              const nodes = gqlData?.data?.products?.nodes || [];
+              for (const node of nodes) {
+                const pId = String(node.legacyResourceId || (node.id ? node.id.split("/").pop() : ""));
+                const titles = (node.collections?.nodes || [])
+                  .map((c: any) => String(c.title || "").trim())
+                  .filter(Boolean);
+                if (pId && titles.length > 0) {
+                  const existing = productCollectionsMap.get(pId) || [];
+                  for (const t of titles) {
+                    if (!existing.includes(t)) existing.push(t);
+                  }
+                  productCollectionsMap.set(pId, existing);
+                }
+              }
+            }
+          } catch (gqlErr) {
+            console.warn("[Shopify Sync] GraphQL collections lookup skipped:", gqlErr);
+          }
           
-          // Flatten variants to sync
+          // Flatten variants to sync with collection-mapped category
           const itemsToSync: any[] = [];
           for (const prod of shopifyProducts) {
             const title = String(prod.title || "").trim();
             const desc = String(prod.body_html || "").trim();
             const imageUrl = prod.images && prod.images.length > 0 ? String(prod.images[0].src) : undefined;
-            const category = String(prod.product_type || "").trim();
+            const collections = productCollectionsMap.get(String(prod.id)) || [];
+            // Map Shopify Collection to category in our API (first collection, fallback to product_type)
+            const category = collections.length > 0 ? collections[0] : String(prod.product_type || "").trim();
             const variants = Array.isArray(prod.variants) ? prod.variants : [];
             for (const variant of variants) {
-              itemsToSync.push({ prod, variant, title, desc, imageUrl, category });
+              itemsToSync.push({ prod, variant, title, desc, imageUrl, category, collections });
             }
           }
 
@@ -139,7 +236,7 @@ export async function POST(req: NextRequest) {
 
           let current = 0;
           for (const itemToSync of itemsToSync) {
-            const { prod, variant, title, desc, imageUrl, category } = itemToSync;
+            const { prod, variant, title, desc, imageUrl, category, collections } = itemToSync;
             const sku = String(variant.sku || "").trim();
             const name = variant.title === "Default Title" ? title : `${title} - ${variant.title}`;
             const price = Number(variant.price) || 0;
@@ -150,6 +247,11 @@ export async function POST(req: NextRequest) {
                                  (sku ? dbItemMapBySku.get(sku.toLowerCase()) : null);
 
             const itemId = existingItem ? existingItem.id : `inventory:${wallet}:${variant.id}`;
+            const mergedTags = Array.from(new Set([
+              ...(Array.isArray(existingItem?.tags) ? existingItem.tags : []),
+              ...(Array.isArray(collections) ? collections : [])
+            ]));
+
             const inventoryItem = {
               ...(existingItem || {}), // Preserve other custom fields if existing
               id: itemId,
@@ -161,6 +263,8 @@ export async function POST(req: NextRequest) {
               currency: "USD" as const,
               stockQty: stock,
               category: category || undefined,
+              categories: Array.isArray(collections) && collections.length > 0 ? collections : (category ? [category] : undefined),
+              tags: mergedTags.length > 0 ? mergedTags : undefined,
               description: desc || undefined,
               images: imageUrl ? [imageUrl] : (existingItem?.images || undefined),
               createdAt: existingItem ? (existingItem.createdAt || now) : now,

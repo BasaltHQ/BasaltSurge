@@ -151,7 +151,22 @@ function ShopifySettingsContent() {
 
   // 1.5. Trigger two-way inventory sync
   const handleSync = async (direction: "push" | "pull") => {
-    if (!wallet || !shop) {
+    let effectiveWallet = wallet;
+    if (!effectiveWallet && shop) {
+      // Attempt auto-resolution of wallet from backend if state was not yet hydrated
+      try {
+        const checkRes = await fetch(`/api/shopify/settings?shop=${shop}`, { cache: "no-store" });
+        if (checkRes.ok) {
+          const checkData = await checkRes.json();
+          if (checkData.config?.wallet) {
+            effectiveWallet = checkData.config.wallet;
+            setWallet(effectiveWallet);
+          }
+        }
+      } catch {}
+    }
+
+    if (!effectiveWallet || !shop) {
       setError("Cannot initiate synchronization. Integration must be connected first.");
       return;
     }
@@ -165,7 +180,7 @@ function ShopifySettingsContent() {
       const res = await fetch("/api/shopify/sync", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet, shop, direction })
+        body: JSON.stringify({ wallet: effectiveWallet, shop, direction })
       });
 
       if (!res.ok) {
@@ -272,6 +287,25 @@ function ShopifySettingsContent() {
       }
 
       setConnected(true);
+      if (data.wallet) {
+        setWallet(data.wallet);
+      } else if (data.config?.wallet) {
+        setWallet(data.config.wallet);
+      }
+
+      // Refresh integration status and counts
+      fetch(`/api/shopify/settings?shop=${shop}`, { cache: "no-store" })
+        .then(r => r.json())
+        .then(d => {
+          if (d.ok) {
+            if (d.config?.wallet) setWallet(d.config.wallet);
+            setSurgeItemsCount(d.surgeItemsCount || 0);
+            setShopifyItemsCount(d.shopifyItemsCount || 0);
+            setLastSyncTime(d.lastSyncTime || null);
+          }
+        })
+        .catch(() => {});
+
       setSuccess("Configurations saved successfully!");
       setTimeout(() => setSuccess(""), 4000);
     } catch (err: any) {

@@ -21,9 +21,21 @@
 
   // Run initialization on load and when DOM changes
   function init() {
-    const buttons = document.querySelectorAll(
-      'input[name="checkout"], button[name="checkout"], form[action="/cart"] button[type="submit"], .cart__submit, .checkout-button'
-    );
+    const checkoutSelectors = [
+      'input[name="checkout"]',
+      'button[name="checkout"]',
+      'form[action*="/cart"] button[type="submit"]',
+      'form[action*="/cart"] input[type="submit"]',
+      '.cart__submit',
+      '.checkout-button',
+      '.cart__checkout-button',
+      '.cart__checkout',
+      '.checkout-btn',
+      'a[href*="/checkout"]',
+      'button[id*="checkout"]',
+      'button[class*="checkout"]'
+    ];
+    const buttons = document.querySelectorAll(checkoutSelectors.join(", "));
     
     buttons.forEach(btn => {
       if (btn.dataset.portalpayAttached) return;

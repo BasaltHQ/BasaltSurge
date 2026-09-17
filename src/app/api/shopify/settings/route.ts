@@ -470,7 +470,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       connected: true,
-      config: shopDoc.shopify
+      wallet: shopDoc.wallet,
+      config: {
+        ...(shopDoc.shopify || {}),
+        wallet: shopDoc.wallet
+      }
     });
   } catch (e: any) {
     console.error("[Shopify Settings POST] Error:", e);
