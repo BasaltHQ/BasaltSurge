@@ -16,6 +16,7 @@ import { AccordionContent } from "../AccordionContent";
 import { Step4FulfillmentProps } from "../types";
 import { getContrastingTextColor } from "../utils";
 import { isCheckoutPaymentInFlight } from "../checkoutPhase";
+import { parseOnrampError } from "../errorTaxonomy";
 
 export function Step4Fulfillment({
   isOpen,
@@ -28,6 +29,7 @@ export function Step4Fulfillment({
   email,
   headlessStatus,
   headlessStep,
+  errorDetails,
   kycLevel,
   detectedCardBrand,
   detectedCardLast4,
@@ -51,19 +53,10 @@ export function Step4Fulfillment({
     paymentConfirmed?.funding === "us_bank_account"
   );
 
-  const isDeclined =
-    !isConfirmed &&
-    headlessStep !== "awaiting_funds" &&
-    (headlessStep === "error" ||
-      (headlessStatus || "").toLowerCase().includes("decline") ||
-      (headlessStatus || "").toLowerCase().includes("failed") ||
-      (headlessStatus || "").toLowerCase().includes("frozen") ||
-      (headlessStatus || "").toLowerCase().includes("freeze") ||
-      (headlessStatus || "").toLowerCase().includes("blocked") ||
-      (headlessStatus || "").toLowerCase().includes("select payment"));
+  const isDeclined = !isConfirmed && headlessStep === "error";
 
   const modalAccentColor = isDeclined ? "#F59E0B" : primaryColor;
-  const explicitDecline = isDeclined && /declin|frozen|freeze|insufficient funds|card.*blocked/i.test(headlessStatus || "");
+  const explicitDecline = isDeclined && parseOnrampError(errorDetails)?.isDecline === true;
 
   const isIdentityVerifying =
     headlessStep === "verifying_identity" ||

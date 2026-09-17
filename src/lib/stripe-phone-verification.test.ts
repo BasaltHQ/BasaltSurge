@@ -6,7 +6,8 @@ import { hasUnresolvedPhoneVerificationFailure } from "./stripe-phone-verificati
 const failedPhone = { tier: "l0", verification_status: "rejected", verification_errors: ["phone_verification_failed"] };
 test("phone recovery uses provider evidence, not a generic KYC or payment authentication failure", () => {
   assert.equal(hasUnresolvedPhoneVerificationFailure([failedPhone]), true);
-  assert.equal(hasUnresolvedPhoneVerificationFailure([], "KYC: phone_verification_failed"), true);
+  assert.equal(hasUnresolvedPhoneVerificationFailure([], "phone_verification_failed"), true);
+  assert.equal(hasUnresolvedPhoneVerificationFailure([], "KYC: phone_verification_failed"), false);
   assert.equal(hasUnresolvedPhoneVerificationFailure([], "We are unable to authenticate your payment method."), false);
   assert.equal(hasUnresolvedPhoneVerificationFailure([{ ...failedPhone, verification_errors: ["identity_verification_failed"] }]), false);
 });

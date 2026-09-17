@@ -61,7 +61,7 @@ test("service retry cannot restart completed or actively processing checkout", (
 });
 
 test("actual issuer declines retain their payment recovery advice", () => {
-  const nodes = render({ headlessStep: "error", activeError: "Your card was declined by your issuing bank." });
+  const nodes = render({ headlessStep: "error", activeError: "Your card was declined by your issuing bank.", errorDetails: { code: "card_declined" } });
   assert.match(textOf(nodes), /Quick Tips/);
   assert.match(textOf(nodes), /banking app/);
 });
@@ -82,7 +82,7 @@ test('an ACH institution restriction never claims the bank blocks instant card c
 
 test("generic payment collection failures immediately offer retry and stop the connection placeholder", () => {
   let retries = 0;
-  const nodes = render({ headlessStep: "error", activeError: "Payment method collection failed", onTimeoutRetry: () => retries++ });
+  const nodes = render({ headlessStep: "error", activeError: "Payment method collection failed", errorDetails: { code: "payment_collection_failed" }, onTimeoutRetry: () => retries++ });
   const retry = nodes.find(node => node?.type === "button" && node.props.children === "Retry checkout");
   assert.ok(retry);
   retry.props.onClick();

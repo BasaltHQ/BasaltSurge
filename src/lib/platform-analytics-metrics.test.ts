@@ -132,3 +132,47 @@ test("KYC tier filter and profile agree on nested and conflicting completed evid
   assert.equal(analyticsMetrics.resolveAnalyticsKyc({}).highestCompleted, "Unknown");
   assert.equal(summarizeAnalyticsKycProfile([receipt]).l2, 1);
 });
+
+test("calculates cart abandonment rate and uncompleted intents correctly", () => {
+  const result = deduplicateAnalyticsReceipts([
+    { ...base, receiptId: "paid", status: "paid", createdAt: "2026-09-01T12:00:00Z" },
+    { ...base, receiptId: "failed", status: "failed", createdAt: "2026-09-01T13:00:00Z" },
+    { ...base, receiptId: "open_1", status: "pending", createdAt: "2026-09-01T14:00:00Z" },
+    { ...base, receiptId: "open_2", status: "pending", createdAt: "2026-09-01T15:00:00Z" },
+  ]);
+
+  assert.equal(result.dedupedTotalCreated, 4);
+  assert.equal(result.dedupedTotalPaid, 1);
+  assert.equal(result.dedupedTotalFailed, 1);
+  assert.equal(result.dedupedTotalAbandoned, 2);
+  assert.equal(result.completionRate, 25);
+  assert.equal(result.abandonmentRate, 50);
+  assert.equal(result.resolvedSuccessRate, 50);
+});
+
+test("merges cart revisions linked by sessionId, stripePaidSessionId, and stripePaymentAttemptSessionId", () => {
+  const result = deduplicateAnalyticsReceipts([
+    { ...base, receiptId: "attempt1", sessionId: "checkout_sess_999", status: "pending", createdAt: "2026-09-01T10:00:00Z" },
+    { ...base, receiptId: "attempt2", stripePaymentAttemptSessionId: "checkout_sess_999", status: "pending", createdAt: "2026-09-01T10:05:00Z" },
+    { ...base, receiptId: "final", stripePaidSessionId: "checkout_sess_999", status: "paid", createdAt: "2026-09-01T10:10:00Z" },
+  ]);
+
+  assert.equal(result.dedupedTotalCreated, 1);
+  assert.equal(result.dedupedTotalPaid, 1);
+  assert.equal(result.dedupedTotalFailed, 0);
+  assert.equal(result.dedupedTotalAbandoned, 0);
+  assert.equal(result.completionRate, 100);
+  assert.equal(result.abandonmentRate, 0);
+});
+
+test("recognizes success, succeeded, paid - ach pending, and ach_pending as accepted paid statuses", () => {
+  assert.equal(isAnalyticsPaidReceipt({ status: "success" }), true);
+  assert.equal(isAnalyticsPaidReceipt({ status: "succeeded" }), true);
+  assert.equal(isAnalyticsPaidReceipt({ status: "paid - ach pending" }), true);
+  assert.equal(isAnalyticsPaidReceipt({ status: "ach_pending" }), true);
+  assert.equal(isAnalyticsPaidReceipt({ status: "paid" }), true);
+  assert.equal(isAnalyticsPaidReceipt({ status: "completed" }), true);
+  assert.equal(isAnalyticsPaidReceipt({ status: "pending" }), false);
+  assert.equal(isAnalyticsPaidReceipt({ status: "failed" }), false);
+});
+

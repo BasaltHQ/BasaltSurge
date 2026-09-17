@@ -12,7 +12,7 @@ const {
 test("recognizes Stripe Travel Rule checkout requirements from SDK and session errors", () => {
   assert.equal(isWalletOwnershipVerificationRequired("wallet_ownership_verification_required"), true);
   assert.equal(isWalletOwnershipVerificationRequired("", "crypto_onramp_wallet_ownership_verification_required"), true);
-  assert.equal(isWalletOwnershipVerificationRequired("Wallet ownership verification required"), true);
+  assert.equal(isWalletOwnershipVerificationRequired("Wallet ownership verification required"), false);
   assert.equal(isWalletOwnershipVerificationRequired("missing_document_verification"), false);
 });
 

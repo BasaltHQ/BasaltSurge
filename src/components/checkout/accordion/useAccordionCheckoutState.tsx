@@ -429,12 +429,12 @@ export function useAccordionCheckoutState(
 
   const parsedActiveError = useMemo(() => {
     if (!rawActiveError) return null;
-    return parseOnrampError(rawActiveError, {
+    return parseOnrampError(recoveryError, {
       isL1Verified: l1Verified,
       isL2Verified: l2Verified,
       currentTier: kyc.currentTier,
     });
-  }, [rawActiveError, l1Verified, l2Verified, kyc.currentTier]);
+  }, [rawActiveError, recoveryError, l1Verified, l2Verified, kyc.currentTier]);
 
   const cardLimitEntry = useMemo(() => {
     if (!props.onrampLimits || !Array.isArray(props.onrampLimits)) return null;
@@ -1264,6 +1264,7 @@ export function useAccordionCheckoutState(
     isStep2Satisfied,
     // Step 1 Props Bundle
     step1Props: {
+      errorDetails: propErrorDetails,
       contactAuthenticationRequired,
       phoneVerificationFailed,
       onRetryContactVerification: allowContactVerificationRecovery && onRetryContactVerification ? handleRetryContactVerification : undefined,
@@ -1287,6 +1288,7 @@ export function useAccordionCheckoutState(
     },
     // Step 2 Props Bundle
     step2Props: {
+      errorDetails: propErrorDetails,
       onReviewContactVerification: allowContactVerificationRecovery ? () => handleStepChange(1) : undefined,
       firstName,
       setFirstName,
@@ -1382,6 +1384,7 @@ export function useAccordionCheckoutState(
     },
     // Step 4 Props Bundle
     step4Props: {
+      errorDetails: propErrorDetails,
       onCheckPaymentStatus: props.onCheckPaymentStatus,
       receiptId,
       amountUsd,

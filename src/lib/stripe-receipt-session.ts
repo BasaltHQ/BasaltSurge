@@ -205,7 +205,7 @@ export function stripeReceiptAttemptCanRetry(receipt: any, session: any): boolea
   if (session.id !== receipt.stripePaymentAttemptSessionId) return false;
   if (["rejected", "canceled", "cancelled", "expired"].includes(normalize(session.status))) return true;
   return receipt.stripePaymentAttemptKind === "headless" && normalize(session.status) === "requires_payment" &&
-    Boolean(session.transaction_details?.last_error || isDefinitiveOnrampDecline(receipt.stripeCheckoutDeclineCode));
+    Boolean(isDefinitiveOnrampDecline(session.transaction_details?.last_error) || isDefinitiveOnrampDecline(receipt.stripeCheckoutDeclineCode));
 }
 
 /** Only use with a session freshly retrieved from Stripe, never client input. */

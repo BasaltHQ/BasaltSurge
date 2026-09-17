@@ -289,6 +289,14 @@ test('a stale Stripe error cannot unlock an active request or an accepted paymen
   await assert.rejects(h.helpers.assertStripeReceiptCanCreateSession(h.container, h.doc, async () => provider), { code: 'receipt_payment_in_progress', sessionId: 'cos_old' });
   assert.equal(h.helpers.stripeReceiptAttemptCanRetry({ ...h.doc, stripeCheckoutRequestId: null }, { ...provider, status: 'fulfillment_complete' }), false);
 });
+test('ambiguous last_error cannot authorize replacement of a submitted headless payment', async () => {
+  const h = harness({ ...base, stripePaymentAttemptSessionId: 'cos_old', stripePaymentAttemptKind: 'headless', stripeCheckoutRequestId: null });
+  for (const code of ['generic_onramp_error', 'crypto_onramp_verification_error', 'crypto_onramp_session_error']) {
+    const provider = { id: 'cos_old', status: 'requires_payment', transaction_details: { last_error: { code, message: 'Try another payment method or create a new session.' } } };
+    assert.equal(h.helpers.stripeReceiptAttemptCanRetry(h.doc, provider), false);
+    await assert.rejects(h.helpers.assertStripeReceiptCanCreateSession(h.container, h.doc, async () => provider), { code: 'receipt_payment_in_progress' });
+  }
+});
 
 test('stale workers cannot restore a cleared decline marker or clear a newer one', async () => {
   const h = harness({ ...base, stripeCheckoutDeclineCode: 'card_declined' });

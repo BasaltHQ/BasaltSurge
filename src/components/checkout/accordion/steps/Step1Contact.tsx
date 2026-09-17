@@ -37,6 +37,7 @@ export function Step1Contact({
   authElement,
   authContainerRef,
   activeError,
+  errorDetails,
   isSubmittingContact,
   effectiveStatus,
   isAllKycCompleted,
@@ -280,7 +281,7 @@ export function Step1Contact({
 
         {/* Inline Step 1 Error Notice (only for errors specifically targeting Step 1) */}
         {activeError && (() => {
-          const parsed = parseOnrampError(activeError);
+          const parsed = parseOnrampError(errorDetails || activeError);
           if (parsed && parsed.targetStep !== 1) return null;
           return (
             <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm flex items-start gap-2.5 animate-in fade-in duration-200">

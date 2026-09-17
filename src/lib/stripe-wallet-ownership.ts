@@ -1,29 +1,16 @@
-function normalizeErrorValue(value: unknown): string {
-  return String(value || "").trim().toLowerCase();
-}
+// @ts-expect-error Explicit extension supports the direct Node regression runner.
+import { onrampRecovery } from "./stripe-onramp-errors.ts";
 
 /**
  * Stripe can surface the EU Travel Rule requirement either as an SDK error or
  * as `transaction_details.last_error` on an otherwise successful status call.
  */
 export function isWalletOwnershipVerificationRequired(...values: unknown[]): boolean {
-  return values.some((value) => {
-    const normalized = normalizeErrorValue(value);
-    return normalized === "wallet_ownership_verification_required"
-      || normalized === "crypto_onramp_wallet_ownership_verification_required"
-      || normalized.includes("wallet ownership verification required")
-      || normalized.includes("wallet_ownership_verification_required");
-  });
+  return values.some(value => onrampRecovery(value) === "wallet_ownership");
 }
 
 export function isWalletOwnershipChallengeExpired(...values: unknown[]): boolean {
-  return values.some((value) => {
-    const normalized = normalizeErrorValue(value);
-    return normalized === "wallet_ownership_challenge_expired"
-      || normalized === "crypto_onramp_wallet_ownership_challenge_expired"
-      || normalized.includes("wallet ownership challenge expired")
-      || normalized.includes("wallet_ownership_challenge_expired");
-  });
+  return values.some(value => onrampRecovery(value) === "wallet_challenge");
 }
 
 export function isWalletOwnershipVerified(wallet: unknown): boolean {

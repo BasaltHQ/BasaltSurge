@@ -170,6 +170,7 @@ function summaryRows(stats: AnalyticsReportStat | null): unknown[][] {
     ["Average order value", stats?.aov || 0, "USD", "Accepted payment GMV / accepted records"],
     ["Raw receipt completion", (stats?.successRate || 0) / 100, "ratio", "Paid records / all raw receipt records"],
     ["Checkout completion", (stats?.completionRate ?? stats?.trueIntegrationRate ?? 0) / 100, "ratio", "Unique paid intents / all unique checkout intents"],
+    ["Cart abandonment rate", (stats?.abandonmentRate ?? 0) / 100, "ratio", "Uncompleted unique checkout intents / all unique checkout intents"],
     ["Resolved outcome rate", (stats?.resolvedSuccessRate ?? stats?.trueProcessRate ?? 0) / 100, "ratio", "Unique paid / (unique paid + unique failed); excludes open intents"]
   ];
 }

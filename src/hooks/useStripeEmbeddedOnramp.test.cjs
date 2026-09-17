@@ -308,6 +308,7 @@ function createHarness({ accordion = false, ownership = null, storage = null, se
       }
       assert.equal(state.walletVerified, true, "checkout must not succeed before Stripe confirms ownership");
       assert.equal(clientSecret, "test_client_secret");
+      if (state.sdkErrorAfterCallback) throw state.sdkErrorAfterCallback;
       if (state.sdkUnsuccessfulAfterCallback) return { successful: false };
       return { successful: true };
     },
@@ -729,14 +730,9 @@ test("a session verification error preserves a fully verified EU customer's orig
   assert.equal(sessionBody.sourceAmountUsd, 20, "the server converts the USD order value to the customer's funding currency");
   assert.equal(Object.hasOwn(sessionBody, "sourceAmount"), false, "a USD order value cannot be relabeled as an EUR source amount");
 
-  const retry = hook.startOnramp(undefined, undefined, undefined, true);
-  await settleUntil(() => harness.calls.paymentOptions.length === 2);
-  hook = harness.render();
-  assert.equal(hook.paymentElement, harness.paymentElement);
-  assert.equal(harness.calls.authenticate, 1, "a manual session-error retry recollects payment without repeating Link auth");
-  assert.equal(harness.calls.initialize, 1);
-  harness.state.paymentCompletion({});
-  await retry;
+  const beforeRetry = harness.calls.requests.length;
+  await hook.startOnramp(undefined, undefined, undefined, true);
+  assert.equal(harness.calls.requests.length, beforeRetry, "a contradictory provider requirement needs support, not another unchanged session");
 });
 
 async function settleUntil(predicate) {
@@ -751,7 +747,7 @@ test("Thirdweb token authentication rejection does not interrupt Stripe payment 
   const harness=createHarness();t.after(harness.unmount);harness.state.kycVerified=true;
   const checkout=harness.render().startOnramp();
   await settleUntil(()=>harness.calls.paymentOptions.length===1);
-  const thirdwebError=Object.assign(new Error("Authentication required"),{code:"UNAUTHORIZED",statusCode:401,correlationId:undefined});
+  const thirdwebError=Object.assign(Object.assign(new Error("Authentication required"), { code: "authentication_required" }),{code:"UNAUTHORIZED",statusCode:401,correlationId:undefined});
   assert.equal(harness.rejectGlobally(thirdwebError),false);
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(harness.calls.authenticate,1);assert.equal(harness.calls.paymentOptions.length,1);
@@ -763,17 +759,17 @@ test("SDK internal Authentication required rejection settles payment collection 
   const harness = createHarness();
   t.after(harness.unmount);
   harness.state.kycVerified = true;
-  assert.equal(harness.rejectGlobally(new Error("Authentication required")), false);
+  assert.equal(harness.rejectGlobally(Object.assign(new Error("Authentication required"), { code: "authentication_required" })), false);
   const checkout = harness.render().startOnramp();
   await settleUntil(() => harness.calls.paymentOptions.length === 1);
   const staleCompletion = harness.state.paymentCompletion;
-  assert.equal(harness.rejectGlobally(new Error("Authentication required")), true);
-  harness.rejectGlobally(new Error("Authentication required"));
+  assert.equal(harness.rejectGlobally(Object.assign(new Error("Authentication required"), { code: "authentication_required" })), true);
+  harness.rejectGlobally(Object.assign(new Error("Authentication required"), { code: "authentication_required" }));
   await settleUntil(() => harness.calls.paymentOptions.length === 2);
   assert.equal(harness.calls.authenticate, 2);
   staleCompletion({ cryptoPaymentToken: "cpt_stale" });
   assert.equal(harness.calls.requests.some(({ pathname }) => pathname === "/api/stripe/onramp-session-v2"), false);
-  assert.equal(harness.rejectGlobally(new Error("Authentication required")), true);
+  assert.equal(harness.rejectGlobally(Object.assign(new Error("Authentication required"), { code: "authentication_required" })), true);
   await checkout;
   const hook = harness.render();
   assert.equal(hook.step, "error");
@@ -1102,7 +1098,7 @@ test('direct US L1 is blocked at the SDK boundary without full L0 data and norma
     id_number: { value: '123-45-6789' },
   });
   assert.equal(h.calls.kycSubmissions?.length || 0, 0);
-  assert.match(h.render().error, /verify your home address/i);
+  assert.match(h.render().error, /Full legal name and US residential address/i);
 
   h.state.onKycSubmission = () => { h.state.customerData = usCustomer('verified'); };
   await h.render().submitKycInfo({
@@ -1159,9 +1155,9 @@ test('an L1 status authorization failure reauthenticates instead of polling as p
 });
 
 for (const sdkError of [
-  {code: 'crypto_onramp_verification_error', message: 'KYC is incomplete'},
-  {message: 'KYC information required'},
-  {message: 'minimum_identity required'},
+  {code: 'crypto_onramp_missing_identity_verification', message: 'KYC is incomplete'},
+  {code: 'crypto_onramp_missing_identity_verification', message: 'KYC information required'},
+  {code: 'crypto_onramp_missing_minimum_identity_verification', message: 'minimum_identity required'},
 ]) {
 test(`L1-approved customer with rejected L0 recovers ${sdkError.message} on the same payment session`, async t => {
   const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
@@ -1187,7 +1183,7 @@ for (const source of ['creation', 'checkout']) {
     const h = createHarness({ownership: {source: 'backend'}}); t.after(h.unmount);
     h.state.customerData = usRejectedL0();
     if (source === 'creation') h.state.sessionFailure = {code: 'crypto_onramp_missing_identity_verification', error: 'Identity verification required'};
-    else h.state.sdkError = {code: 'crypto_onramp_verification_error', message: 'KYC is incomplete'};
+    else h.state.sdkError = {code: 'crypto_onramp_missing_identity_verification', message: 'KYC is incomplete'};
     const hook = await completeOwnershipCheckout(h);
     assert.equal(hook.step, 'error');
     assert.equal(hook.errorDetails.code, 'verification_recovery_exhausted');
@@ -1207,7 +1203,7 @@ test('pending L1 after failed L0 resumes the original checkout when L1 is verifi
   h.state.customerData = usCustomer();
   h.state.onCheckout = () => {
     h.state.customerData = usRejectedL0('pending');
-    h.state.sdkError = {code: 'crypto_onramp_verification_error', message: 'Verification is processing'};
+    h.state.sdkError = {code: 'crypto_onramp_missing_identity_verification', message: 'Verification is processing'};
   };
   const flow = completeOwnershipCheckout(h);
   await settleUntil(() => h.hasTimer(2000));
@@ -1218,7 +1214,6 @@ test('pending L1 after failed L0 resumes the original checkout when L1 is verifi
   h.state.walletVerified = true;
   h.state.customerData = usRejectedL0();
   await h.runTimer(2000);
-  await h.runTimer(3000);
   assert.equal((await flow).step, 'completed');
   assert.equal(h.calls.verifyDocuments, 0);
   assert.equal(h.calls.paymentOptions.length, 1);
@@ -1267,12 +1262,12 @@ test('global KYC error observes approved L1 without routing back to L0 or invent
   await settleUntil(() => h.calls.paymentOptions.length === 1);
   h.render();
   for (let attempt = 0; attempt < 2; attempt++) {
-    assert.equal(h.rejectGlobally(new Error('Identity verification required')), true);
+    assert.equal(h.rejectGlobally(Object.assign(new Error('Identity verification required'), { code: 'crypto_onramp_missing_identity_verification' })), true);
     await settleUntil(() => h.render().step === 'collecting_payment');
     assert.equal(h.render().kycLevel, 'L1');
     assert.equal(h.calls.steps.includes('collecting_kyc'), false);
   }
-  h.rejectGlobally(new Error('Identity verification required'));
+  h.rejectGlobally(Object.assign(new Error('Identity verification required'), { code: 'crypto_onramp_missing_identity_verification' }));
   await settleUntil(() => h.render().step === 'error');
   assert.equal(h.render().errorDetails.code, 'verification_recovery_exhausted');
   assert.equal(h.calls.verifyDocuments, 0);
@@ -1893,14 +1888,18 @@ test('EU document submission survives remount without duplicating review and rem
 test('EU verification recovery after checkout completes missing documents instead of polling basic KYC indefinitely', { timeout: 5000 }, async t => {
   const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
   h.state.onCheckout = () => {
-    h.state.sdkError = { code: 'crypto_onramp_verification_error', message: 'Consumer person verification is still processing. Try again shortly.' };
+    h.state.sdkError = { code: 'crypto_onramp_missing_document_verification', message: 'Consumer person verification is still processing. Try again shortly.' };
     h.state.customerData = euCustomer('pending', ['identifiers', 'attestation']);
   };
   h.state.onDocuments = () => {
     h.state.customerData = euCustomer('verified', ['identifiers', 'attestation']);
     h.state.onCheckout = null; h.state.sdkError = null; h.state.walletVerified = true;
   };
-  assert.equal((await completeOwnershipCheckout(h)).step, 'completed');
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'collecting_kyc');
+  await hook.verifyDocuments();
+  await settleUntil(() => h.calls.successes.length === 1);
+  assert.equal(h.render().step, 'completed');
   assert.equal(h.calls.verifyDocuments, 1);
   assert.equal(h.calls.paymentOptions.length, 1);
   assert.equal(h.calls.destroy, 0);
@@ -2088,12 +2087,12 @@ test("an unsuccessful SDK result without an authoritative failure is pending, ne
   const flow = h.render().startOnramp();
   await settleUntil(() => h.state.paymentCompletion);
   h.state.paymentCompletion({ cryptoPaymentToken: "cpt_unknown", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
-  await settleUntil(() => h.hasTimer(4000));
-  assert.equal(h.render().step, "awaiting_funds");
-  assert.equal(h.calls.errors.length, 0);
+  await flow;
+  assert.equal(h.render().step, "payment_recovery");
+  assert.equal(h.calls.errors.at(-1).paymentOutcome, "unknown");
   assert.equal(h.calls.performCheckout, 1);
   h.state.providerStatus = "fulfillment_complete";
-  await h.runTimer(4000);
+  await h.render().checkPaymentStatus();
   await flow;
   assert.equal(h.render().step, "completed");
 });
@@ -2185,11 +2184,11 @@ test("stalled confirmation is observed after its deadline without resubmitting",
   await settleUntil(() => h.state.paymentCompletion);
   h.state.paymentCompletion({ cryptoPaymentToken: "cpt_timeout", paymentMethodDetails: { type: "card", card: { funding: "debit" } } });
   await h.runTimer(45000);
-  await settleUntil(() => h.hasTimer(4000));
-  assert.equal(h.render().step, "awaiting_funds");
-  assert.equal(h.calls.errors.length, 0);
+  await flow;
+  assert.equal(h.render().step, "payment_recovery");
+  assert.equal(h.calls.errors.at(-1).paymentOutcome, "unknown");
   h.state.providerStatus = "fulfillment_processing";
-  await h.runTimer(4000);
+  await h.render().checkPaymentStatus();
   await flow;
   assert.equal(h.render().step, "completed");
   assert.equal(h.calls.performCheckout, 1);
@@ -2427,6 +2426,68 @@ test('SDK authentication failure with empty provider error preserves session and
   assert.equal(h.calls.performCheckout, 1);
 });
 
+test('incident: generic SDK authentication failure retains its API correlation and policy through accordion review', { timeout: 5000 }, async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  const message = 'We are unable to authenticate your payment method. Please choose a different payment method and try again.';
+  h.state.walletVerified = true;
+  h.state.checkoutResponse = { ok: true, client_secret: 'test_client_secret', status: 'requires_payment', requestId: 'req_incident' };
+  h.state.sdkErrorAfterCallback = Object.assign(new Error(message), { code: 'generic_onramp_error' });
+  let hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'payment_recovery');
+  const expected = { code: 'generic_onramp_error', message, requestId: 'req_incident', paymentOutcome: 'unknown' };
+  assert.deepEqual(JSON.parse(JSON.stringify(hook.errorDetails)), expected);
+  assert.equal(hook.error, message);
+  assert.equal(h.calls.errors.at(-1).paymentOutcome, 'unknown');
+  assert.equal(h.calls.errors.at(-1).requestId, 'req_incident');
+  await hook.checkPaymentStatus();
+  hook = h.render();
+  assert.deepEqual(JSON.parse(JSON.stringify(hook.errorDetails)), expected);
+  assert.equal(h.calls.performCheckout, 1);
+  assert.equal(h.calls.destroy, 0);
+  const ui = createHarness({ accordion: true }); t.after(ui.unmount);
+  const accordion = ui.render({ headlessStep: hook.step, headlessError: hook.error, headlessErrorDetails: hook.errorDetails });
+  assert.equal(accordion.activeStep, 4);
+  assert.equal(accordion.activeError, message);
+  assert.equal(accordion.step3Props.onTimeoutRetry, undefined);
+  h.state.providerData = { paymentAttempt: { canRetry: true, lastError: { code: 'payment_method_authentication_failed', message: 'Authentication failed' } } };
+  await hook.checkPaymentStatus();
+  assert.equal(h.render().step, 'error');
+  assert.equal(h.render().errorDetails.paymentOutcome, 'retry_allowed');
+  assert.equal(h.render().errorDetails.requestId, 'req_incident');
+  assert.equal(h.calls.performCheckout, 1);
+});
+
+test('portal error callback does not report unresolved authentication as a failed receipt or reset checkout', () => {
+  const file = path.join(SOURCE_ROOT, 'app/(web)/portal/[id]/page.tsx');
+  const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let callback;
+  function visit(node) {
+    if (ts.isCallExpression(node) && node.expression.getText(source) === 'useStripeEmbeddedOnramp') {
+      callback = node.arguments[0].properties.find(property => property.name?.getText(source) === 'onError')?.initializer;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  assert.ok(callback);
+  const code = ts.transpileModule(`(${callback.getText(source)})`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
+  for (const isV2Active of [true, false]) {
+    const effects = [];
+    const handler = vm.runInNewContext(code, {
+      console: { error() {} }, isV2Active, headlessSessionId: 'cos_existing',
+      postStatus: (...args) => effects.push(['status', ...args]),
+      setShowUnsupportedLinkModal: () => effects.push(['unsupported']),
+      setDisplayError: () => effects.push(['display']),
+      resetHeadlessOnramp: () => effects.push(['reset']),
+      setHeadlessEmailPrompt() {}, setHeadlessInitiated() {},
+      isStripeOnrampPreflightErrorCode: () => false,
+    });
+    handler(Object.assign(new Error('Unable to authenticate payment'), { code: 'generic_onramp_error', paymentOutcome: 'unknown' }));
+    assert.deepEqual(effects, []);
+    handler(Object.assign(new Error('Card declined'), { code: 'card_declined' }));
+    assert.equal(effects[0][1], 'failed', 'ordinary definitive errors still reach the receipt reporter');
+  }
+});
+
 test('decline transition is recorded when the recovery timer changes the rendered step', async t => {
   const h = createHarness({ accordion: true }); t.after(h.unmount);
   const events = [];
@@ -2449,10 +2510,7 @@ for (const { code, cases } of require('../lib/stripe-onramp-errors.fixtures.json
     assert.equal(hook.step, 'error');
     assert.equal(hook.errorDetails.code, code);
     assert.equal(hook.errorDetails.message, example.message);
-    if (code === 'crypto_onramp_invalid_parameter' || code === 'crypto_onramp_conflicting_source_total_amount_parameters') {
-      assert.equal(hook.error, 'Checkout needs a configuration correction. Please contact checkout support.');
-      assert.notEqual(hook.error, hook.errorDetails.message, 'technical correction belongs in support details');
-    }
+    assert.equal(hook.error, example.message, 'retain provider instructions without a second formatter');
     assert.equal(h.calls.performCheckout, 0);
     const count = h.calls.requests.length;
     await hook.startOnramp(EMAIL, '', 'US', true);
@@ -2471,7 +2529,7 @@ test('generic basic-KYC checkout failure returns to L0 on the same session', asy
     customer.kycSnapshot.verifiedTier = null;
     h.state.customerData = customer;
   };
-  h.state.sdkError = { code: 'crypto_onramp_verification_error', message: 'Basic KYC information must be submitted before this endpoint can be used.' };
+  h.state.sdkError = { code: 'crypto_onramp_missing_minimum_identity_verification', message: 'Basic KYC information must be submitted before this endpoint can be used.' };
   const hook = await completeOwnershipCheckout(h);
   assert.equal(hook.step, 'collecting_kyc');
   assert.equal(hook.kycTierRequired, 'l0');
@@ -2484,7 +2542,7 @@ test('pending-verification checkout errors poll KYC before retrying the same che
   const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
   h.state.customerData = usCustomer();
   h.state.onCheckout = () => {
-    h.state.sdkError = { code: 'crypto_onramp_verification_error', message: 'Your verification is processing. Try again shortly.' };
+    h.state.sdkError = { code: 'crypto_onramp_missing_identity_verification', message: 'Your verification is processing. Try again shortly.' };
     h.state.customerData = usCustomer('pending');
   };
   const flow = completeOwnershipCheckout(h);
@@ -2496,7 +2554,6 @@ test('pending-verification checkout errors poll KYC before retrying the same che
   h.state.walletVerified = true;
   h.state.customerData = usCustomer('verified');
   await h.runTimer(2000);
-  await h.runTimer(3000);
   const hook = await flow;
   assert.equal(hook.step, 'completed');
   assert.deepEqual(h.calls.checkoutSessions, ['cos_test_ownership', 'cos_test_ownership']);
@@ -2504,87 +2561,46 @@ test('pending-verification checkout errors poll KYC before retrying the same che
   assert.equal(h.calls.verifyDocuments, 0);
 });
 
-test('verified KYC with a processing checkout response pauses safely then automatically resumes the same session', { timeout: 5000 }, async t => {
+test("ambiguous provider instructions do not drive checkout recovery: Consumer person verification is still processing. Try again shortly.", async t => {
   const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
   h.state.customerData = usCustomer('verified');
-  h.state.sdkError = {
-    code: 'crypto_onramp_verification_error',
-    message: 'Consumer person verification is still processing. Try again shortly.',
-  };
-
-  const flow = completeOwnershipCheckout(h);
-  await h.runTimer(3000);
-  await h.runTimer(7000);
-  const hook = await flow;
-
-  assert.equal(hook.step, 'kyc_pending');
-  assert.equal(hook.error, null);
-  assert.equal(hook.errorDetails, null);
-  assert.equal(h.calls.performCheckout, 3);
-  assert.deepEqual(h.calls.checkoutSessions, Array(3).fill('cos_test_ownership'));
-  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
-  assert.equal(h.calls.verifyDocuments, 0);
-
-  h.state.sdkError = null;
-  h.state.walletVerified = true;
-  await h.runTimer(15000);
-  await h.runTimer(3000);
-  await settleUntil(() => h.calls.successes.length === 1);
-
-  assert.equal(h.render().step, 'completed');
-  assert.equal(h.calls.performCheckout, 4);
-  assert.ok(h.calls.checkoutSessions.every(id => id === 'cos_test_ownership'));
-  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
-});
-
-test('the live generic verification-required response backs off without terminally rejecting verified L1', { timeout: 5000 }, async t => {
-  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
-  h.state.customerData = usCustomer('verified');
-  h.state.sdkError = {
-    code: 'crypto_onramp_verification_error',
-    message: 'Identity verification is required to complete your purchase.',
-  };
-
-  const flow = completeOwnershipCheckout(h);
-  await h.runTimer(3000);
-  await h.runTimer(7000);
-  const hook = await flow;
-
-  assert.equal(hook.step, 'kyc_pending');
-  assert.equal(hook.error, null);
-  assert.equal(hook.errorDetails, null);
-  assert.equal(h.calls.performCheckout, 3);
-  assert.deepEqual(h.calls.checkoutSessions, Array(3).fill('cos_test_ownership'));
-  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
-  assert.equal(h.calls.verifyDocuments, 0);
-
-  h.state.sdkError = null;
-  h.state.walletVerified = true;
-  await h.runTimer(15000);
-  await settleUntil(() => h.calls.successes.length === 1);
-  assert.equal(h.render().step, 'completed');
-  assert.equal(h.calls.performCheckout, 4);
-  assert.ok(h.calls.checkoutSessions.every(id => id === 'cos_test_ownership'));
-  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
-  assert.equal(h.calls.kycSubmissions?.length || 0, 0);
-});
-
-test('amount-driven additional verification advances an already-L1 US customer to L2 on the same session', async t => {
-  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
-  h.state.customerData = usRejectedL0();
-  h.state.sdkError = {
-    code: 'crypto_onramp_verification_error',
-    message: 'We need additional identity verification for you to purchase this amount.',
-  };
-
+  h.state.sdkError = { code: "crypto_onramp_verification_error", message: "Consumer person verification is still processing. Try again shortly." };
   const hook = await completeOwnershipCheckout(h);
-
-  assert.equal(hook.step, 'collecting_kyc');
-  assert.equal(hook.kycTierRequired, 'l2');
-  assert.equal(hook.sessionId, 'cos_test_ownership');
+  assert.equal(hook.step, 'payment_recovery');
+  assert.equal(hook.errorDetails.code, "crypto_onramp_verification_error");
+  assert.equal(hook.errorDetails.paymentOutcome, 'unknown');
   assert.equal(h.calls.performCheckout, 1);
-  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
   assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.steps.includes('collecting_kyc'), false);
+  assert.equal(hook.sessionId, 'cos_test_ownership');
+});
+
+test("ambiguous provider instructions do not drive checkout recovery: Identity verification is required to complete your purchase.", async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified');
+  h.state.sdkError = { code: "crypto_onramp_verification_error", message: "Identity verification is required to complete your purchase." };
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'payment_recovery');
+  assert.equal(hook.errorDetails.code, "crypto_onramp_verification_error");
+  assert.equal(hook.errorDetails.paymentOutcome, 'unknown');
+  assert.equal(h.calls.performCheckout, 1);
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.steps.includes('collecting_kyc'), false);
+  assert.equal(hook.sessionId, 'cos_test_ownership');
+});
+
+test("ambiguous provider instructions do not drive checkout recovery: We need additional identity verification for you to purchase this amount.", async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified');
+  h.state.sdkError = { code: "crypto_onramp_verification_error", message: "We need additional identity verification for you to purchase this amount." };
+  const hook = await completeOwnershipCheckout(h);
+  assert.equal(hook.step, 'payment_recovery');
+  assert.equal(hook.errorDetails.code, "crypto_onramp_verification_error");
+  assert.equal(hook.errorDetails.paymentOutcome, 'unknown');
+  assert.equal(h.calls.performCheckout, 1);
+  assert.equal(h.calls.verifyDocuments, 0);
+  assert.equal(h.calls.steps.includes('collecting_kyc'), false);
+  assert.equal(hook.sessionId, 'cos_test_ownership');
 });
 
 test('verification status outages pause without inferring KYC or resubmitting payment', async t => {
@@ -2592,7 +2608,7 @@ test('verification status outages pause without inferring KYC or resubmitting pa
   h.state.customerData = usCustomer();
   h.state.onCheckout = () => {
     h.state.customerOutage = true;
-    h.state.sdkError = { code: 'crypto_onramp_verification_error', message: 'Your verification is processing. Try again shortly.' };
+    h.state.sdkError = { code: 'crypto_onramp_missing_identity_verification', message: 'Your verification is processing. Try again shortly.' };
   };
   const hook = await completeOwnershipCheckout(h);
   assert.equal(hook.step, 'kyc_pending');
@@ -2607,7 +2623,7 @@ async function pauseCheckoutDuringKycOutage(h) {
   h.state.customerData = usCustomer('verified');
   h.state.onCheckout = () => {
     h.state.customerOutage = true;
-    h.state.sdkError = { code: 'crypto_onramp_verification_error', message: 'Your verification is processing. Try again shortly.' };
+    h.state.sdkError = { code: 'crypto_onramp_missing_identity_verification', message: 'Your verification is processing. Try again shortly.' };
   };
   const hook = await completeOwnershipCheckout(h);
   assert.equal(hook.step, 'kyc_pending');
@@ -2631,7 +2647,6 @@ test('automatic KYC recovery survives repeated fast outages without requiring a 
   }
   h.state.customerOutage = false;
   await h.runTimer(15000);
-  await h.runTimer(3000);
   await settleUntil(() => h.calls.successes.length === 1);
   assert.equal(h.render().step, 'completed');
   assert.equal(h.calls.performCheckout, 2);
@@ -2663,7 +2678,6 @@ for (const wakeEvent of ['focus', 'online', 'visibilitychange']) {
     h.emitWindow('online');
     assert.equal(h.calls.requests.length, after, 'an active recovery owns the status check');
     assert.equal(h.hasTimer(0), false);
-    await h.runTimer(3000);
     await settleUntil(() => h.calls.successes.length === 1);
     assert.equal(h.render().step, 'completed');
     assert.equal(h.calls.performCheckout, 2);
@@ -2751,7 +2765,7 @@ test('200 checkout last_error is retained even with a client_secret and unsucces
   };
   h.state.walletVerified = true;
   h.state.sdkUnsuccessfulAfterCallback = true;
-  h.state.checkoutResponse = { ok: true, client_secret: 'test_client_secret', lastError: { code: 'crypto_onramp_verification_error', message: 'Basic KYC information must be submitted before this endpoint can be used.' }, requestId: 'req_context' };
+  h.state.checkoutResponse = { ok: true, client_secret: 'test_client_secret', lastError: { code: 'crypto_onramp_missing_minimum_identity_verification', message: 'Basic KYC information must be submitted before this endpoint can be used.' }, requestId: 'req_context' };
   const hook = await completeOwnershipCheckout(h);
   assert.equal(hook.step, 'collecting_kyc');
   assert.equal(hook.kycTierRequired, 'l0');
@@ -2759,15 +2773,13 @@ test('200 checkout last_error is retained even with a client_secret and unsucces
   assert.equal(hook.sessionId, 'cos_test_ownership');
 });
 
-test('new-session advice clears the browser session only after the server permits replacement', async t => {
+test('ambiguous new-session advice cannot discard the reserved session', async t => {
   const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
   h.state.sdkError = { code: 'crypto_onramp_session_error', message: 'Try creating a new session or contact support.' };
-  h.state.providerData = { paymentAttempt: { canRetry: true } };
   const hook = await completeOwnershipCheckout(h);
-  assert.equal(hook.step, 'error');
-  assert.equal(hook.sessionId, null);
+  assert.equal(hook.step, 'payment_recovery');
+  assert.equal(hook.sessionId, 'cos_test_ownership');
   assert.equal(hook.errorDetails.code, 'crypto_onramp_session_error');
-  assert.match(hook.errorDetails.message, /creating a new session/);
   assert.equal(h.calls.performCheckout, 1);
-  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1, 'replacement waits for the deliberate retry');
+  assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
 });
