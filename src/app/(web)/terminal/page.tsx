@@ -1308,7 +1308,6 @@ function PreviewContent({ forcedMode }: { forcedMode: PreviewMode }) {
             },
           })}
           style={{ width: "100%", maxWidth: "100%", background: "transparent", border: "none", borderRadius: 0 }}
-          connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
 
           purchaseData={{ productId: `portal_demo:$11.99`, meta: { token, currency, usd: totalUsd, tipPercent: effectiveTipPercent, tipUsd, feePct: (basePlatformFeePct + Number(processingFeePct || 0)), subtotalUsd: itemsSubtotalUsd, taxUsd } }}
           onSuccess={async () => {

@@ -7708,7 +7708,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                                 border: "none",
                                                 borderRadius: 0,
                                               }}
-                                              connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                               purchaseData={{
                                                 productId: `portal:${receiptId}`,
                                                 receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
@@ -7824,7 +7823,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           border: "none",
                                           borderRadius: 0,
                                         }}
-                                        connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                         purchaseData={{
                                           productId: `portal:${receiptId}`,
                                           receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
@@ -8471,7 +8469,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           showThirdwebBranding={false}
                                           theme={widgetTheme}
                                           style={{ width: "100%", maxWidth: "100%", background: "transparent", border: "none", borderRadius: 0 }}
-                                          connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                           purchaseData={{
                                             productId: `portal:${receiptId}`,
                                             receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
@@ -8584,7 +8581,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                       border: "none",
                                       borderRadius: 0,
                                     }}
-                                    connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                     purchaseData={{
                                       productId: `portal:${receiptId}`,
                                       receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
