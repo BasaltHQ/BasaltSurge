@@ -107,6 +107,7 @@ export function isMainDomainHost(host: string): boolean {
         h.includes("vercel.app") ||
         h.includes("xpaypass.com") ||
         h.includes("canyapay.com") ||
+        h.includes("payzentric.com") ||
         h.includes("data-opt.com") ||
         h.includes("lucky13marketing.com") ||
         h === "digital.tnpsettle.com" ||

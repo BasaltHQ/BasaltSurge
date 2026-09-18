@@ -5,6 +5,7 @@ export const BRAND_COLOR_MAP: Record<string, string> = {
   lucky13: "#eab308",     // Warm Amber Gold
   "data-opt": "#10b981",  // Vivid Emerald Green
   dataopt: "#10b981",     // Vivid Emerald Green
+  payzentric: "#10b981",  // Emerald Green
   xoinpay: "#ec4899",     // Hot Magenta / Fuchsia
   lumina: "#06b6d4",      // Cyan / Teal
   luminapms: "#06b6d4",   // Cyan / Teal

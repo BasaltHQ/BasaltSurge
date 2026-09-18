@@ -134,7 +134,16 @@ export async function requireApimOrJwt(
 
     // 3. Partner Isolation / Brand Check
     const currentBrand = (process.env.NEXT_PUBLIC_BRAND_KEY || process.env.BRAND_KEY || "").toLowerCase();
-    if (keyDoc.brandKey && currentBrand && keyDoc.brandKey !== currentBrand && currentBrand !== "portalpay" && currentBrand !== "basaltsurge") {
+    const isBrandAllowed =
+      !keyDoc.brandKey ||
+      !currentBrand ||
+      keyDoc.brandKey === currentBrand ||
+      currentBrand === "portalpay" ||
+      currentBrand === "basaltsurge" ||
+      (currentBrand === "payzentric" && (keyDoc.brandKey === "data-opt" || keyDoc.brandKey === "dataopt")) ||
+      ((currentBrand === "data-opt" || currentBrand === "dataopt") && keyDoc.brandKey === "payzentric");
+
+    if (!isBrandAllowed) {
       // Key is scoped to a brand, but we are in a different brand context
       // Exception: 'portalpay' (platform) might allow all, but usually keys are strict.
       // If the key is for "Brand A" and we are on "Brand B" container, deny.
