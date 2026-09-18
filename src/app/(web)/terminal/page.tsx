@@ -1286,6 +1286,7 @@ function PreviewContent({ forcedMode }: { forcedMode: PreviewMode }) {
           className="w-full"
           client={client}
           chain={chain}
+          paymentMethods={["crypto"]}
           currency={widgetCurrency as any}
           amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
           seller={sellerAddress || recipient}

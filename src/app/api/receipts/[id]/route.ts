@@ -20,6 +20,7 @@ export type Receipt = {
   receiptId: string;
   totalUsd: number;
   currency: string;
+  crypto?: boolean;
   pricing?: ReceiptPricing;
   total?: number;
   lineItems: ReceiptLineItem[];
@@ -150,7 +151,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
       parameters: [
         { name: "@id", value: id },
         { name: "@wallet", value: wallet }
@@ -165,7 +166,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       try {
         const specCrossPartition = {
           query:
-            "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+            "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
           parameters: [{ name: "@id", value: id }],
         } as { query: string; parameters: { name: string; value: any }[] };
         const crossRes = await container.items.query(specCrossPartition).fetchAll();
@@ -206,6 +207,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         failureReason: typeof (row as any)?.failureReason === "string" ? (row as any).failureReason : undefined,
         failureCategory: typeof (row as any)?.failureCategory === "string" ? (row as any).failureCategory : undefined,
         failureAction: typeof (row as any)?.failureAction === "string" ? (row as any).failureAction : undefined,
+        crypto: typeof (row as any)?.crypto === "boolean" ? (row as any).crypto : undefined,
       };
       if (!(rec.totalUsd > 0)) {
         const candidate = sumLineItems(rec.lineItems || []);
@@ -303,6 +305,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         jurisdictionCode: typeof (cached as any)?.jurisdictionCode === "string" ? (cached as any).jurisdictionCode : undefined,
         taxRate: (Number.isFinite(Number((cached as any)?.taxRate)) ? Math.max(0, Math.min(1, Number((cached as any)?.taxRate))) : undefined),
         taxComponents: Array.isArray((cached as any)?.taxComponents) ? (cached as any).taxComponents : undefined,
+        crypto: typeof (cached as any)?.crypto === "boolean" ? (cached as any).crypto : undefined,
       };
       if (!(rec.totalUsd > 0)) {
         const candidate = sumLineItems(rec.lineItems || []);
@@ -358,6 +361,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         jurisdictionCode: typeof (cached as any)?.jurisdictionCode === "string" ? (cached as any).jurisdictionCode : undefined,
         taxRate: (Number.isFinite(Number((cached as any)?.taxRate)) ? Math.max(0, Math.min(1, Number((cached as any)?.taxRate))) : undefined),
         taxComponents: Array.isArray((cached as any)?.taxComponents) ? (cached as any).taxComponents : undefined,
+        crypto: typeof (cached as any)?.crypto === "boolean" ? (cached as any).crypto : undefined,
       };
       if (!(rec.totalUsd > 0)) {
         const candidate = sumLineItems(rec.lineItems || []);
@@ -706,6 +710,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
           type: "receipt",
           wallet,
           receiptId: id,
+          ...(body?.crypto !== undefined ? { crypto: Boolean(body?.crypto === true || String(body?.crypto).toLowerCase() === "true" || body?.paymentMethod === "crypto") } : {}),
           totalUsd,
           currency: "USD",
           lineItems: finalLineItems,

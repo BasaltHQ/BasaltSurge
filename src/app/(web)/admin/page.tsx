@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import { sendTransaction, prepareTransaction, getContract, prepareContractCall, readContract } from "thirdweb";
 import { client, chain } from "@/lib/thirdweb/client";
 import { fetchEthRates, fetchUsdRates } from "@/lib/eth";
-import { ImagePlus, Trash2, Star, StarOff, Link as LinkIcon, Plus, Wand2, Infinity as InfinityIcon, Copy, ExternalLink, Download, LayoutGrid, List, Repeat, RefreshCw, Settings, GripVertical, Eye, EyeOff, Folder, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, X, Building2 } from "lucide-react";
+import { ImagePlus, Trash2, Star, StarOff, Link as LinkIcon, Plus, Wand2, Infinity as InfinityIcon, Copy, ExternalLink, Download, LayoutGrid, List, Repeat, RefreshCw, Settings, GripVertical, Eye, EyeOff, Folder, Search, Filter, ArrowUpDown, ArrowUp, ArrowDown, X, Building2, Coins } from "lucide-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -10341,12 +10341,12 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
   }, []);
 
   const origin = typeof window !== "undefined" ? window.location.origin : "";
-  const portalUrl = selected ? `${selectedDomain || origin}/portal/${encodeURIComponent(selected.receiptId)}?recipient=${encodeURIComponent(operatorWallet)}` : "";
+  const portalUrl = selected ? `${selectedDomain || origin}/portal/${encodeURIComponent(selected.receiptId)}?recipient=${encodeURIComponent(operatorWallet)}${selected.crypto ? "&crypto=true" : ""}` : "";
 
   // Completion modal
   const [completeOpen, setCompleteOpen] = useState(false);
 
-  async function generateTerminalReceipt() {
+  async function generateTerminalReceipt(isCrypto: boolean = false) {
     try {
       setLoading(true);
       setError("");
@@ -10361,9 +10361,10 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
       }
       const payload = {
         amountUsd: +amt.toFixed(2),
-        label: (itemLabel || "").trim() || "Terminal Payment",
+        label: (itemLabel || "").trim() || (isCrypto ? "Crypto Payment" : "Terminal Payment"),
         currency: terminalCurrency,
         brandKey: siteMeta.brandKey,
+        crypto: isCrypto,
       };
       const r = await fetch("/api/receipts/terminal", {
         method: "POST",
@@ -10676,12 +10677,11 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
             </div>
           )}
 
-          <div className="mt-2 md:mt-8 relative z-10 shrink-0">
+          <div className="mt-2 md:mt-8 relative z-10 shrink-0 flex items-center gap-2 md:gap-3">
             <button
-              className="w-full h-10 md:h-14 rounded-xl md:rounded-2xl text-[10px] md:text-sm font-extrabold uppercase tracking-[0.2em] text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-[var(--pp-secondary)]/20 hover:brightness-110 active:scale-95 flex items-center justify-center gap-2"
+              className="flex-1 h-10 md:h-14 rounded-xl md:rounded-2xl text-[10px] md:text-sm font-extrabold uppercase tracking-[0.2em] text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-[var(--pp-secondary)]/20 hover:brightness-110 active:scale-95 flex items-center justify-center gap-2"
               style={{ backgroundColor: "var(--pp-secondary)", borderColor: "transparent" }}
-
-              onClick={generateTerminalReceipt}
+              onClick={() => generateTerminalReceipt(false)}
               disabled={loading || !(baseUsd > 0) || !operatorWallet}
               title="Generate QR and receipt"
             >
@@ -10692,6 +10692,21 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
                   Generate QR
                   <svg className="w-4 h-4 ml-1 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
                 </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              className="h-10 w-10 md:h-14 md:w-14 shrink-0 rounded-xl md:rounded-2xl border border-[var(--pp-secondary)]/30 bg-[var(--pp-secondary)]/15 hover:bg-[var(--pp-secondary)]/25 text-[var(--pp-secondary)] transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-lg hover:shadow-[var(--pp-secondary)]/20 hover:border-[var(--pp-secondary)]/50 active:scale-95 flex items-center justify-center group"
+              onClick={() => generateTerminalReceipt(true)}
+              disabled={loading || !(baseUsd > 0) || !operatorWallet}
+              title="Pay with Crypto"
+              aria-label="Pay with Crypto"
+            >
+              {loading ? (
+                <span className="opacity-80 animate-pulse text-xs">…</span>
+              ) : (
+                <Coins className="w-4 h-4 md:w-6 md:h-6 group-hover:scale-110 transition-transform" />
               )}
             </button>
           </div>
@@ -10714,7 +10729,7 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
               </button>
               
               <div className="text-center mb-8 relative z-10">
-                <div className="text-[10px] font-bold text-[var(--pp-secondary)] uppercase tracking-[0.3em] mb-2">Scan to Pay</div>
+                <div className="text-[10px] font-bold text-[var(--pp-secondary)] uppercase tracking-[0.3em] mb-2">{selected?.crypto ? "Pay with Crypto" : "Scan to Pay"}</div>
                 <div className="text-2xl font-black tracking-tight text-white">Present to Buyer</div>
               </div>
 

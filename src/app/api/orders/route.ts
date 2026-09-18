@@ -78,6 +78,7 @@ export type Receipt = {
   receiptId: string;
   totalUsd: number;
   currency: string;
+  crypto?: boolean;
   pricing?: ReceiptPricing;
   lineItems: ReceiptLineItem[];
   createdAt: number;
@@ -1025,6 +1026,7 @@ export async function POST(req: NextRequest) {
       pricing = snapshotReceiptPricing(pricing, finalLineItems, totalUsd);
       for (const item of finalLineItems) delete item.nativeAmount;
     }
+    const isCryptoOnly = body?.crypto === true || String(body?.crypto).toLowerCase() === "true" || body?.paymentMethod === "crypto";
 
     // --- x402 Agentic Payment Logic START ---
     // Check if the client is an agent requesting L402 flow
@@ -1121,6 +1123,7 @@ export async function POST(req: NextRequest) {
       receiptId,
       totalUsd,
       ...(pricing ? receiptCurrencyFields({ pricing, totalUsd, lineItems: finalLineItems }) : { currency: receiptCurrencyCode, lineItems: finalLineItems }),
+      ...(isCryptoOnly ? { crypto: true } : {}),
       createdAt: ts,
       brandName,
       jurisdictionCode: appliedJurisdictionCode,
@@ -1148,6 +1151,7 @@ export async function POST(req: NextRequest) {
       wallet, // container partition key (merchant)
       brandKey: brandKey || undefined,
       receiptId,
+      ...(isCryptoOnly ? { crypto: true } : {}),
       totalUsd,
       currency: receiptCurrencyCode,
       ...(pricing ? { pricing } : {}),
@@ -1225,6 +1229,7 @@ export async function POST(req: NextRequest) {
       const theme = cfg?.theme || {};
       const tParams = new URLSearchParams();
       tParams.set("recipient", wallet);
+      if (isCryptoOnly) tParams.set("crypto", "true");
       if (redirectUrl) tParams.set("redirect_url", redirectUrl);
       if (returnUrl) tParams.set("returnUrl", returnUrl);
       if (onSuccess) tParams.set("onSuccess", onSuccess);
@@ -1239,9 +1244,10 @@ export async function POST(req: NextRequest) {
       );
     } catch (e: any) {
       // Graceful degrade when Cosmos isn't configured/available
-      pushReceipts([{ ...receipt, wallet, brandKey } as any]);
+      pushReceipts([{ ...receipt, wallet, brandKey, ...(isCryptoOnly ? { crypto: true } : {}) } as any]);
       const tParams = new URLSearchParams();
       tParams.set("recipient", wallet);
+      if (isCryptoOnly) tParams.set("crypto", "true");
       if (redirectUrl) tParams.set("redirect_url", redirectUrl);
       if (returnUrl) tParams.set("returnUrl", returnUrl);
       if (onSuccess) tParams.set("onSuccess", onSuccess);
