@@ -34,6 +34,7 @@ export type Receipt = {
   receiptId: string;
   totalUsd: number;
   currency: string;
+  crypto?: boolean;
   pricing?: ReceiptPricing;
   total?: number;
   lineItems: ReceiptLineItem[];
@@ -160,6 +161,7 @@ export async function GET(req: NextRequest) {
       ? resources.map((row: any) => ({
         receiptId: String(row.receiptId || ""),
         totalUsd: Number(row.totalUsd || 0),
+        crypto: typeof row.crypto === "boolean" ? row.crypto : undefined,
         ...receiptCurrencyFields(row),
         createdAt: Number(row.createdAt || Date.now()),
         brandName: typeof row.brandName === "string" ? row.brandName : undefined,
@@ -320,6 +322,9 @@ export async function POST(req: NextRequest) {
     // Optional onSuccess — custom javascript logic or URL to execute on successful payment
     const onSuccess = typeof body?.onSuccess === "string" ? String(body.onSuccess).trim() : undefined;
 
+    // Optional crypto pathway bypass flag
+    const isCryptoOnly = body?.crypto === true || String(body?.crypto).toLowerCase() === "true" || body?.paymentMethod === "crypto";
+
 
     // Compute split breakdown and effective processing fee
     const brand = getBrandConfig();
@@ -375,6 +380,7 @@ export async function POST(req: NextRequest) {
           const origin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
           const tParams = new URLSearchParams();
           tParams.set("recipient", wallet);
+          if (isCryptoOnly || existing.crypto) tParams.set("crypto", "true");
           if (redirectUrl) tParams.set("redirect_url", redirectUrl);
           if (returnUrl) tParams.set("returnUrl", returnUrl);
           if (onSuccess) tParams.set("onSuccess", onSuccess);
@@ -387,6 +393,7 @@ export async function POST(req: NextRequest) {
               paymentUrl,
               status: existing.status,
               alreadyPaid: true,
+              ...(isCryptoOnly || existing.crypto ? { crypto: true } : {}),
               ...(redirectUrl ? { redirectUrl } : {}),
               ...(returnUrl ? { returnUrl } : {}),
               ...(onSuccess ? { onSuccess } : {}),
@@ -404,6 +411,7 @@ export async function POST(req: NextRequest) {
       type: "receipt",
       wallet,
       receiptId: id,
+      ...(isCryptoOnly ? { crypto: true } : {}),
       brandKey: brand.key || undefined,
       totalUsd,
       // Immutable merchant order amount. Stripe's source amount and the
@@ -423,10 +431,10 @@ export async function POST(req: NextRequest) {
       servedBy: employeeName,
       sessionId,
       // Deployed smart contract split addresses and configs
-      ...(brand.splitAddress || (brand as any).config?.splitAddress ? { splitAddress: brand.splitAddress || (brand as any).config?.splitAddress } : {}),
-      ...(brand.splitAddressCredit || (brand as any).config?.splitAddressCredit ? { splitAddressCredit: brand.splitAddressCredit || (brand as any).config?.splitAddressCredit } : {}),
-      ...(brand.splitConfig || (brand as any).config?.splitConfig ? { splitConfig: brand.splitConfig || (brand as any).config?.splitConfig } : {}),
-      ...(brand.splitConfigCredit || (brand as any).config?.splitConfigCredit ? { splitConfigCredit: brand.splitConfigCredit || (brand as any).config?.splitConfigCredit } : {}),
+      ...((brand as any).splitAddress || (brand as any).config?.splitAddress ? { splitAddress: (brand as any).splitAddress || (brand as any).config?.splitAddress } : {}),
+      ...((brand as any).splitAddressCredit || (brand as any).config?.splitAddressCredit ? { splitAddressCredit: (brand as any).splitAddressCredit || (brand as any).config?.splitAddressCredit } : {}),
+      ...((brand as any).splitConfig || (brand as any).config?.splitConfig ? { splitConfig: (brand as any).splitConfig || (brand as any).config?.splitConfig } : {}),
+      ...((brand as any).splitConfigCredit || (brand as any).config?.splitConfigCredit ? { splitConfigCredit: (brand as any).splitConfigCredit || (brand as any).config?.splitConfigCredit } : {}),
       // Developer-configured redirect and webhook URLs
       ...(redirectUrl ? { redirectUrl } : {}),
       ...(returnUrl ? { returnUrl } : {}),
@@ -464,7 +472,7 @@ export async function POST(req: NextRequest) {
       }
       try {
         // Degraded mode: push to in-memory store
-        pushReceipts([{ receiptId: id, totalUsd, currency: pricing?.currency || "USD", ...(pricing ? { pricing } : {}), lineItems, createdAt: now, brandName, status: "pending", wallet, stripeEmail } as any]);
+        pushReceipts([{ receiptId: id, totalUsd, currency: pricing?.currency || "USD", ...(pricing ? { pricing } : {}), lineItems, createdAt: now, brandName, status: "pending", wallet, stripeEmail, ...(isCryptoOnly ? { crypto: true } : {}) } as any]);
       } catch { }
     }
 
@@ -479,6 +487,7 @@ export async function POST(req: NextRequest) {
     const origin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
     const tParams = new URLSearchParams();
     tParams.set("recipient", wallet);
+    if (isCryptoOnly) tParams.set("crypto", "true");
     if (redirectUrl) tParams.set("redirect_url", redirectUrl);
     if (returnUrl) tParams.set("returnUrl", returnUrl);
     if (onSuccess) tParams.set("onSuccess", onSuccess);
@@ -489,6 +498,7 @@ export async function POST(req: NextRequest) {
         id,
         paymentUrl,
         status: "pending",
+        ...(isCryptoOnly ? { crypto: true } : {}),
         ...(redirectUrl ? { redirectUrl } : {}),
         ...(returnUrl ? { returnUrl } : {}),
         ...(onSuccess ? { onSuccess } : {}),

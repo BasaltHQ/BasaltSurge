@@ -221,6 +221,7 @@ export async function POST(req: NextRequest) {
 
           const dbItemMapByVariantId = new Map<string, any>();
           const dbItemMapBySku = new Map<string, any>();
+          const dbItemMapByTitle = new Map<string, any>();
 
           for (const item of existingDbItems) {
             if (item.shopifyProductVariantId) {
@@ -228,6 +229,9 @@ export async function POST(req: NextRequest) {
             }
             if (item.sku) {
               dbItemMapBySku.set(String(item.sku).trim().toLowerCase(), item);
+            }
+            if (item.name) {
+              dbItemMapByTitle.set(String(item.name).trim().toLowerCase(), item);
             }
           }
 
@@ -242,9 +246,10 @@ export async function POST(req: NextRequest) {
             const price = Number(variant.price) || 0;
             const stock = variant.inventory_quantity !== undefined ? Number(variant.inventory_quantity) : -1;
 
-            // Check if item is already in DB by variant ID or by SKU
+            // Check if item is already in DB by variant ID, SKU, or Title
             const existingItem = dbItemMapByVariantId.get(String(variant.id)) || 
-                                 (sku ? dbItemMapBySku.get(sku.toLowerCase()) : null);
+                                 (sku ? dbItemMapBySku.get(sku.toLowerCase()) : null) ||
+                                 dbItemMapByTitle.get(name.toLowerCase());
 
             const itemId = existingItem ? existingItem.id : `inventory:${wallet}:${variant.id}`;
             const mergedTags = Array.from(new Set([
@@ -324,8 +329,9 @@ export async function POST(req: NextRequest) {
             items = resources;
           }
 
-          // Fetch all products from Shopify to build a map of SKUs already on Shopify
+          // Fetch all products from Shopify to build a map of SKUs and Titles already on Shopify
           const shopifySkuMap = new Map<string, { productId: string, variantId: string }>();
+          const shopifyTitleMap = new Map<string, { productId: string, variantId: string }>();
           try {
             const fetchProductsUrl = `https://${shop}/admin/api/2024-10/products.json?limit=250`;
             const shopifyProductsRes = await fetch(fetchProductsUrl, {
@@ -338,13 +344,18 @@ export async function POST(req: NextRequest) {
               const prodData = await shopifyProductsRes.json();
               const prods = Array.isArray(prodData.products) ? prodData.products : [];
               for (const p of prods) {
+                const pTitle = String(p.title || "").trim().toLowerCase();
                 const variants = Array.isArray(p.variants) ? p.variants : [];
                 for (const v of variants) {
+                  const match = {
+                    productId: String(p.id),
+                    variantId: String(v.id)
+                  };
                   if (v.sku) {
-                    shopifySkuMap.set(String(v.sku).trim().toLowerCase(), {
-                      productId: String(p.id),
-                      variantId: String(v.id)
-                    });
+                    shopifySkuMap.set(String(v.sku).trim().toLowerCase(), match);
+                  }
+                  if (pTitle && !shopifyTitleMap.has(pTitle)) {
+                    shopifyTitleMap.set(pTitle, match);
                   }
                 }
               }
@@ -358,9 +369,16 @@ export async function POST(req: NextRequest) {
 
           let current = 0;
           for (const item of items) {
-            // Check if item has a SKU and is not already linked
-            if (!item.shopifyProductId && item.sku) {
-              const existingShopify = shopifySkuMap.get(String(item.sku).trim().toLowerCase());
+            // Auto-assign SKU if missing
+            if (!item.sku) {
+              const fallbackSuffix = String(item.id || "").replace(/^inventory:/i, "").slice(-8) || Math.random().toString(36).substring(2, 8);
+              item.sku = `SKU-${fallbackSuffix.toUpperCase()}`;
+            }
+
+            // Check if item can be linked to an existing Shopify product by SKU or title
+            if (!item.shopifyProductId) {
+              const existingShopify = (item.sku ? shopifySkuMap.get(String(item.sku).trim().toLowerCase()) : null) ||
+                                      (item.name ? shopifyTitleMap.get(String(item.name).trim().toLowerCase()) : null);
               if (existingShopify) {
                 item.shopifyProductId = existingShopify.productId;
                 item.shopifyProductVariantId = existingShopify.variantId;
@@ -368,7 +386,7 @@ export async function POST(req: NextRequest) {
                 // Link the item in local DB
                 item.updatedAt = Date.now();
                 await container.items.upsert(item);
-                console.log(`[Shopify Sync Pull] SKU Match found: Linked Surge item ${item.sku} to Shopify Product ${existingShopify.productId}`);
+                console.log(`[Shopify Sync Pull] Match found: Linked Surge item ${item.sku || item.name} to Shopify Product ${existingShopify.productId}`);
               }
             }
             const itemImages = Array.isArray(item.images) && item.images.length > 0

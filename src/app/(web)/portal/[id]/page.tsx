@@ -137,6 +137,7 @@ type Receipt = {
   receiptId: string;
   totalUsd: number;
   currency: string;
+  crypto?: boolean;
   pricing?: ReceiptPricing;
   lineItems: ReceiptLineItem[];
   createdAt: number;
@@ -3824,8 +3825,23 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     clientCountry,
   ), [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
 
+  // Direct Crypto Pathway: activated when explicitly unsupported region, receipt.crypto=true, or query param crypto=true
+  const isCryptoDirect = useMemo(() => {
+    const queryCrypto = searchParams?.get("crypto") === "true" || searchParams?.get("checkout") === "crypto" || searchParams?.get("checkout") === "thirdweb";
+    if (queryCrypto) return true;
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("crypto") === "true" || sp.get("checkout") === "crypto" || sp.get("checkout") === "thirdweb") return true;
+    }
+    return Boolean(
+      (receipt as any)?.crypto === true ||
+      String((receipt as any)?.crypto).toLowerCase() === "true" ||
+      (receipt as any)?.paymentMethod === "crypto"
+    );
+  }, [searchParams, receipt]);
+
   const isV2Active = useMemo(() => {
-    if (isExplicitlyUnsupportedRegion) return false;
+    if (isExplicitlyUnsupportedRegion || isCryptoDirect) return false;
     if (typeof window !== "undefined") {
       const sp = new URLSearchParams(window.location.search);
       if (sp.get("v2") === "true" || sp.get("checkout") === "v2") return true;
@@ -3837,9 +3853,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     }
     const envV2 = process.env.NEXT_PUBLIC_STRIPEV2 === "true" || process.env.STRIPEV2 === "true" || process.env.NEXT_PUBLIC_STRIPE_HEADLESS_V2 === "TRUE";
     return stripeOnrampV2Enabled || partnerStripeV2Enabled || (theme as any)?.stripeOnrampV2Enabled === true || (theme as any)?.v2CheckoutEnabled === true || envV2;
-  }, [isExplicitlyUnsupportedRegion, stripeOnrampV2Enabled, partnerStripeV2Enabled, theme]);
+  }, [isExplicitlyUnsupportedRegion, isCryptoDirect, stripeOnrampV2Enabled, partnerStripeV2Enabled, theme]);
 
-  const stripeHeadless = isStripeEmbeddedCheckoutEnabled({
+  const stripeHeadless = !isCryptoDirect && isStripeEmbeddedCheckoutEnabled({
     legacyHeadlessEnabled: String(process.env.NEXT_PUBLIC_STRIPE_HEADLESS || "").toUpperCase() === "TRUE",
     v2Active: isV2Active,
     unsupportedRegion: isExplicitlyUnsupportedRegion,
@@ -3857,7 +3873,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
         // ── Filter Out Disabled Onramp Providers ──
         const tryFilterOnramps = () => {
           // Do NOT filter out/hide international onramps for unsupported regions
-          if (isExplicitlyUnsupportedRegion) return;
+          if (isExplicitlyUnsupportedRegion || isCryptoDirect) return;
 
           const els = Array.from(scopeEl.querySelectorAll('button, div[role="button"], a[role="button"], span, p'));
           els.forEach((el: any) => {
@@ -4479,6 +4495,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // When Stripe is the only active onramp, open Step 1 and wait for the
   // customer to confirm the email that will own the wallet and payment.
   useEffect(() => {
+    if (isCryptoDirect) return;
     const isStripeOnly = stripeOnrampEnabled && !coinbaseOnrampEnabled && !transakOnrampEnabled && !rampnowOnrampEnabled;
     const paymentReady = !shippingRequired || shippingComplete;
 
@@ -4511,7 +4528,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     userOptedOutOfStripeBypass,
     headlessEmailPrompt,
     headlessActive,
-    headlessInitiated
+    headlessInitiated,
+    isCryptoDirect
   ]);
 
   // Interceptor: ALWAYS active to block crypto.link.com redirects from Thirdweb's CheckoutWidget.
@@ -4535,7 +4553,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       setHeadlessEmailPrompt(true);
     } : undefined,
     interceptOnly: stripeHeadless, // Block redirect only, don't launch legacy modal
-    enabled: stripeHeadless, // Only enabled during stripeHeadless mode to catch redirects and route to headless flow
+    enabled: stripeHeadless && !isCryptoDirect, // Only enabled during stripeHeadless mode to catch redirects and route to headless flow
   });
 
   // NOTE: Coinbase Onramp redirectUrl requires domain allowlisting in the CDP portal,
@@ -4935,11 +4953,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // Do not mount the generic widget (and its token-price query) while the
   // checkout configuration resolves or the direct Stripe autostart is pending.
   const deferThirdwebCheckout = !configLoaded || (
-    stripeHeadless && stripeOnrampEnabled && !coinbaseOnrampEnabled
-    && !transakOnrampEnabled && !rampnowOnrampEnabled && !userOptedOutOfStripeBypass
+    !isCryptoDirect && (
+      stripeHeadless && stripeOnrampEnabled && !coinbaseOnrampEnabled
+      && !transakOnrampEnabled && !rampnowOnrampEnabled && !userOptedOutOfStripeBypass
+    )
   );
   const preparingCheckoutUI = <div role="status" className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">Preparing secure checkout…</div>;
-  const stripeHeadlessUI = (isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? (
+  const showStripeHeadless = !isCryptoDirect && (isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated);
+  const stripeHeadlessUI = showStripeHeadless ? (
     <div className="w-full flex flex-col items-stretch justify-start animate-in fade-in duration-300">
       {isV2Active ? (
         <PortalPayAccordionCheckoutV2
@@ -7666,13 +7687,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                       </div>
                                       {shippingComplete && (
                                         <div className="px-2 pb-2">
-                                          {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
+                                          {showStripeHeadless ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                             <CheckoutWidget
                                               key={`${token}-${currency}`}
                                               className="w-full"
                                               name={`Total (${currency})`}
                                               client={client}
                                               chain={chain || base}
+                                              paymentMethods={["crypto"]}
                                               currency={widgetCurrency as any || (currency as any)}
                                               amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                               seller={sellerAddress || merchantWallet || recipient}
@@ -7686,7 +7708,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                                 border: "none",
                                                 borderRadius: 0,
                                               }}
-                                              connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                               purchaseData={{
                                                 productId: `portal:${receiptId}`,
                                                 receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
@@ -7781,13 +7802,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                 {/* Non-shipping: render CheckoutWidget directly */}
                                 {!shippingRequired && (
                                   <>
-                                    {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
+                                    {showStripeHeadless ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                       <CheckoutWidget
                                         key={`noshp-${token}-${currency}`}
                                         className="w-full"
                                         name={`Total (${currency})`}
                                         client={client}
                                         chain={chain || base}
+                                        paymentMethods={["crypto"]}
                                         currency={widgetCurrency as any || (currency as any)}
                                         amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                         seller={sellerAddress || merchantWallet || recipient}
@@ -7801,7 +7823,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           border: "none",
                                           borderRadius: 0,
                                         }}
-                                        connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                         purchaseData={{
                                           productId: `portal:${receiptId}`,
                                           receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
@@ -8433,13 +8454,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   </div>
                                   {shippingComplete && (
                                     <div className="px-2 pb-2">
-                                      {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
+                                      {showStripeHeadless ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                         <CheckoutWidget
                                           key={`ship-${token}-${currency}`}
                                           className="w-full"
                                           name={`Total (${currency})`}
                                           client={client}
                                           chain={chain || base}
+                                          paymentMethods={["crypto"]}
                                           currency={widgetCurrency as any || (currency as any)}
                                           amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                           seller={sellerAddress || merchantWallet || recipient}
@@ -8447,7 +8469,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                           showThirdwebBranding={false}
                                           theme={widgetTheme}
                                           style={{ width: "100%", maxWidth: "100%", background: "transparent", border: "none", borderRadius: 0 }}
-                                          connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                           purchaseData={{
                                             productId: `portal:${receiptId}`,
                                             receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,
@@ -8539,13 +8560,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                             {/* Non-shipping: render CheckoutWidget directly */}
                             {!shippingRequired && (
                               <>
-                                {(isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated) ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
+                                {showStripeHeadless ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                   <CheckoutWidget
                                     key={`noshp-${token}-${currency}`}
                                     className="w-full"
                                     name={`Total (${currency})`}
                                     client={client}
                                     chain={chain || base}
+                                    paymentMethods={["crypto"]}
                                     currency={widgetCurrency as any || (currency as any)}
                                     amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                     seller={sellerAddress || merchantWallet || recipient}
@@ -8559,7 +8581,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                       border: "none",
                                       borderRadius: 0,
                                     }}
-                                    connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                     purchaseData={{
                                       productId: `portal:${receiptId}`,
                                       receiptId: receiptId ? receiptId.replace(/^receipt:/, "") : undefined,

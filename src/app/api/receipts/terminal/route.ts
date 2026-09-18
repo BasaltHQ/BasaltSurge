@@ -56,6 +56,7 @@ export type Receipt = {
   sessionStartTime?: number;
   tipAmount?: number;
   brandKey?: string;
+  crypto?: boolean;
 };
 
 function toCents(n: number) {
@@ -102,6 +103,8 @@ export async function POST(req: NextRequest) {
         { status: 400, headers: { "x-correlation-id": correlationId } }
       );
     }
+
+    const isCryptoOnly = body?.crypto === true || String(body?.crypto).toLowerCase() === "true" || body?.paymentMethod === "crypto";
 
     // Determine brandKey using same logic as receipt document creation (body > env > fallback)
     const effectiveBrandKey = (
@@ -396,6 +399,7 @@ export async function POST(req: NextRequest) {
       tipAmount,
       // Brand isolation
       brandKey,
+      ...(isCryptoOnly ? { crypto: true } : {}),
       statusHistory: [{ status: "generated", ts }],
       lastUpdatedAt: ts,
     };
@@ -417,6 +421,7 @@ export async function POST(req: NextRequest) {
       sessionId,
       sessionStartTime,
       brandKey,
+      ...(isCryptoOnly ? { crypto: true } : {}),
     };
 
     // Persist

@@ -635,6 +635,7 @@ function CompactPreview() {
                                     className="w-full"
                                     client={client}
                                     chain={chain}
+                                    paymentMethods={["crypto"]}
                                     currency={widgetCurrency as any}
                                     amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
                                     seller={sellerAddress || recipient}
@@ -656,7 +657,6 @@ function CompactPreview() {
                                         },
                                     })}
                                     style={{ width: "100%", maxWidth: "100%", background: "transparent", border: "none", borderRadius: 0 }}
-                                    connectOptions={{ accountAbstraction: { chain, sponsorGas: true } }}
                                     purchaseData={{ productId: `iso_demo:$${totalUsd.toFixed(2)}` }}
                                 />
                             ) : (

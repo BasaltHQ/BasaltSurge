@@ -407,7 +407,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const sku = String(body.sku || "").trim();
+    let sku = String(body.sku || "").trim();
+    if (!sku) {
+      sku = `SKU-${Math.random().toString(36).substring(2, 9).toUpperCase()}`;
+    }
     const name = String(body.name || "").trim();
     let priceUsd = Number(body.priceUsd);
     let nativePrice: { amount: number; currency: "USD" | "EUR" } | undefined;
