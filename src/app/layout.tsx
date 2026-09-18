@@ -58,6 +58,7 @@ const KNOWN_PARTNER_PATTERNS: Record<string, string> = {
   tnp: "tnp",
   "data-opt": "data-opt",
   dataopt: "data-opt",
+  payzentric: "payzentric",
   // Add more partner brands here as needed
 };
 
@@ -76,6 +77,10 @@ const KNOWN_PARTNER_DOMAINS: Record<string, string> = {
   "www.canyapay.com": "canyapay",
   "canyapay.azurewebsites.net": "canyapay",
   "canyapay.payportal.co": "canyapay",
+  "onramp.payzentric.com": "payzentric",
+  "www.onramp.payzentric.com": "payzentric",
+  "payzentric.com": "payzentric",
+  "www.payzentric.com": "payzentric",
   "pay.data-opt.com": "data-opt",
   "www.pay.data-opt.com": "data-opt",
   "data-opt.com": "data-opt",
@@ -172,6 +177,7 @@ function deriveBrandKeyFromHostname(host: string): { brandKey: string; container
   if (hostLower.includes("aipowerpay")) return { brandKey: "aipowerpay", containerType: "partner" };
   if (hostLower.includes("lucky13")) return { brandKey: "lucky13", containerType: "partner" };
   if (hostLower.includes("canyapay")) return { brandKey: "canyapay", containerType: "partner" };
+  if (hostLower.includes("payzentric")) return { brandKey: "payzentric", containerType: "partner" };
   if (hostLower.includes("data-opt") || hostLower.includes("dataopt")) return { brandKey: "data-opt", containerType: "partner" };
 
   return null;

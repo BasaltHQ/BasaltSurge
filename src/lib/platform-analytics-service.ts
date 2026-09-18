@@ -155,7 +155,8 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         tnp: "TNP",
         "data-opt": "Data-Opt",
         dataopt: "Data-Opt",
-        xoinpay: "XoinPay"
+        xoinpay: "XoinPay",
+        payzentric: "Payzentric"
       };
       if (knownNames[key]) return knownNames[key];
       if (brandNameMap[key]) return brandNameMap[key];

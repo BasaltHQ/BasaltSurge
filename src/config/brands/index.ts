@@ -70,6 +70,13 @@ export type BrandConfig = {
   feeMinusEnabled?: boolean;
   achEnabled?: boolean;
 
+  // Deployed smart contract split addresses and configs
+  splitAddress?: string;
+  splitAddressCredit?: string;
+  splitConfig?: any;
+  splitConfigCredit?: any;
+  config?: any;
+
   // Thirdweb & Telemetry Keys
   thirdwebClientId?: string;
   microsoftClarityId?: string; // Microsoft Clarity Project ID for partner container monitoring
@@ -161,6 +168,20 @@ export const BRANDS: Record<string, BrandConfig> = {
     appUrl: "https://pay.data-opt.com",
     apimCatalog: [],
   },
+  payzentric: {
+    key: "payzentric",
+    name: "Payzentric",
+    colors: { primary: "#10b981", accent: "#059669" },
+    logos: { app: "/ppsymbol.png", favicon: "/api/favicon", symbol: "/ppsymbol.png" },
+    meta: { ogTitle: "Payzentric", ogDescription: "Payzentric Payments & Portals" },
+    platformFeeBps: 50,
+    partnerFeeBps: 0,
+    defaultMerchantFeeBps: 0,
+    unifiedFeeEnabled: false,
+    feeMinusEnabled: false,
+    appUrl: "https://onramp.payzentric.com",
+    apimCatalog: [],
+  },
 };
 
 import { isPlatformContext, isPartnerContext, getSanitizedSplitBps } from "@/lib/env";
@@ -205,6 +226,7 @@ export function getBrandKey(req?: NextRequest): string {
     if (hostLower.includes("icunow")) return "icunow-store";
     if (hostLower.includes("aipowerpay")) return "aipowerpay";
     if (hostLower.includes("canyapay")) return "canyapay";
+    if (hostLower.includes("payzentric")) return "payzentric";
     if (hostLower.includes("data-opt") || hostLower.includes("dataopt")) return "data-opt";
     if (hostLower === "digital.tnpsettle.com") return "tnp";
     

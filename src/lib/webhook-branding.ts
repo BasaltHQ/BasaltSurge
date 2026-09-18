@@ -5,6 +5,7 @@ const WEBHOOK_BRAND_NAMES: Record<string, string> = {
   xoinpay: "Xoinpay",
   "data-opt": "Data-Opt",
   dataopt: "Data-Opt",
+  payzentric: "Payzentric",
 };
 
 /**

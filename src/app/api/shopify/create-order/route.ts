@@ -32,21 +32,37 @@ export async function POST(req: NextRequest) {
       })
       .fetchAll();
 
-    // Fallback: search by shop suffix if not fully matched
+    // Fallback 1: search by shop suffix if not fully matched
     if (resources.length === 0) {
       const cleanShop = shop.replace(".myshopify.com", "");
       const { resources: fallbackRes } = await container.items
         .query({
-          query: "SELECT * FROM c WHERE c.type = 'shop_config' AND CONTAINS(LOWER(c.shopify.shop), @s)",
+          query: "SELECT * FROM c WHERE c.type = 'shop_config' AND (CONTAINS(LOWER(c.shopify.shop), @s) OR (IS_DEFINED(c.customDomain) AND CONTAINS(LOWER(c.customDomain), @s)))",
           parameters: [{ name: "@s", value: cleanShop }]
         })
         .fetchAll();
       resources = fallbackRes;
     }
 
+    // Fallback 2: search by root slug (e.g., 'greenstore' from 'www.greenstore.com' or 'greenstore.myshopify.com')
     if (resources.length === 0) {
+      const hostClean = (domain || shop).replace(/^https?:\/\//, "").replace(/^www\./, "");
+      const slug = hostClean.split(".")[0];
+      if (slug && slug.length >= 3) {
+        const { resources: slugRes } = await container.items
+          .query({
+            query: "SELECT * FROM c WHERE c.type = 'shop_config' AND (CONTAINS(LOWER(c.shopify.shop), @slug) OR (IS_DEFINED(c.customDomain) AND CONTAINS(LOWER(c.customDomain), @slug)))",
+            parameters: [{ name: "@slug", value: slug }]
+          })
+          .fetchAll();
+        resources = slugRes;
+      }
+    }
+
+    if (resources.length === 0) {
+      console.warn(`[Shopify Create Order] Shop not configured for shop='${shop}', domain='${domain}'`);
       return NextResponse.json(
-        { error: "shop_not_configured", message: `Shop '${shop}' is not linked to any merchant profile on this platform.` },
+        { error: "shop_not_configured", message: `Shop '${shop}' (domain: '${domain}') is not linked to any merchant profile on this platform.` },
         { status: 404, headers: { "x-correlation-id": correlationId } }
       );
     }
