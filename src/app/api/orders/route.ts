@@ -462,7 +462,7 @@ export async function POST(req: NextRequest) {
     try {
       const container = await getContainer();
       const baseSelect =
-        "SELECT c.id, c.wallet, c.sku, c.name, c.priceUsd, c.nativePrice, c.currency, c.stockQty, c.category, c.description, c.tags, c.images, c.attributes, c.costUsd, c.taxable, c.jurisdictionCode, c.metrics, c.createdAt, c.updatedAt, c.shippingEnabled, c.shippingConfig, c.deliveryEnabled FROM c WHERE c.type='inventory_item' AND c.wallet=@wallet";
+        "SELECT c.id, c.wallet, c.sku, c.name, c.priceUsd, c.nativePrice, c.currency, c.stockQty, c.category, c.description, c.tags, c.images, c.attributes, c.costUsd, c.taxable, c.jurisdictionCode, c.metrics, c.createdAt, c.updatedAt, c.shippingEnabled, c.shippingConfig, c.deliveryEnabled, c.shopifyProductVariantId, c.shopifyProductId, c.brandKey FROM c WHERE c.type='inventory_item' AND c.wallet=@wallet";
       // Determine if we're in a strict partner context
       const partner = isPartnerContext();
       const spec =
@@ -496,7 +496,19 @@ export async function POST(req: NextRequest) {
         invIndex[rid] = row as any;
         invIndex[suffix] = row as any;
         invIndex[`inventory:${suffix}`] = row as any;
-        if (row?.sku) invIndex[`sku:${String(row.sku)}`] = row as any;
+        if (row?.sku) {
+          const s = String(row.sku).trim();
+          invIndex[`sku:${s}`] = row as any;
+          invIndex[`sku:${s.toLowerCase()}`] = row as any;
+          invIndex[s] = row as any;
+          invIndex[s.toLowerCase()] = row as any;
+        }
+        if (row?.shopifyProductVariantId) {
+          const vid = String(row.shopifyProductVariantId).trim();
+          invIndex[vid] = row as any;
+          invIndex[`variant:${vid}`] = row as any;
+          invIndex[`shopify:${vid}`] = row as any;
+        }
       }
     } catch {
       let memItems = getInventoryItems(wallet);
@@ -512,15 +524,33 @@ export async function POST(req: NextRequest) {
         invIndex[rid] = row as any;
         invIndex[suffix] = row as any;
         invIndex[`inventory:${suffix}`] = row as any;
-        if (row?.sku) invIndex[`sku:${String(row.sku)}`] = row as any;
+        if (row?.sku) {
+          const s = String(row.sku).trim();
+          invIndex[`sku:${s}`] = row as any;
+          invIndex[`sku:${s.toLowerCase()}`] = row as any;
+          invIndex[s] = row as any;
+          invIndex[s.toLowerCase()] = row as any;
+        }
+        if (row?.shopifyProductVariantId) {
+          const vid = String(row.shopifyProductVariantId).trim();
+          invIndex[vid] = row as any;
+          invIndex[`variant:${vid}`] = row as any;
+          invIndex[`shopify:${vid}`] = row as any;
+        }
       }
     }
 
     // Native catalog prices are normalized once, before the existing discount,
     // tax and fee calculations. Legacy priceUsd always remains USD.
-    const selectedInventory = itemsBody.map(it => {
+    const selectedInventory = itemsBody.map((it: any) => {
       const id = String(it.id || "").replace(/^inventory:/i, "");
-      return invIndex[String(it.id || "")] || invIndex[id] || invIndex[`inventory:${id}`] || invIndex[`sku:${it.sku || ""}`];
+      const keySku = it.sku ? String(it.sku).trim() : "";
+      const keyVar = (it.variantId || it.shopifyProductVariantId) ? String(it.variantId || it.shopifyProductVariantId).trim() : "";
+      return invIndex[String(it.id || "")] ||
+        invIndex[id] ||
+        invIndex[`inventory:${id}`] ||
+        (keyVar ? (invIndex[`variant:${keyVar}`] || invIndex[keyVar] || invIndex[`shopify:${keyVar}`]) : undefined) ||
+        (keySku ? (invIndex[`sku:${keySku}`] || invIndex[`sku:${keySku.toLowerCase()}`] || invIndex[keySku] || invIndex[keySku.toLowerCase()]) : undefined);
     });
     const nativeCurrencies = new Set(selectedInventory.filter(Boolean).map((item: any) => item.nativePrice?.currency).filter(Boolean));
     const requestedCurrency = body.currency !== undefined ? receiptCurrency(body.currency) : undefined;
@@ -803,19 +833,21 @@ export async function POST(req: NextRequest) {
     let taxableSubtotalCents = 0;
     let subtotalCents = 0;
 
-    for (const it of itemsBody) {
+    for (const it of itemsBody as any[]) {
       const keyId = String(it.id || "");
       const idNorm = keyId.replace(/^inventory:/i, "");
-      const keySku = it.sku ? `sku:${String(it.sku)}` : "";
+      const keySku = it.sku ? String(it.sku).trim() : "";
+      const keyVar = (it.variantId || it.shopifyProductVariantId) ? String(it.variantId || it.shopifyProductVariantId).trim() : "";
       const inv =
         invIndex[keyId] ||
         invIndex[idNorm] ||
         invIndex[`inventory:${idNorm}`] ||
-        (keySku ? invIndex[keySku] : undefined);
+        (keyVar ? (invIndex[`variant:${keyVar}`] || invIndex[keyVar] || invIndex[`shopify:${keyVar}`]) : undefined) ||
+        (keySku ? (invIndex[`sku:${keySku}`] || invIndex[`sku:${keySku.toLowerCase()}`] || invIndex[keySku] || invIndex[keySku.toLowerCase()]) : undefined);
       const qty = Math.max(1, Number(it.qty || 1));
       if (!inv) {
         return NextResponse.json(
-          { error: "inventory_item_not_found", id: it.id, sku: it.sku },
+          { error: "inventory_item_not_found", id: it.id, sku: it.sku, variantId: it.variantId },
           { status: 400, headers: { "x-correlation-id": correlationId } }
         );
       }

@@ -68,36 +68,56 @@ export async function POST(req: NextRequest) {
     const itemByVariantId = new Map<string, any>();
     const itemBySku = new Map<string, any>();
     const itemById = new Map<string, any>();
+    const itemByTitle = new Map<string, any>();
 
     for (const it of existingItems) {
       if (it.id) itemById.set(String(it.id), it);
       if (it.shopifyProductVariantId) itemByVariantId.set(String(it.shopifyProductVariantId), it);
       if (it.sku) itemBySku.set(String(it.sku).trim().toLowerCase(), it);
+      if (it.name) itemByTitle.set(String(it.name).trim().toLowerCase(), it);
     }
 
-    const orderItems: Array<{ sku: string; qty: number }> = [];
+    const orderItems: Array<{ id?: string; sku: string; variantId?: string; qty: number }> = [];
 
     for (const cartItem of cart.items) {
       const variantId = String(cartItem.variant_id || cartItem.id || "");
       const rawSku = String(cartItem.sku || "").trim();
       const canonicalSku = rawSku || (variantId ? `shopify_${variantId}` : `shopify_${Date.now()}`);
       const qty = Math.max(1, Number(cartItem.quantity) || 1);
+      const variantTitle = cartItem.variant_title && cartItem.variant_title !== "Default Title" ? ` - ${cartItem.variant_title}` : "";
+      const productName = `${cartItem.product_title || cartItem.title || "Product"}${variantTitle}`;
 
-      // Check if item already exists by variant ID, SKU, or deterministic ID
+      // Check if item already exists by variant ID, SKU, title, or deterministic ID
       const deterministicId = variantId ? `inventory:${wallet}:${variantId}` : `inventory:${wallet}:${canonicalSku}`;
       const existing = (variantId ? itemByVariantId.get(variantId) : null) ||
                        (rawSku ? itemBySku.get(rawSku.toLowerCase()) : null) ||
-                       itemById.get(deterministicId);
+                       itemById.get(deterministicId) ||
+                       itemByTitle.get(productName.toLowerCase());
 
       if (existing) {
+        // If existing item lacks shopifyProductVariantId or sku, enrich it
+        let needsUpdate = false;
+        if (variantId && !existing.shopifyProductVariantId) {
+          existing.shopifyProductVariantId = variantId;
+          needsUpdate = true;
+        }
+        if (!existing.sku) {
+          existing.sku = canonicalSku;
+          needsUpdate = true;
+        }
+        if (needsUpdate) {
+          existing.updatedAt = Date.now();
+          await container.items.upsert(existing);
+        }
+
         orderItems.push({
+          id: existing.id,
           sku: existing.sku || canonicalSku,
+          variantId: variantId || existing.shopifyProductVariantId || undefined,
           qty
         });
       } else {
         const now = Date.now();
-        const variantTitle = cartItem.variant_title && cartItem.variant_title !== "Default Title" ? ` - ${cartItem.variant_title}` : "";
-        const productName = `${cartItem.product_title || cartItem.title || "Product"}${variantTitle}`;
         const priceUsd = Number(cartItem.price) / 100;
         const imageUrl = cartItem.image ? String(cartItem.image) : undefined;
 
@@ -123,9 +143,12 @@ export async function POST(req: NextRequest) {
         if (variantId) itemByVariantId.set(variantId, newInventoryDoc);
         if (canonicalSku) itemBySku.set(canonicalSku.toLowerCase(), newInventoryDoc);
         itemById.set(deterministicId, newInventoryDoc);
+        itemByTitle.set(productName.toLowerCase(), newInventoryDoc);
 
         orderItems.push({
+          id: deterministicId,
           sku: canonicalSku,
+          variantId: variantId || undefined,
           qty
         });
         console.log(`[Shopify Create Order] Auto-provisioned item ${canonicalSku} (${productName}) for wallet ${wallet}`);
