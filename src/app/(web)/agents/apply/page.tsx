@@ -380,9 +380,6 @@ export default function AgentSignUp() {
                             Join our network of registered agents. Set your custom basis-point margins, onboard merchants, and earn automated revenue splits from every transaction on Base — settled directly to your wallet forever.
                         </p>
                         <div className={styles.actions}>
-                            <a href="#apply-card" className={styles.primaryButton}>
-                                Apply as Agent <ArrowRight size={16} />
-                            </a>
                             <a href="#how-it-works" className={styles.textButton}>
                                 How it works <ArrowUpRight size={16} />
                             </a>
