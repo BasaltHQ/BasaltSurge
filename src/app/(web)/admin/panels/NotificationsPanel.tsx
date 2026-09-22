@@ -1,12 +1,197 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useActiveAccount } from "thirdweb/react";
-import { Bell, Mail, Shield, Save, CheckCircle, AlertTriangle, Eye, RefreshCw, Smartphone } from "lucide-react";
+import { Bell, Mail, Shield, Save, CheckCircle, AlertTriangle, Eye, RefreshCw, Smartphone, X, Plus } from "lucide-react";
 import { useBrand } from "@/contexts/BrandContext";
 import { isPlatformCtx, isPartnerCtx, isPlatformSuperAdmin } from "@/lib/authz";
 import { resolveWalletRole } from "@/lib/authz";
 import { DEFAULT_SETTINGS, parseNotificationEmails } from "@/lib/notifications/settings";
+
+const EMAIL_REGEX = /^[^\s@,;<>]+@[^\s@,;<>]+\.[^\s@,;<>]+$/;
+
+interface EmailTagInputProps {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  ariaDescribedBy?: string;
+  icon?: React.ReactNode;
+}
+
+function EmailTagInput({
+  id,
+  value,
+  onChange,
+  disabled = false,
+  placeholder = "Add an email address...",
+  ariaDescribedBy,
+  icon,
+}: EmailTagInputProps) {
+  const [input, setInput] = useState("");
+  const [inputError, setInputError] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Derive active tags from comma-separated string
+  const tags = useMemo(() => {
+    if (!value || typeof value !== "string") return [];
+    return value
+      .split(",")
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
+  }, [value]);
+
+  const commitTag = (raw: string) => {
+    const trimmed = raw.trim().replace(/^[,;\s]+|[,;\s]+$/g, "");
+    if (!trimmed) return;
+
+    const addresses = trimmed
+      .split(/[,;\s]+/)
+      .map((a) => a.trim().toLowerCase())
+      .filter(Boolean);
+
+    const newTags = [...tags];
+    let err = "";
+
+    for (const addr of addresses) {
+      if (!EMAIL_REGEX.test(addr) || addr.length > 254) {
+        err = `"${addr}" is not a valid email address.`;
+        break;
+      }
+      if (newTags.includes(addr)) {
+        err = `"${addr}" is already in the list.`;
+        continue;
+      }
+      if (newTags.length >= 50) {
+        err = "Maximum 50 recipient emails allowed.";
+        break;
+      }
+      newTags.push(addr);
+    }
+
+    if (err) {
+      setInputError(err);
+    } else {
+      setInputError("");
+    }
+
+    if (newTags.length !== tags.length) {
+      onChange(newTags.join(", "));
+    }
+    setInput("");
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter" || e.key === ",") {
+      e.preventDefault();
+      e.stopPropagation();
+      commitTag(input);
+    } else if (e.key === "Backspace" && !input && tags.length > 0) {
+      const newTags = tags.slice(0, -1);
+      onChange(newTags.join(", "));
+      if (inputError) setInputError("");
+    }
+  };
+
+  const handleBlur = () => {
+    if (input.trim()) {
+      commitTag(input);
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const text = e.clipboardData.getData("text");
+    if (text && (text.includes(",") || text.includes(";") || text.includes(" ") || text.includes("\n"))) {
+      e.preventDefault();
+      commitTag(text);
+    }
+  };
+
+  const removeTag = (indexToRemove: number) => {
+    const newTags = tags.filter((_, i) => i !== indexToRemove);
+    onChange(newTags.join(", "));
+    if (inputError) setInputError("");
+  };
+
+  return (
+    <div className="space-y-1.5 w-full">
+      <div
+        onClick={() => inputRef.current?.focus()}
+        className={`min-h-[46px] w-full p-2 bg-black/40 border border-white/10 rounded-xl flex flex-wrap items-center gap-1.5 transition-all cursor-text ${
+          disabled
+            ? "opacity-50 cursor-not-allowed bg-black/20"
+            : "focus-within:border-[var(--pp-secondary)] focus-within:ring-1 focus-within:ring-[var(--pp-secondary)]"
+        }`}
+      >
+        {icon && <div className="text-muted-foreground pl-1.5 pr-1">{icon}</div>}
+
+        {tags.map((tag, idx) => (
+          <span
+            key={`${tag}-${idx}`}
+            className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg text-xs font-medium bg-[var(--pp-secondary)]/15 border border-[var(--pp-secondary)]/30 text-[var(--pp-secondary)] shadow-sm animate-in fade-in zoom-in-95 duration-150 group"
+          >
+            <span className="truncate max-w-[200px] select-all">{tag}</span>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={(e) => {
+                e.stopPropagation();
+                removeTag(idx);
+              }}
+              className="p-0.5 rounded-full hover:bg-[var(--pp-secondary)]/30 text-[var(--pp-secondary)]/70 hover:text-[var(--pp-secondary)] transition-colors focus:outline-none focus:ring-1 focus:ring-[var(--pp-secondary)]"
+              aria-label={`Remove ${tag}`}
+              title={`Remove ${tag}`}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        ))}
+
+        <div className="flex-1 flex items-center min-w-[140px] gap-1">
+          <input
+            ref={inputRef}
+            id={id}
+            type="text"
+            inputMode="email"
+            value={input}
+            onChange={(e) => {
+              setInput(e.target.value);
+              if (inputError) setInputError("");
+            }}
+            onKeyDown={handleKeyDown}
+            onBlur={handleBlur}
+            onPaste={handlePaste}
+            disabled={disabled}
+            placeholder={tags.length === 0 ? placeholder : "Add another email..."}
+            aria-describedby={ariaDescribedBy}
+            className="w-full bg-transparent text-sm text-white placeholder:text-muted-foreground/60 outline-none px-1 py-1 disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+          {input.trim() && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                commitTag(input);
+              }}
+              className="px-2 py-0.5 rounded-md bg-[var(--pp-secondary)]/20 hover:bg-[var(--pp-secondary)]/30 text-[var(--pp-secondary)] text-xs font-semibold shrink-0 transition-colors flex items-center gap-1"
+            >
+              <Plus className="w-3 h-3" />
+              <span>Add</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {inputError && (
+        <p className="text-[11px] text-red-400 flex items-center gap-1 animate-in fade-in duration-200">
+          <AlertTriangle className="w-3 h-3 shrink-0" />
+          <span>{inputError}</span>
+        </p>
+      )}
+    </div>
+  );
+}
 
 // Define the alert definitions for each level
 interface NotificationEventDef {
@@ -26,6 +211,7 @@ const EVENTS_BY_LEVEL: Record<string, NotificationEventDef[]> = {
   ],
   partner: [
     { key: "merchant_signup", title: "New Merchant Application", description: "Alert when a merchant requests to onboard onto your whitelabel container." },
+    { key: "agent_request", title: "New Agent Request", description: "Alert when a candidate agent applies or registers to represent your brand." },
     { key: "split_deployed", title: "Split Contract Created", description: "Get notified when a new revenue-split contract is deployed on-chain." },
     { key: "device_offline", title: "Device Offline Alert", description: "Alert when a configured device misses three minutes of heartbeats." },
     { key: "support_ticket_created", title: "New Support Ticket", description: "Receive an alert when a customer opens a support ticket." },
@@ -33,6 +219,7 @@ const EVENTS_BY_LEVEL: Record<string, NotificationEventDef[]> = {
   ],
   platform: [
     { key: "partner_signup", title: "New Partner Container", description: "Platform warning when a new partner requests whitelist deployment." },
+    { key: "agent_request", title: "New Agent Request", description: "Alert when a new agent request or application is submitted across the network." },
     { key: "contract_upgraded", title: "Smart Contract Upgrade", description: "Alert when a payment splitter contract version is published." },
     { key: "node_error", title: "Decentralized Node Error", description: "Alert when a node reports degraded or critical performance, at most once per severity per hour." },
     { key: "system_status", title: "Platform System Status", description: "Receive published platform-wide announcements and maintenance updates." },
@@ -161,6 +348,8 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
   const [previewLogoUrl, setPreviewLogoUrl] = useState<string>("");
   const [previewLogoShape, setPreviewLogoShape] = useState<"square" | "circle">("square");
 
+  const draftKey = `pp_notif_draft_${activeLevel}_${wallet || "anon"}`;
+
   // Fetch notification settings whenever activeLevel or wallet changes
   useEffect(() => {
     if (!wallet || !activeLevel) return;
@@ -172,8 +361,13 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
         setError("");
         setSuccess(false);
 
-        const r = await fetch(`/api/notifications/settings?level=${activeLevel}`, {
-          headers: { "x-wallet": actorWallet, ...(activeLevel === "merchant" ? { "x-merchant-wallet": wallet } : {}) },
+        const brandKey = brand?.key || "basaltsurge";
+        const r = await fetch(`/api/notifications/settings?level=${activeLevel}&brandKey=${encodeURIComponent(brandKey)}`, {
+          headers: {
+            "x-wallet": actorWallet,
+            "x-brand-key": brandKey,
+            ...(activeLevel === "merchant" ? { "x-merchant-wallet": wallet } : {})
+          },
           cache: "no-store",
         });
         const j = await r.json().catch(() => ({}));
@@ -185,10 +379,29 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
           return;
         }
 
-        setEmail(j.email || "");
-        setEventEmails(j.eventEmails || {});
-        setEnabled(j.enabled ?? true);
-        setSettings(j.settings || {});
+        const serverEmail = j.email || "";
+        const serverEventEmails = j.eventEmails || {};
+
+        let draft: any = null;
+        try {
+          const raw = localStorage.getItem(draftKey);
+          if (raw) draft = JSON.parse(raw);
+        } catch {}
+
+        const serverHasEmails = serverEmail.trim().length > 0 || Object.values(serverEventEmails).some((v: any) => typeof v === "string" && v.trim().length > 0);
+        const draftHasEmails = draft && (draft.email?.trim()?.length > 0 || Object.values(draft.eventEmails || {}).some((v: any) => typeof v === "string" && v.trim().length > 0));
+
+        if (!serverHasEmails && draftHasEmails) {
+          setEmail(draft.email || "");
+          setEventEmails(draft.eventEmails || {});
+          setEnabled(draft.enabled ?? j.enabled ?? true);
+          setSettings(draft.settings || j.settings || {});
+        } else {
+          setEmail(serverEmail);
+          setEventEmails(serverEventEmails);
+          setEnabled(j.enabled ?? true);
+          setSettings(j.settings || {});
+        }
         setDelivery(j.delivery || null);
 
         // Select the first event by default for mockup preview
@@ -202,15 +415,29 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
     })();
 
     return () => { cancelled = true; };
-  }, [activeLevel, wallet, actorWallet, brand?.key]);
+  }, [activeLevel, wallet, actorWallet, brand?.key, draftKey]);
+
+  // Persist draft to localStorage when user makes modifications
+  useEffect(() => {
+    if (loading || !wallet) return;
+    try {
+      localStorage.setItem(draftKey, JSON.stringify({ email, eventEmails, settings, enabled }));
+    } catch {}
+  }, [email, eventEmails, settings, enabled, draftKey, loading, wallet]);
 
   useEffect(() => {
     if (!wallet || !actorWallet) return;
     let cancelled = false;
     const timer = setInterval(async () => {
       try {
-        const response = await fetch(`/api/notifications/settings?level=${activeLevel}`, {
-          headers: { "x-wallet": actorWallet, ...(activeLevel === "merchant" ? { "x-merchant-wallet": wallet } : {}) }, cache: "no-store",
+        const brandKey = brand?.key || "basaltsurge";
+        const response = await fetch(`/api/notifications/settings?level=${activeLevel}&brandKey=${encodeURIComponent(brandKey)}`, {
+          headers: {
+            "x-wallet": actorWallet,
+            "x-brand-key": brandKey,
+            ...(activeLevel === "merchant" ? { "x-merchant-wallet": wallet } : {})
+          },
+          cache: "no-store",
         });
         if (response.ok) {
           const data = await response.json();
@@ -292,21 +519,28 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
       setSuccess(false);
 
       const recipients = parseNotificationEmails(email);
-      if (enabled && !recipients.length) throw new Error("Enter at least one overall recipient email.");
+      const hasOverall = recipients.length > 0;
+      const hasOverrides = Object.values(eventEmails).some(v => typeof v === "string" && v.trim().length > 0);
+      if (enabled && !hasOverall && !hasOverrides) {
+        throw new Error("Enter at least one recipient email (overall or for a notification type).");
+      }
       for (const ev of EVENTS_BY_LEVEL[activeLevel]) {
         try { parseNotificationEmails(eventEmails[ev.key]); }
         catch (error: any) { throw new Error(`${ev.title}: ${error.message}`); }
       }
 
+      const brandKey = brand?.key || "basaltsurge";
       const r = await fetch("/api/notifications/settings", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-wallet": actorWallet,
+          "x-brand-key": brandKey,
           ...(activeLevel === "merchant" ? { "x-merchant-wallet": wallet } : {}),
         },
         body: JSON.stringify({
           level: activeLevel,
+          brandKey,
           email,
           eventEmails,
           enabled,
@@ -320,8 +554,11 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
         return;
       }
 
-      setEmail(j.doc.email);
+      setEmail(j.doc.email || "");
       setEventEmails(j.doc.eventEmails || {});
+      try {
+        localStorage.removeItem(draftKey);
+      } catch {}
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err: any) {
@@ -413,6 +650,19 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
             { label: "Business Name", value: "Chickenbones Barbecue" },
             { label: "Contact Email", value: "onboarding@chickenbones.xyz" },
             { label: "Container Brand", value: previewBrandName },
+          ]
+        };
+      case "agent_request":
+        return {
+          title: "New Agent Application",
+          subtitle: "Candidate: Elena Vance",
+          message: "A new candidate agent has submitted an application to represent your brand and is pending review.",
+          details: [
+            { label: "Agent Name", value: "Elena Vance" },
+            { label: "Email", value: "elena.vance@blackmesa.org" },
+            { label: "Wallet", value: "0x4a7...9921", isCode: true },
+            { label: "Phone", value: "+1 (555) 019-2834" },
+            { label: "Notes", value: "Experienced merchant acquisition specialist in Pacific Northwest region." },
           ]
         };
       case "split_deployed":
@@ -569,26 +819,22 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
                 </div>
 
                 <div className="space-y-1.5 pt-2">
-                  <label htmlFor="notification-email" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                    Overall Recipients (CSV)
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="notification-email"
-                      type="text"
-                      inputMode="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="owner@example.com, operations@example.com"
-                      disabled={!enabled}
-                      className="w-full h-12 pl-11 pr-4 bg-black/40 border border-white/10 rounded-xl focus:outline-none focus:ring-1 focus:ring-[var(--pp-secondary)] transition-all font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                    />
-                    <div className="absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground">
-                      <Mail className="w-4 h-4" />
-                    </div>
+                  <div className="flex items-center justify-between">
+                    <label htmlFor="notification-email" className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Overall Recipients
+                    </label>
+                    <span className="text-[10px] text-muted-foreground/70">Press Enter or comma to add tag</span>
                   </div>
+                  <EmailTagInput
+                    id="notification-email"
+                    value={email}
+                    onChange={setEmail}
+                    disabled={!enabled}
+                    placeholder="e.g. owner@example.com, ops@example.com"
+                    icon={<Mail className="w-4 h-4" />}
+                  />
                   <p className="text-[10px] text-muted-foreground leading-normal">
-                    Separate email addresses with commas (up to 50). Each recipient receives a separate email. Alerts use this list unless you set an override below. No DNS setup is needed.
+                    Enter one or more recipient emails. Each recipient receives a separate email. Alerts use this list unless an override is set below.
                   </p>
                   {delivery && <p className={`text-xs ${delivery.retrying ? "text-amber-500" : "text-muted-foreground"}`} role="status">
                     Latest alert: {delivery.retrying ? "Delivery failed; retrying automatically" : delivery.status === "accepted" ? "Accepted by email provider" : delivery.status === "pending" ? "Queued for sending" : "Skipped: disabled or no longer applicable"}
@@ -614,18 +860,14 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
                           <label className="text-sm font-semibold">{ev.title}</label>
                           <div className="text-[11px] text-muted-foreground leading-normal max-w-md">{ev.description}</div>
                           <label htmlFor={`notification-email-${ev.key}`} className="block pt-2 text-xs text-muted-foreground">Recipient override (optional)</label>
-                          <input
+                          <EmailTagInput
                             id={`notification-email-${ev.key}`}
-                            type="text"
-                            inputMode="email"
                             value={eventEmails[ev.key] || ""}
-                            onChange={(e) => setEventEmails(prev => ({ ...prev, [ev.key]: e.target.value }))}
+                            onChange={(val) => setEventEmails(prev => ({ ...prev, [ev.key]: val }))}
                             disabled={!enabled || !isChecked}
                             placeholder="Leave blank to use overall recipients"
-                            aria-describedby={`notification-email-help-${ev.key}`}
-                            className="w-full p-3 bg-black/40 border border-white/10 rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-[var(--pp-secondary)] disabled:opacity-50"
                           />
-                          <p id={`notification-email-help-${ev.key}`} className="text-[10px] text-muted-foreground">One email or a comma-separated list. Replaces the overall list for this type.</p>
+                          <p className="text-[10px] text-muted-foreground">Overrides overall recipients for this notification type.</p>
                         </div>
                         <button
                           type="button"

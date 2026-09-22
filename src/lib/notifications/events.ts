@@ -1,5 +1,6 @@
 import { getBrandKey } from "@/config/brands";
 import { enqueueNotification } from "./outbox";
+import { notificationBrand } from "./settings";
 
 export function eventTime(value: unknown): number {
   const numeric = Number(value);
@@ -64,4 +65,59 @@ export async function notifySplitRelease(tx: any, merchantWallet: string, brandK
       { label: "Amount", value: `${tx.value} ${tx.token || "ETH"}` }, { label: "Transaction", value: tx.hash, isCode: true },
     ] },
   });
+}
+
+export async function notifyAgentRequest(request: any, brandKey?: string) {
+  const resolvedBrand = request.brandKey || brandKey || getBrandKey();
+  const isResubmission = request.status === "resubmitted" || request.isResubmission;
+  const title = isResubmission
+    ? "Agent Application Resubmitted"
+    : "New Agent Application";
+  const message = isResubmission
+    ? "A candidate agent has resubmitted their application for review."
+    : "A new candidate agent application has been submitted and is pending review.";
+
+  const details = [
+    { label: "Agent Name", value: String(request.name || "—") },
+    { label: "Email", value: String(request.email || "—") },
+    { label: "Wallet", value: String(request.wallet || "—"), isCode: true },
+    ...(request.phone ? [{ label: "Phone", value: String(request.phone) }] : []),
+    ...(request.notes ? [{ label: "Notes", value: String(request.notes) }] : []),
+  ];
+
+  const occurredAt = eventTime(request.updatedAt || request.createdAt) || Date.now();
+
+  await enqueueNotification({
+    level: "partner",
+    brandKey: resolvedBrand,
+    event: "agent_request",
+    eventId: `${request.id}:${occurredAt}`,
+    occurredAt,
+    data: {
+      title,
+      subtitle: `Agent: ${request.name || request.wallet}`,
+      message,
+      details,
+      ctaText: "Review Agents",
+      ctaUrl: "/admin",
+    },
+  });
+
+  if (notificationBrand(resolvedBrand) === "basaltsurge") {
+    await enqueueNotification({
+      level: "platform",
+      brandKey: "basaltsurge",
+      event: "agent_request",
+      eventId: `${request.id}:${occurredAt}:platform`,
+      occurredAt,
+      data: {
+        title,
+        subtitle: `Agent: ${request.name || request.wallet}`,
+        message,
+        details,
+        ctaText: "Review Agents",
+        ctaUrl: "/admin",
+      },
+    });
+  }
 }

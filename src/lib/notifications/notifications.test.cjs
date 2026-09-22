@@ -342,6 +342,11 @@ test('API saves normalized CSV and overrides, retains omitted overrides and reje
   assert.equal((await save({ email: doc.email })).status, 200);
   const loaded = await (await api.GET(new Request('https://acme.test/api/notifications/settings'))).json();
   assert.equal(loaded.eventEmails.purchase_completed, 'finance@example.com');
+  const overrideOnly = await save({ email: '', eventEmails: { purchase_completed: 'override@example.com' } });
+  assert.equal(overrideOnly.status, 200);
+  const overrideOnlyDoc = (await overrideOnly.json()).doc;
+  assert.equal(overrideOnlyDoc.email, '');
+  assert.equal(overrideOnlyDoc.eventEmails.purchase_completed, 'override@example.com');
   assert.equal((await save({ email: doc.email, eventEmails: { purchase_completed: 'valid@example.com, broken' } })).status, 400);
   assert.equal((await save({ email: doc.email, eventEmails: [] })).status, 400);
   assert.equal((await save({ email: 'bad, one@example.com' })).status, 400);
@@ -401,4 +406,43 @@ test('one failed support inbox does not block the remaining CSV recipients', asy
   const h = harness({ docs: [subscription({ email: 'first@example.com, second@example.com' })], failSend: data => data.to === 'first@example.com' });
   await h.load('support-dispatcher.ts').notifyAdminReply({ id: 'ticket', user: merchant, wallet: merchant, subject: 'Help', message: 'Help', brandKey: 'acme' }, 'Response');
   assert.deepEqual(h.sends.map(send => send.to), ['second@example.com']);
+});
+
+test('incoming agent requests enqueue notifications for partner and deliver to brand recipients', async () => {
+  const h = harness({
+    docs: [
+      subscription({ id: 'sub-acme', level: 'partner', brandKey: 'acme', eventEmails: { agent_request: 'agent-ops@example.com' } }),
+      subscription({ id: 'sub-other', level: 'partner', wallet: admin, brandKey: 'other', email: 'other-brand@example.com' }),
+    ],
+  });
+  const { notifyAgentRequest } = h.load('events.ts');
+  const agentReq = {
+    id: 'agent-req-123',
+    name: 'Elena Vance',
+    email: 'elena@example.com',
+    phone: '555-123-4567',
+    wallet: '0x1111111111111111111111111111111111111111',
+    notes: 'Pacific Northwest merchant rep',
+    createdAt: Date.now(),
+  };
+  await notifyAgentRequest(agentReq, 'acme');
+  await h.load('worker.ts').processNotificationOutbox();
+  assert.equal(h.sends.length, 1);
+  assert.equal(h.sends[0].to, 'agent-ops@example.com');
+  assert.match(h.sends[0].html, /Elena Vance/);
+  assert.match(h.sends[0].html, /Pacific Northwest/);
+
+  // Test basaltsurge enqueues both partner and platform
+  const hPlatform = harness({
+    docs: [
+      subscription({ id: 'part', level: 'partner', brandKey: 'basaltsurge', email: 'partner-admin@basalt.test' }),
+      subscription({ id: 'plat', level: 'platform', brandKey: 'basaltsurge', email: 'platform-admin@basalt.test' }),
+    ],
+  });
+  const eventsPlatform = hPlatform.load('events.ts');
+  await eventsPlatform.notifyAgentRequest(agentReq, 'basaltsurge');
+  await hPlatform.load('worker.ts').processNotificationOutbox();
+  assert.equal(hPlatform.sends.length, 2);
+  const recipients = hPlatform.sends.map(s => s.to).sort();
+  assert.deepEqual(recipients, ['partner-admin@basalt.test', 'platform-admin@basalt.test']);
 });
