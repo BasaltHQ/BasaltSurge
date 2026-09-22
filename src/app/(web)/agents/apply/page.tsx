@@ -15,7 +15,7 @@ import {
     Wallet, UserPlus, CheckCircle, Clock, XCircle, Loader2, ArrowRight,
     ArrowUpRight, Mail, Phone, User, FileText, ShieldCheck, Building2,
     Zap, LineChart, Link as LinkIcon, Globe, Target, TrendingUp, DollarSign,
-    ChevronDown, Layers, Lock, Sparkles, Star, Check
+    ChevronDown, Layers, Lock, Sparkles, Star, Check, Repeat
 } from "lucide-react";
 
 /* ═══════════════════════════════════════════════════════ */
