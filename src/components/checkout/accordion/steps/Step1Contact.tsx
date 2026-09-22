@@ -55,23 +55,15 @@ export function Step1Contact({
   const hasVisibleAuthElement = Boolean(authElement && (!headlessStep || ["authenticating", "collecting_phone"].includes(headlessStep)));
   const emailCorrection = suggestEmailCorrection(email);
   const countryDialCode = SUPPORTED_COUNTRIES.find((c) => c.code === country)?.dial || "+1";
-  const internalAuthContainerRef = React.useRef<HTMLDivElement | null>(null);
 
-  // Guarantee DOM element attachment and layout integrity across step transitions
+  // Guarantee layout integrity across step transitions
   React.useEffect(() => {
-    const target = (authContainerRef as any)?.current || internalAuthContainerRef.current;
-    if (target && authElement && typeof authElement === "object" && "nodeType" in authElement) {
-      if (!target.contains(authElement as Node)) {
-        target.innerHTML = "";
-        target.appendChild(authElement as HTMLElement);
-      }
-    }
     if (isOpen) {
       requestAnimationFrame(() => {
         window.dispatchEvent(new Event("resize"));
       });
     }
-  }, [authElement, isOpen, authContainerRef]);
+  }, [isOpen]);
 
   return (
     <AccordionCard isActive={isOpen} isLightText={isLightText}>

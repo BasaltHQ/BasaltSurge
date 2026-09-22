@@ -298,6 +298,22 @@ test("sequential SDK callbacks for 3DS can reacquire the same session reservatio
   assert.equal(h.requests.filter(r => r.options.method === "POST").length, 2);
 });
 
+test("successful checkout retains request correlation when the SDK fails after the response", async () => {
+  const h = harness({ postResponse: () => new Response(JSON.stringify({
+    status: "requires_payment", client_secret: "cos_mock_secret_test",
+    transaction_details: { last_error: null },
+  }), { status: 200, headers: { "request-id": "req_checkoutCorrelation" } }) });
+  const result = await h.post();
+  assert.equal(result.status, 200);
+  assert.equal(result.data.requestId, "req_checkoutCorrelation");
+  assert.equal(result.data.status, "requires_payment", "HTTP success does not establish payment acceptance");
+  assert.equal(h.receipt.stripeCheckoutDiagnostic.requestId, result.data.requestId);
+  assert.equal(h.receipt.stripeCheckoutRequestId, null, "the HTTP call completed");
+  assert.equal(h.receipt.stripePaymentAttemptSessionId, "cos_current", "the payment outcome is still unresolved");
+  assert.equal(h.receipt.stripeCheckoutDeclineCode, null);
+  assert.equal(JSON.stringify(h.receipt).includes("cos_mock_secret_test"), false);
+});
+
 for (const status of [200, 202, 402]) {
   test(`HTTP ${status} preserves provider decline evidence and request ID independently of the lock`, async () => {
     const error = { code: 'payment_method_authentication_failed', decline_code: 'authentication_not_handled', message: 'Authentication failed' };

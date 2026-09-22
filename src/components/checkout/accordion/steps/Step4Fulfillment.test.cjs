@@ -96,7 +96,7 @@ test("unknown pending offers a read-only status action and a support reference",
 test("service errors are not labeled as a bank decline", () => {
   const text = textOf(render({ headlessStep: "error", headlessStatus: "Stripe is temporarily unavailable" }));
   assert.match(text, /Checkout Needs Attention/);
-  assert.doesNotMatch(text, /Payment Declined|not authorized by your bank/);
+  assert.doesNotMatch(text, /Payment Declined|not authorized by your bank|Review your payment method/);
 });
 
 for (const headlessStep of ['collecting_kyc', 'submitting_kyc', 'checking_kyc', 'kyc_pending',

@@ -390,8 +390,8 @@ export function useAccordionCheckoutState(
 
   // Canonical Stripe Onramp KYC tier resolution via modular engine
   const kyc = useMemo(() => {
-    return resolveCustomerKycTier(kycTiers as KycTierEntry[], kycLevel);
-  }, [kycTiers, kycLevel]);
+    return resolveCustomerKycTier(kycTiers as KycTierEntry[], kycLevel, country);
+  }, [kycTiers, kycLevel, country]);
 
   const l1Verified = kyc.isL1Verified || kycTiers.some((t: any) => t.tier === "l1" && t.verification_status === "verified");
   const l2Verified = kyc.isL2Verified || docVerificationSuccess || kycTiers.some((t: any) => t.tier === "l2" && t.verification_status === "verified");
@@ -436,26 +436,6 @@ export function useAccordionCheckoutState(
     });
   }, [rawActiveError, recoveryError, l1Verified, l2Verified, kyc.currentTier]);
 
-  const cardLimitEntry = useMemo(() => {
-    if (!props.onrampLimits || !Array.isArray(props.onrampLimits)) return null;
-    return props.onrampLimits.find((l: any) => l.payment_method_type === "card" || l.payment_method_type === "credit");
-  }, [props.onrampLimits]);
-
-  const cardLimitInUsd = cardLimitEntry && cardLimitEntry.amount > 0 ? cardLimitEntry.amount / 100 : null;
-
-  const isProactiveL1StepUp = Boolean(
-    cardLimitInUsd &&
-    amountUsd > cardLimitInUsd &&
-    !l1Verified
-  );
-
-  const isProactiveL2StepUp = Boolean(
-    cardLimitInUsd &&
-    amountUsd > cardLimitInUsd &&
-    l1Verified &&
-    !l2Verified
-  );
-
   const ssnDigits = (ssn || "").replace(/\D/g, "");
   const dobStatus = validateDob(dob);
   const countryConfig = getCountryAddressConfig(country);
@@ -473,23 +453,20 @@ export function useAccordionCheckoutState(
     (effectiveTier === "l1" ||
       effectiveStatus === "step_up" ||
       (kycTierRequired as string) === "l1" ||
-      isProactiveL1StepUp ||
       parsedActiveError?.kycTargetTier === "l1" ||
       (isUS && !l2Verified && (effectiveTier === "l2" || parsedActiveError?.kycTargetTier === "l2" || effectiveStatus === "doc_verify")) ||
-      Boolean(parsedActiveError?.isAmountLimit && !l1Verified) ||
       (headlessStep === "collecting_kyc" && (kycTierRequired as string) === "l1") ||
       headlessStep === "submitting_kyc");
 
-  // Document verification button (Photo ID/Selfie): user needs L2 (EU region, explicit L2 tier requirement, amount limit, or retry L2 on rejection)
+  // Only a concrete tier requirement can request documents. An amount error
+  // (including a below-minimum purchase) does not itself request verification.
   const showVerifyDocs =
     !l2Verified &&
     (isEU ||
       effectiveTier === "l2" ||
       effectiveStatus === "doc_verify" ||
       (kycTierRequired as string) === "l2" ||
-      isProactiveL2StepUp ||
       parsedActiveError?.kycTargetTier === "l2" ||
-      Boolean(parsedActiveError?.isAmountLimit && !l2Verified) ||
       headlessStep === "verifying_identity");
 
   const isL2Requirement = showVerifyDocs;
@@ -705,10 +682,10 @@ export function useAccordionCheckoutState(
     if (shouldInitialize) {
       const timer = setTimeout(() => {
         if (!propPaymentElement) {
-          console.log("[ACCORDION STATE] Step 3 active with null paymentElement after 2.5s. Triggering session re-initialization...");
+          console.log("[ACCORDION STATE] Step 3 active with null paymentElement after 15s. Triggering session re-initialization...");
           handlePaymentTimeoutRetry();
         }
-      }, 2500);
+      }, 15000);
       return () => clearTimeout(timer);
     }
   }, [activeStep, propPaymentElement, isSimulationMode, handlePaymentTimeoutRetry, email, effectiveHeadlessStep]);
@@ -978,7 +955,11 @@ export function useAccordionCheckoutState(
       const res = await onVerifyDocuments();
       if (res === true) {
         setDocVerificationSuccess(true);
-        transitionToStep(3, "Document verification completed", isSimulationMode ? "simulation" : "submission");
+        if (effectivePaymentConfirmed || headlessStep === "checking_out" || headlessStep === "confirming_fees" || headlessStep === "awaiting_funds") {
+          transitionToStep(4, "Document verification completed; resuming fulfillment", isSimulationMode ? "simulation" : "submission");
+        } else {
+          transitionToStep(3, "Document verification completed", isSimulationMode ? "simulation" : "submission");
+        }
       }
     } catch (vErr: any) {
       console.warn("[ACCORDION] Document verification error:", vErr);
@@ -1104,12 +1085,13 @@ export function useAccordionCheckoutState(
         return;
       }
 
+
       // Post-KYC Step Routing Discrimination:
       // - If payment token exists (reactive step-up), resume fulfillment in Step 4
       // - If Level 2 photo ID / document verification is required (EU region or tier limit), automatically launch document verification
       // - Otherwise proceed to Step 3 payment method selection
       if (!propError && headlessStep !== "error") {
-        if (effectivePaymentConfirmed || headlessStep === "checking_out" || headlessStep === "confirming_fees") {
+        if (effectivePaymentConfirmed || headlessStep === "checking_out" || headlessStep === "confirming_fees" || headlessStep === "awaiting_funds") {
           transitionToStep(4, "KYC completed; resuming checkout already in fulfillment", "submission");
         } else if ((isL2Requirement || showVerifyDocs || isEU) && !isL2Approved && !docVerificationSuccess) {
           if (onVerifyDocuments) {

@@ -22,6 +22,19 @@ test("credentials in serialized logs and Error messages are redacted", () => {
   assert.equal(maskSensitiveData(message).includes("PRIVATE"), false);
   assert.equal(maskSensitiveData(new Error(message)).message.includes("PRIVATE"), false);
 });
+
+test("serialized checkout handoff diagnostics survive credential redaction", () => {
+  for (const checkoutResponseUsable of [true, false]) {
+    const diagnostic = { checkoutCallbackInvoked: true, checkoutResponseReceived: true,
+      checkoutResponseUsable, client_secret: "cos_ABC123_secret_PRIVATE" };
+    const sanitized = JSON.parse(maskSensitiveData(JSON.stringify(maskSensitiveData(diagnostic))));
+    assert.equal(sanitized.checkoutResponseUsable, checkoutResponseUsable);
+    assert.equal(sanitized.checkoutCallbackInvoked, true);
+    assert.equal(sanitized.checkoutResponseReceived, true);
+    assert.equal(sanitized.client_secret, "[REDACTED]");
+    assert.equal(JSON.stringify(sanitized).includes("PRIVATE"), false);
+  }
+});
 test("circular SDK records do not crash logging and retain masked identity numbers", () => {
   const record = { ssn: "123-45-6789" };
   record.self = record;

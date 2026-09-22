@@ -51,6 +51,8 @@ export interface KycFieldRequirement {
   label: string;
 }
 
+import { isEuEeaCountry } from "./utils";
+
 /**
  * Resolves a Stripe CryptoCustomer's `kyc_tiers` array using Stripe's canonical algorithm:
  * Iterates from highest tier (l2) to lowest (l0) and returns the first tier whose
@@ -58,8 +60,11 @@ export interface KycFieldRequirement {
  */
 export function resolveCustomerKycTier(
   kycTiers?: KycTierEntry[] | any[],
-  fallbackKycLevel?: string
+  fallbackKycLevel?: string,
+  countryOrRegion?: string
 ): ResolvedCustomerKyc {
+  const isEu = countryOrRegion ? (isEuEeaCountry(countryOrRegion) || String(countryOrRegion).toLowerCase() === "eu") : false;
+
   if (!kycTiers || !Array.isArray(kycTiers) || kycTiers.length === 0) {
     const isL2Fallback = fallbackKycLevel === "L2";
     const isL1Fallback = fallbackKycLevel === "L1" || isL2Fallback;
@@ -70,7 +75,7 @@ export function resolveCustomerKycTier(
       isL0Verified: isL0Fallback,
       isL1Verified: isL1Fallback,
       isL2Verified: isL2Fallback,
-      isAllKycCompleted: isL2Fallback || isL1Fallback,
+      isAllKycCompleted: isL2Fallback || (!isEu && isL1Fallback),
       isPending: fallbackKycLevel === "PENDING",
       isRejected: fallbackKycLevel === "REJECTED",
       isVerifiedAtTier: (tier: KycTierLevel) => {
@@ -109,7 +114,7 @@ export function resolveCustomerKycTier(
   const rejectedTier: KycTierLevel | undefined =
     l2Status === "rejected" ? "l2" : l1Status === "rejected" ? "l1" : l0Status === "rejected" ? "l0" : undefined;
 
-  const isAllKycCompleted = isL2Verified || isL1Verified || (isL0Verified && !isRejected);
+  const isAllKycCompleted = isL2Verified || (!isEu && (isL1Verified || (isL0Verified && !isRejected)));
 
   return {
     currentTier,
