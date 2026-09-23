@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
                 parameters: [],
             }).fetchAll(),
             container.items.query({
-                query: `SELECT c.wallet, c.name, c.theme FROM c WHERE c.type = 'shop_config'`,
+                query: `SELECT c.wallet, c.name, c.theme, c.brandKey FROM c WHERE c.type = 'shop_config'`,
                 parameters: [],
             }).fetchAll(),
             container.items.query({
@@ -97,31 +97,41 @@ export async function GET(req: NextRequest) {
         for (const shop of shops) {
             const w = String(shop.wallet || "").toLowerCase();
             if (!w) continue;
+            const b = String(shop.brandKey || shop.theme?.brandKey || "").toLowerCase();
             shopMap.set(w, {
                 name: shop.name || "Unknown Merchant",
                 logo: shop.theme?.brandLogoUrl || shop.theme?.brandFaviconUrl,
-                brandKey: String(shop.theme?.brandKey || "").toLowerCase() || undefined,
+                brandKey: b || undefined,
             });
         }
 
         // ── 3. Multi-source brand resolution ──
-        // Priority: site_config.brandKey > split_index.brandKey > shop_config.theme.brandKey
-        const walletBrand = new Map<string, string>();
+        // Support wallets operating in multiple brands by recording all brand affiliations
+        const walletBrands = new Map<string, Set<string>>();
+        const addBrand = (w: string, b: string) => {
+            if (!w || !b) return;
+            let set = walletBrands.get(w);
+            if (!set) {
+                set = new Set<string>();
+                walletBrands.set(w, set);
+            }
+            set.add(b.toLowerCase());
+        };
 
-        // Pass 1: shop_config.theme.brandKey (lowest priority)
+        // Pass 1: shop_config brandKey / theme.brandKey
         for (const shop of shops) {
             const w = String(shop.wallet || "").toLowerCase();
             if (!hex(w)) continue;
-            const rawBk = String(shop.theme?.brandKey || "").toLowerCase();
-            if (rawBk) walletBrand.set(w, rawBk);
+            const rawBk = String(shop.brandKey || shop.theme?.brandKey || "").toLowerCase();
+            if (rawBk) addBrand(w, rawBk);
         }
 
-        // Pass 2: split_index.brandKey (overrides shop_config)
+        // Pass 2: split_index.brandKey
         for (const row of splitRows) {
             const w = String(row.merchantWallet || "").toLowerCase();
             if (!hex(w)) continue;
             const rawBk = String(row.brandKey || "").toLowerCase();
-            if (rawBk) walletBrand.set(w, rawBk);
+            if (rawBk) addBrand(w, rawBk);
         }
 
         // Pass 3: site_config.brandKey (highest priority — set during onboarding)
@@ -129,20 +139,23 @@ export async function GET(req: NextRequest) {
         for (const sc of siteConfigs) {
             const w = String(sc.wallet || "").toLowerCase();
             if (!hex(w)) continue;
-            const rawBk = String(sc.brandKey || "").toLowerCase();
-            if (rawBk) walletBrand.set(w, rawBk);
-            siteConfigMap.set(w, sc);
+            const rawBk = String(sc.brandKey || sc.theme?.brandKey || "").toLowerCase();
+            if (rawBk) addBrand(w, rawBk);
+            // If multiple siteConfigs exist for same wallet, prefer the one for this partner brand
+            if (!siteConfigMap.has(w) || String(sc.brandKey || "").toLowerCase() === brandKey) {
+                siteConfigMap.set(w, sc);
+            }
         }
 
         // ── 4. Filter wallets belonging to this partner brand ──
         const partnerWallets = new Set<string>();
-        for (const [w, resolvedBrand] of walletBrand.entries()) {
+        for (const [w, brands] of walletBrands.entries()) {
             if (isPlatformBrand) {
-                if (!resolvedBrand || resolvedBrand === "portalpay" || resolvedBrand === "basaltsurge") {
+                if (brands.size === 0 || brands.has("portalpay") || brands.has("basaltsurge")) {
                     partnerWallets.add(w);
                 }
             } else {
-                if (resolvedBrand === brandKey) {
+                if (brands.has(brandKey)) {
                     partnerWallets.add(w);
                 }
             }
