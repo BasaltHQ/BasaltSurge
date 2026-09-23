@@ -40,8 +40,19 @@ export async function GET(req: NextRequest) {
         // Optional: Filter by specific employee
         const filterEmployeeId = searchParams.get("employeeId"); // Employee filter
         // Allow fallback to query params for direct PDF/Link access
-        const adminWallet = req.headers.get("x-linked-wallet") || searchParams.get("linkedWallet");
+        let adminWallet = req.headers.get("x-linked-wallet") || searchParams.get("linkedWallet");
         const targetMerchantWallet = req.headers.get("x-wallet") || searchParams.get("wallet");
+
+        // Fallback to authenticated caller if header was not passed
+        if (!adminWallet && !sessionId) {
+            try {
+                const { requireThirdwebAuth } = await import("@/lib/auth");
+                const auth = await requireThirdwebAuth(req);
+                if (auth?.wallet) {
+                    adminWallet = auth.wallet;
+                }
+            } catch { }
+        }
 
         console.log("[ReportsAPI] Debug Params:", {
             url: req.url,
@@ -64,42 +75,76 @@ export async function GET(req: NextRequest) {
             key: String(process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "").toLowerCase()
         };
 
+        const isPlatformBrandKey = (k: string) => !k || k === "portalpay" || k === "basaltsurge";
+
+        // Query all merchant identification and config docs to resolve associated brands
+        // Uses case-insensitive wallet matching and checks site_config, shop_config, client_request, split_index
+        const { resources: merchantDocs } = await container.items.query({
+            query: `SELECT c.id, c.type, c.brandKey, c.theme, c.config, c.displayName, c.shopName, c.name 
+                    FROM c 
+                    WHERE (c.type = 'site_config' OR c.type = 'shop_config' OR c.type = 'client_request' OR c.type = 'split_index') 
+                    AND (StringEquals(c.wallet, @w, true) OR StringEquals(c.merchantWallet, @w, true) OR LOWER(c.wallet) = @w OR LOWER(c.merchantWallet) = @w)`,
+            parameters: [{ name: "@w", value: w }]
+        }).fetchAll();
+
+        const merchantBrandKeys = new Set<string>();
+        for (const doc of merchantDocs || []) {
+            const bk = String(doc.brandKey || doc.theme?.brandKey || doc.config?.brandKey || "").trim().toLowerCase();
+            if (bk) merchantBrandKeys.add(bk);
+        }
+
+        // Also check if merchant has any receipts under the container's brandKey if not yet found
+        if (branding.key && !merchantBrandKeys.has(branding.key)) {
+            try {
+                const { resources: sampleReceipts } = await container.items.query({
+                    query: `SELECT TOP 1 c.id FROM c 
+                            WHERE c.type = 'receipt' 
+                            AND (StringEquals(c.wallet, @w, true) OR LOWER(c.wallet) = @w) 
+                            AND (StringEquals(c.brandKey, @bk, true) OR LOWER(c.brandKey) = @bk)`,
+                    parameters: [{ name: "@w", value: w }, { name: "@bk", value: branding.key }]
+                }).fetchAll();
+                if (sampleReceipts?.[0]) {
+                    merchantBrandKeys.add(branding.key);
+                }
+            } catch (err) {
+                console.warn("[ReportsAPI] Receipt brandKey check fallback failed:", err);
+            }
+        }
+
+        // Determine effective merchant brand in this context
+        let effectiveMerchantBrand = "";
+        if (branding.key && merchantBrandKeys.has(branding.key)) {
+            effectiveMerchantBrand = branding.key;
+        } else {
+            const siteDoc = merchantDocs.find((d: any) => d.type === "site_config" && (d.brandKey || d.theme?.brandKey));
+            const splitDoc = merchantDocs.find((d: any) => d.type === "split_index" && d.brandKey);
+            const shopDoc = merchantDocs.find((d: any) => d.type === "shop_config" && (d.brandKey || d.theme?.brandKey));
+            const reqDoc = merchantDocs.find((d: any) => d.type === "client_request" && d.brandKey);
+            effectiveMerchantBrand = String(
+                siteDoc?.brandKey || siteDoc?.theme?.brandKey ||
+                splitDoc?.brandKey ||
+                shopDoc?.brandKey || shopDoc?.theme?.brandKey ||
+                reqDoc?.brandKey ||
+                Array.from(merchantBrandKeys)[0] || ""
+            ).toLowerCase();
+        }
+
         if (ct === "partner") {
             if (!branding.key) {
                 console.error("[Reports] Partner container missing BRAND_KEY");
                 return NextResponse.json({ error: "Configuration error" }, { status: 500 });
             }
 
-            // Verify merchant belongs to this brand using multi-source resolution:
-            // Priority: site_config.brandKey > split_index.brandKey > shop_config.theme.brandKey
-            const [{ resources: siteConfigs }, { resources: shopConfigs }, { resources: splitConfigs }] = await Promise.all([
-                container.items.query({
-                    query: "SELECT c.brandKey FROM c WHERE c.type = 'site_config' AND c.wallet = @w",
-                    parameters: [{ name: "@w", value: w }]
-                }).fetchAll(),
-                container.items.query({
-                    query: "SELECT c.theme.brandKey AS brandKey FROM c WHERE c.type = 'shop_config' AND c.wallet = @w",
-                    parameters: [{ name: "@w", value: w }]
-                }).fetchAll(),
-                container.items.query({
-                    query: "SELECT c.brandKey FROM c WHERE c.type = 'split_index' AND c.merchantWallet = @w",
-                    parameters: [{ name: "@w", value: w }]
-                }).fetchAll(),
-            ]);
-
-            // 3-pass resolution: site_config > split_index > shop_config
-            const merchantBrand = String(
-                siteConfigs?.[0]?.brandKey || splitConfigs?.[0]?.brandKey || shopConfigs?.[0]?.brandKey || ""
-            ).toLowerCase();
-
-            // Normalize: platform brands (portalpay/basaltsurge) are equivalent
-            const isPlatformBrandKey = (k: string) => !k || k === "portalpay" || k === "basaltsurge";
-            const brandMatches = isPlatformBrandKey(branding.key)
-                ? isPlatformBrandKey(merchantBrand)
-                : merchantBrand === branding.key;
+            // Verify merchant belongs to this brand:
+            // 1. Merchant has explicit association with branding.key
+            // 2. OR branding.key is a platform brand and merchant has platform brand
+            // 3. OR merchant is a platform default merchant (portalpay/basaltsurge) allowed across containers
+            const brandMatches = merchantBrandKeys.has(branding.key) ||
+                (isPlatformBrandKey(branding.key) ? (merchantBrandKeys.size === 0 || Array.from(merchantBrandKeys).some(isPlatformBrandKey)) : false) ||
+                Array.from(merchantBrandKeys).some(isPlatformBrandKey);
 
             if (!brandMatches) {
-                console.warn(`[Reports] Blocked cross-brand access: Merchant ${merchantBrand || "(none)"} trying to access report on ${branding.key}`);
+                console.warn(`[Reports] Blocked cross-brand access: Merchant with brands [${Array.from(merchantBrandKeys).join(", ") || "(none)"}] trying to access report on ${branding.key}`);
                 return NextResponse.json({ error: "Unauthorized for this brand" }, { status: 403 });
             }
         }
@@ -153,31 +198,16 @@ export async function GET(req: NextRequest) {
                 } else {
                     // Check resolveAdminRole for partner admins or platform admins in DB
                     try {
-                        const [{ resources: siteConfigs }, { resources: shopConfigs }, { resources: splitConfigs }] = await Promise.all([
-                            container.items.query({
-                                query: "SELECT c.brandKey FROM c WHERE c.type = 'site_config' AND c.wallet = @w",
-                                parameters: [{ name: "@w", value: w }]
-                            }).fetchAll(),
-                            container.items.query({
-                                query: "SELECT c.theme.brandKey AS brandKey FROM c WHERE c.type = 'shop_config' AND c.wallet = @w",
-                                parameters: [{ name: "@w", value: w }]
-                            }).fetchAll(),
-                            container.items.query({
-                                query: "SELECT c.brandKey FROM c WHERE c.type = 'split_index' AND c.merchantWallet = @w",
-                                parameters: [{ name: "@w", value: w }]
-                            }).fetchAll(),
-                        ]);
-
-                        const merchantBrand = String(
-                            siteConfigs?.[0]?.brandKey || splitConfigs?.[0]?.brandKey || shopConfigs?.[0]?.brandKey || ""
-                        ).toLowerCase();
-
                         const { resolveAdminRole } = await import("@/lib/authz-server");
-                        const role = await resolveAdminRole(requestWallet, merchantBrand || undefined);
+                        const contextBrand = branding.key || effectiveMerchantBrand;
+                        let role = await resolveAdminRole(requestWallet, contextBrand || undefined);
+                        if (!role && effectiveMerchantBrand && effectiveMerchantBrand !== contextBrand) {
+                            role = await resolveAdminRole(requestWallet, effectiveMerchantBrand);
+                        }
                         if (role && (role.startsWith("partner_") || role.startsWith("platform_"))) {
                             authorized = true;
                             staffName = role.includes("partner") ? "Partner Admin" : "Platform Admin";
-                            console.log(`[ReportsAPI] DB Admin Access Granted: ${role} on brand: ${merchantBrand}`);
+                            console.log(`[ReportsAPI] DB Admin Access Granted: ${role} on brand: ${contextBrand || effectiveMerchantBrand}`);
                         }
                     } catch (err) {
                         console.error("[ReportsAPI] DB Admin check failed:", err);
@@ -226,12 +256,18 @@ export async function GET(req: NextRequest) {
                    c.employeeId, c.staffId, c.employeeName, c.servedBy, c.sessionId, c.sessionStartTime
             FROM c 
             WHERE c.type = 'receipt' 
-            AND c.wallet = @w 
+            AND (c.wallet = @w OR StringEquals(c.wallet, @w, true)) 
             AND LOWER(c.status) IN ('paid', 'checkout_success', 'confirmed', 'tx_mined', 'reconciled', 'settled', 'completed')
         `;
         const receiptsParams: { name: string; value: any }[] = [
             { name: "@w", value: w },
         ];
+
+        // On partner containers, scope receipts to this brand (excluding other partners' transactions)
+        if (ct === "partner" && branding.key) {
+            receiptsQueryString += ` AND (StringEquals(c.brandKey, @bk, true) OR NOT IS_DEFINED(c.brandKey) OR c.brandKey = null OR c.brandKey = '')`;
+            receiptsParams.push({ name: "@bk", value: branding.key });
+        }
 
         // Only apply time bounds for non-all-time queries
         if (!isAllTime) {
@@ -465,12 +501,14 @@ export async function GET(req: NextRequest) {
             try {
                 // Fetch the comprehensive split_index document (now includes per-tx details)
                 const { resources: splitIdxRes } = await container.items.query({
-                    query: "SELECT * FROM c WHERE c.type = 'split_index' AND c.merchantWallet = @w",
+                    query: "SELECT * FROM c WHERE c.type = 'split_index' AND (c.merchantWallet = @w OR StringEquals(c.merchantWallet, @w, true))",
                     parameters: [{ name: "@w", value: w }]
                 }).fetchAll();
 
                 if (splitIdxRes.length > 0) {
-                    splitIndex = splitIdxRes[0];
+                    splitIndex = (ct === "partner" && branding.key)
+                        ? (splitIdxRes.find((s: any) => String(s.brandKey || "").toLowerCase() === branding.key) || splitIdxRes[0])
+                        : splitIdxRes[0];
 
                     // Use embedded transactions array if available (post-enhancement)
                     if (Array.isArray(splitIndex.transactions) && splitIndex.transactions.length > 0) {
@@ -544,22 +582,38 @@ export async function GET(req: NextRequest) {
             // Multi-source: query param override > site_config > shop_config > fallback
             const merchantNameOverride = searchParams.get("merchantName");
 
-            const configQuery = {
-                query: "SELECT * FROM c WHERE LOWER(c.wallet) = @w AND c.type = 'shop_config'",
-                parameters: [{ name: "@w", value: w }]
-            };
-            const { resources: configs } = await container.items.query(configQuery).fetchAll();
-            let config = configs[0];
+            // Look in pre-fetched merchantDocs first, prioritizing this brand's config
+            const shopDocsForWallet = merchantDocs.filter((d: any) => d.type === "shop_config");
+            let config = (branding.key ? shopDocsForWallet.find((d: any) => String(d.brandKey || d.theme?.brandKey || "").toLowerCase() === branding.key) : null) || shopDocsForWallet[0];
+
+            if (!config) {
+                try {
+                    const configQuery = {
+                        query: "SELECT * FROM c WHERE (LOWER(c.wallet) = @w OR StringEquals(c.wallet, @w, true)) AND c.type = 'shop_config'",
+                        parameters: [{ name: "@w", value: w }]
+                    };
+                    const { resources: configs } = await container.items.query(configQuery).fetchAll();
+                    config = (branding.key ? configs.find((d: any) => String(d.brandKey || d.theme?.brandKey || "").toLowerCase() === branding.key) : null) || configs[0];
+                } catch { }
+            }
 
             // Also try site_config for display name (more reliable for partner-onboarded merchants)
             let siteDisplayName = "";
             try {
-                const { resources: siteConfigs } = await container.items.query({
-                    query: "SELECT c.displayName, c.shopName, c.name FROM c WHERE c.type = 'site_config' AND c.wallet = @w",
-                    parameters: [{ name: "@w", value: w }]
-                }).fetchAll();
-                if (siteConfigs?.[0]) {
-                    siteDisplayName = siteConfigs[0].displayName || siteConfigs[0].shopName || siteConfigs[0].name || "";
+                const siteDocsForWallet = merchantDocs.filter((d: any) => d.type === "site_config");
+                const matchedSite = (branding.key ? siteDocsForWallet.find((d: any) => String(d.brandKey || "").toLowerCase() === branding.key) : null) || siteDocsForWallet[0];
+                if (matchedSite) {
+                    siteDisplayName = matchedSite.displayName || matchedSite.shopName || matchedSite.name || "";
+                }
+                if (!siteDisplayName) {
+                    const { resources: siteConfigs } = await container.items.query({
+                        query: "SELECT c.displayName, c.shopName, c.name, c.brandKey FROM c WHERE c.type = 'site_config' AND (c.wallet = @w OR StringEquals(c.wallet, @w, true))",
+                        parameters: [{ name: "@w", value: w }]
+                    }).fetchAll();
+                    const preferredSite = (branding.key ? siteConfigs.find((d: any) => String(d.brandKey || "").toLowerCase() === branding.key) : null) || siteConfigs[0];
+                    if (preferredSite) {
+                        siteDisplayName = preferredSite.displayName || preferredSite.shopName || preferredSite.name || "";
+                    }
                 }
             } catch (e) {
                 console.warn("[ReportsAPI] site_config lookup failed:", e);
