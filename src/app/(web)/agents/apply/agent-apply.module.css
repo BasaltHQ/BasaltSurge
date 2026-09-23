@@ -559,27 +559,86 @@
   }
 }
 
-/* ──── Settlement Rail Strip (5 Columns) ──── */
-.railStrip {
-  grid-template-columns: 1.25fr repeat(4, 1fr) !important;
-  gap: 24px !important;
-  align-items: center !important;
+/* ──── Settlement Rail Section ──── */
+.railSection {
+  position: relative;
+  border-top: 1px solid #ffffff12;
+  padding-block: 36px 32px;
 }
 
-@media (max-width: 1024px) {
-  .railStrip {
-    grid-template-columns: repeat(2, 1fr) !important;
-    gap: 24px 20px !important;
-  }
-  .railStrip > p {
-    grid-column: 1 / -1;
+.railQuoteContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin-bottom: 28px;
+  flex-wrap: wrap;
+}
+
+.railQuote {
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -.01em;
+  color: #c5cbd2;
+  font-style: italic;
+}
+
+.railGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  align-items: center;
+  width: 100%;
+}
+
+.railItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 5px;
+}
+
+.railItemHeader {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -.04em;
+  color: #f3f4f5;
+}
+
+.railItemHeader svg {
+  color: #bec6d0;
+}
+
+.railItemLabel {
+  font-size: 7.5px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: #828d9a;
+  font-weight: 550;
+}
+
+@media (max-width: 800px) {
+  .railGrid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 28px 20px;
   }
 }
 
-@media (max-width: 640px) {
-  .railStrip {
-    grid-template-columns: 1fr !important;
-    gap: 20px !important;
+@media (max-width: 480px) {
+  .railGrid {
+    grid-template-columns: 1fr;
+    gap: 22px;
+  }
+  .railQuoteContainer {
+    gap: 8px;
+  }
+  .railQuote {
+    font-size: 12px;
   }
 }
 

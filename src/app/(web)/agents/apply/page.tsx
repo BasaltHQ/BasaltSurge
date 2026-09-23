@@ -406,12 +406,42 @@ export default function AgentSignUp() {
                 </div>
 
                 {/* ═══════════ PROTOCOL INFO STRIP ═══════════ */}
-                <div className={`${styles.container} ${styles.railStrip} ${agentStyles.railStrip}`}>
-                    <p>Automated payment rails.<br /><strong>Immutable settlement.</strong></p>
-                    <div><span className={styles.baseMark} /> Base <small>SETTLEMENT NETWORK</small></div>
-                    <div><DollarSign size={23} /> USDC <small>SETTLEMENT ASSET</small></div>
-                    <div><ShieldCheck size={23} /> Non-Custodial <small>SMART CONTRACT CUSTODY</small></div>
-                    <div><Zap size={23} /> Subsidized <small>ZERO WITHDRAWAL GAS</small></div>
+                <div className={`${styles.container} ${agentStyles.railSection}`}>
+                    <div className={agentStyles.railQuoteContainer}>
+                        <span className={agentStyles.railQuote}>&ldquo;Automated Payment Rails&rdquo;</span>
+                        <span className={styles.statusDot} />
+                        <span className={agentStyles.railQuote}>&ldquo;Immutable Settlement&rdquo;</span>
+                    </div>
+                    <div className={agentStyles.railGrid}>
+                        <div className={agentStyles.railItem}>
+                            <div className={agentStyles.railItemHeader}>
+                                <span className={styles.baseMark} />
+                                <span>Base</span>
+                            </div>
+                            <span className={agentStyles.railItemLabel}>SETTLEMENT NETWORK</span>
+                        </div>
+                        <div className={agentStyles.railItem}>
+                            <div className={agentStyles.railItemHeader}>
+                                <DollarSign size={22} />
+                                <span>USDC</span>
+                            </div>
+                            <span className={agentStyles.railItemLabel}>SETTLEMENT ASSET</span>
+                        </div>
+                        <div className={agentStyles.railItem}>
+                            <div className={agentStyles.railItemHeader}>
+                                <ShieldCheck size={22} />
+                                <span>Non-Custodial</span>
+                            </div>
+                            <span className={agentStyles.railItemLabel}>SMART CONTRACT CUSTODY</span>
+                        </div>
+                        <div className={agentStyles.railItem}>
+                            <div className={agentStyles.railItemHeader}>
+                                <Zap size={22} />
+                                <span>Subsidized</span>
+                            </div>
+                            <span className={agentStyles.railItemLabel}>ZERO WITHDRAWAL GAS</span>
+                        </div>
+                    </div>
                 </div>
             </section>
 
