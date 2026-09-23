@@ -171,9 +171,9 @@ async function checkAndRun() {
   schedule('lastAutocloseDate', currentHourUtc >= 8 && state.lastAutocloseDate !== todayStr,
     '/api/cron/autoclose', 'POST', todayStr);
 
-  // Reindex-all: every 6 hours since the last successful run.
-  const sixHoursMs = 6 * 60 * 60 * 1000;
-  schedule('lastReindexTime', nowMs - (state.lastReindexTime || 0) >= sixHoursMs,
+  // Check recorded activity every ten minutes. The endpoint only scans merchants
+  // with missing/changed indexes and enforces a shared six-hour merchant budget.
+  schedule('lastReindexTime', nowMs - (state.lastReindexTime || 0) >= tenMinutesMs,
     '/api/split/reindex-all', 'GET', nowMs);
 
   return (await Promise.all(jobs)).every(Boolean);

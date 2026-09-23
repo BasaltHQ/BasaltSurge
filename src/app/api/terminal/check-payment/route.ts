@@ -3,6 +3,7 @@ import { getSiteConfigForWallet } from "@/lib/site-config";
 import { getContract, getContractEvents, prepareEvent, createThirdwebClient } from "thirdweb";
 import { base } from "thirdweb/chains";
 import { getContainer } from "@/lib/cosmos";
+import { claimChainRead } from "@/lib/thirdweb/request-budget";
 
 // Lazy client initialization — avoids crash during `next build` when env vars
 // aren't available in the shell session (Plesk injects them only at runtime).
@@ -32,7 +33,7 @@ async function handleCheckPayment(params: {
         return NextResponse.json({ error: "Missing required params (wallet, receiptId, since)" }, { status: 400 });
     }
 
-    const sinceTime = typeof since === "number"
+    let sinceTime = typeof since === "number"
         ? (since > 1000000000000 ? since : since * 1000)
         : new Date(since).getTime();
 
@@ -46,6 +47,11 @@ async function handleCheckPayment(params: {
     const container = await getContainer();
     const { resource: receiptDoc } = await container.item(`receipt:${receiptId}`, normalizedWallet).read<any>();
 
+    // Unknown receipt IDs must never trigger paid upstream queries.
+    if (!receiptDoc) {
+        return NextResponse.json({ error: "Receipt not found" }, { status: 404 });
+    }
+
     if (receiptDoc) {
         const isPaid = receiptDoc.status === "paid" || receiptDoc.status === "checkout_success";
         if (isPaid) {
@@ -55,8 +61,19 @@ async function handleCheckPayment(params: {
     }
 
     // If we don't have amount or currency, we cannot perform the blockchain check, but we can return paid: false safely
-    if (!amount || !currency || Number(amount) <= 0) {
+    if (!amount || !currency || !Number.isFinite(Number(amount)) || Number(amount) <= 0) {
         return NextResponse.json({ ok: true, paid: false, warning: "Missing amount/currency/rates for chain check" });
+    }
+
+    const status = String(receiptDoc.status || "").toLowerCase();
+    if (["cancelled", "canceled", "expired", "void", "voided", "ach_pending", "paid - ach pending", "confirmed", "reconciled", "tx_mined", "settled", "completed"].includes(status) || status.includes("refund")) {
+        return NextResponse.json({ ok: true, paid: false, chainCheckSkipped: true });
+    }
+
+    // Use stored receipt age so changing query parameters cannot reset the budget.
+    const createdAt = Number(receiptDoc.createdAt) || Date.parse(String(receiptDoc.createdAt));
+    if (Number.isFinite(createdAt) && createdAt > 0) {
+        sinceTime = createdAt < 1e12 ? createdAt * 1000 : createdAt;
     }
 
     // 2. Get Split Address
@@ -87,6 +104,20 @@ async function handleCheckPayment(params: {
         }
     }
 
+    // Fiat-only terminal/kiosk status checks must not consume the crypto scan slot.
+    if (!isNative && !tokenConfig?.address) {
+        return NextResponse.json({ ok: true, paid: false, chainCheckSkipped: true });
+    }
+    const intervalMs = Date.now() - sinceTime > 30 * 60_000 ? 5 * 60_000 : 60_000;
+    try {
+        if (!await claimChainRead(container, `payment:${normalizedWallet}:${receiptId}`, intervalMs)) {
+            return NextResponse.json({ ok: true, paid: false, chainCheckSkipped: true });
+        }
+    } catch (error) {
+        console.error("Payment scan budget unavailable", error);
+        return NextResponse.json({ ok: true, paid: false, chainCheckSkipped: true });
+    }
+
     let foundTx: any = null;
 
     const expected = Number(amount);
@@ -114,10 +145,13 @@ async function handleCheckPayment(params: {
                 latestBlock = BigInt(rpcJson.result);
             }
         } catch (e) {
-            console.error("Failed to fetch latest block, defaulting to recent heuristic", e);
+            console.error("Failed to fetch latest block; skipping unbounded event scan", e);
         }
 
-        const safeFromBlock = latestBlock > BigInt(blocksToScan) ? latestBlock - BigInt(blocksToScan) : undefined;
+        if (latestBlock <= BigInt(0)) {
+            return NextResponse.json({ ok: true, paid: false, chainCheckSkipped: true });
+        }
+        const safeFromBlock = latestBlock > BigInt(blocksToScan) ? latestBlock - BigInt(blocksToScan) : BigInt(0);
 
         const contract = getContract({
             client: getThirdwebClient(),
@@ -129,6 +163,7 @@ async function handleCheckPayment(params: {
         const fetchOptions = {
             contract,
             fromBlock: safeFromBlock,
+            toBlock: latestBlock,
         };
 
         if (isNative) {
@@ -157,6 +192,7 @@ async function handleCheckPayment(params: {
                 events = await getContractEvents({
                     contract: tokenContract,
                     fromBlock: safeFromBlock,
+                    toBlock: latestBlock,
                     events: [event],
                 });
             }

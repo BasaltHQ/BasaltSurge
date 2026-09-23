@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth } from "@/lib/auth";
 import { resolveAdminRole } from "@/lib/authz-server";
@@ -7,17 +7,30 @@ import { requireCsrf } from "@/lib/security";
 import { DEFAULT_SETTINGS, notificationSettingsId, notificationEnabled, notificationRecipients, notificationSubscriptions, parseNotificationEmails, recipientSubscribedAt, type NotificationLevel } from "@/lib/notifications/settings";
 import { notificationDigest } from "@/lib/notifications/outbox";
 
-async function context(req: NextRequest, rawLevel: unknown) {
+async function context(req: NextRequest, rawLevel: unknown, bodyBrandKey?: string) {
   const level = String(rawLevel || "merchant").toLowerCase() as NotificationLevel;
   if (!Object.hasOwn(DEFAULT_SETTINGS, level)) throw Object.assign(new Error("invalid_level"), { status: 400 });
   let caller;
   try { caller = await requireThirdwebAuth(req); } catch { throw Object.assign(new Error("unauthorized"), { status: 401 }); }
-  const { brandKey } = getMerchantBrandScope(req);
+  const defaultScope = getMerchantBrandScope(req);
+  let brandKey = defaultScope.brandKey;
   let wallet = caller.wallet.trim().toLowerCase();
   if (level === "merchant") {
     const access = await requireMerchantPermission(req, req.headers.get("x-merchant-wallet") || wallet, "manage:settings");
     wallet = access.merchantWallet;
+    const requestedBrand = bodyBrandKey || req.headers.get("x-brand-key") || new URL(req.url).searchParams.get("brandKey");
+    if (requestedBrand && typeof requestedBrand === "string" && requestedBrand.trim()) {
+      brandKey = requestedBrand.trim().toLowerCase();
+    }
   } else {
+    const requestedBrand = bodyBrandKey || req.headers.get("x-brand-key") || new URL(req.url).searchParams.get("brandKey");
+    if (requestedBrand && typeof requestedBrand === "string" && requestedBrand.trim()) {
+      const candidateBrand = requestedBrand.trim().toLowerCase();
+      const role = await resolveAdminRole(wallet, candidateBrand);
+      if (role && ["platform_super_admin", "platform_admin", "partner_owner", "partner_admin"].includes(role)) {
+        brandKey = candidateBrand;
+      }
+    }
     const role = await resolveAdminRole(wallet, brandKey);
     const allowed = level === "platform" ? ["platform_super_admin", "platform_admin"] : ["platform_super_admin", "platform_admin", "partner_owner", "partner_admin"];
     if (!role || !allowed.includes(role)) throw Object.assign(new Error("forbidden"), { status: 403 });
@@ -35,6 +48,32 @@ async function readSettings(container: any, scope: Awaited<ReturnType<typeof con
   if (scope.brandKey === "basaltsurge") {
     try { return (await container.item(`notification_settings:${scope.level}:portalpay:${scope.wallet}`, scope.wallet).read()).resource; }
     catch (error: any) { if (Number(error?.code || error?.statusCode) !== 404) throw error; }
+  }
+  // Query-based fallbacks if point-read by id & wallet missed
+  if (scope.level === "partner") {
+    try {
+      const { resources } = await container.items.query({
+        query: "SELECT TOP 1 * FROM c WHERE c.type = 'notification_settings' AND c.level = 'partner' AND (c.brandKey = @brandKey OR c.brandKey = @altBrand) ORDER BY c.updatedAt DESC",
+        parameters: [{ name: "@brandKey", value: scope.brandKey }, { name: "@altBrand", value: notificationBrand(scope.brandKey) }],
+      }).fetchAll();
+      if (resources && resources.length > 0) return resources[0];
+    } catch {}
+  } else if (scope.level === "merchant") {
+    try {
+      const { resources } = await container.items.query({
+        query: "SELECT TOP 1 * FROM c WHERE c.type = 'notification_settings' AND c.level = 'merchant' AND c.wallet = @wallet ORDER BY c.updatedAt DESC",
+        parameters: [{ name: "@wallet", value: scope.wallet }],
+      }).fetchAll();
+      if (resources && resources.length > 0) return resources[0];
+    } catch {}
+  } else if (scope.level === "platform") {
+    try {
+      const { resources } = await container.items.query({
+        query: "SELECT TOP 1 * FROM c WHERE c.type = 'notification_settings' AND c.level = 'platform' ORDER BY c.updatedAt DESC",
+        parameters: [],
+      }).fetchAll();
+      if (resources && resources.length > 0) return resources[0];
+    } catch {}
   }
   return null;
 }
@@ -70,12 +109,11 @@ export async function POST(req: NextRequest) {
   try {
     requireCsrf(req);
     const body = await req.json();
-    const scope = await context(req, body.level);
+    const scope = await context(req, body.level, body.brandKey);
     let email: string;
     try { email = parseNotificationEmails(body.email).join(", "); }
     catch (error: any) { throw Object.assign(error, { status: 400 }); }
     const enabled = body.enabled !== false;
-    if (enabled && !email) throw Object.assign(new Error("At least one overall recipient email is required."), { status: 400 });
     const settings = { ...DEFAULT_SETTINGS[scope.level] };
     for (const key of Object.keys(settings)) if (typeof body.settings?.[key] === "boolean") settings[key] = body.settings[key];
     const container = await getContainer();
@@ -87,6 +125,9 @@ export async function POST(req: NextRequest) {
       try { eventEmails[key] = parseNotificationEmails(overrides[key]).join(", "); }
       catch (error: any) { throw Object.assign(new Error(`${key}: ${error.message}`), { status: 400 }); }
     }
+    const hasOverall = !!email;
+    const hasOverrides = Object.values(eventEmails).some(val => val && val.trim().length > 0);
+    if (enabled && !hasOverall && !hasOverrides) throw Object.assign(new Error("At least one recipient email is required."), { status: 400 });
     const now = new Date().toISOString();
     const next = { ...scope, email, enabled, settings, eventEmails };
     const recipientSubscriptions = notificationSubscriptions(previous, next, now);

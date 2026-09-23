@@ -2488,14 +2488,13 @@ test('portal error callback does not report unresolved authentication as a faile
   }
 });
 
-test('decline transition is recorded when the recovery timer changes the rendered step', async t => {
+test('decline transition is recorded immediately without a recovery timer', async t => {
   const h = createHarness({ accordion: true }); t.after(h.unmount);
   const events = [];
   h.render({ headlessStep: 'checking_out', country: 'US', kycLevel: 'L0', kycTiers: [{tier:'l0',verification_status:'verified'}], onAccordionStepTransition: event => events.push(event) });
   const state = h.render({ headlessStep: 'collecting_payment', headlessError: 'Your card was declined.', paymentElement: h.paymentElement });
-  assert.equal(state.activeStep, 4);
-  assert.notEqual(events.at(-1).toStep, 3);
-  await h.runTimer(2200);
+  assert.equal(state.activeStep, 3);
+  assert.equal(h.hasTimer(2200), false);
   assert.equal(h.render().activeStep, 3);
   assert.equal(events.at(-1).toStep, 3);
 });
@@ -2782,4 +2781,173 @@ test('ambiguous new-session advice cannot discard the reserved session', async t
   assert.equal(hook.errorDetails.code, 'crypto_onramp_session_error');
   assert.equal(h.calls.performCheckout, 1);
   assert.equal(h.calls.requests.filter(item => item.pathname === '/api/stripe/onramp-session-v2').length, 1);
+});
+
+// Regression coverage for the documented embedded-onramp recovery contract.
+test('below-minimum amount errors do not invent verification requirements', t => {
+  const h = createHarness({ accordion: true }); t.after(h.unmount);
+  const tiers = usCustomer().kycTiers;
+  h.render({ initialCountry: 'US', headlessStep: 'checking_out', kycTiers: tiers, kycLevel: 'L0' });
+  const ui = h.render({ headlessStep: 'error', headlessError: 'Increase the purchase amount.', headlessErrorDetails: { code: 'crypto_onramp_amount_below_minimum', message: 'Increase the purchase amount.' } });
+  assert.equal(ui.activeStep, 3);
+  assert.equal(ui.step2Props.showStepUpForm, false);
+  assert.equal(ui.step2Props.showVerifyDocs, false);
+});
+
+test('a verified EU customer receives a fresh document challenge at session creation', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.sessionFailure = { code: 'crypto_onramp_missing_document_verification', error: 'Document verification required.' };
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_audit', paymentMethodDetails: { type: 'card', card: { funding: 'debit' } } });
+  await flow;
+  assert.equal(h.render().step, 'collecting_kyc');
+  assert.equal(h.render().kycTierRequired, 'l2');
+  assert.equal(h.render().error, null);
+  assert.equal(h.calls.verifyDocuments, 0);
+});
+
+test('a document prerequisite 401 requires reauthentication instead of polling forever', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified');
+  void h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.customerStatus = 401;
+  assert.equal(await h.render().verifyDocuments(), false);
+  assert.equal(h.render().step, 'error');
+  await h.render().checkKycStatus();
+  assert.equal(h.render().step, 'error');
+  assert.equal(h.calls.authenticate, 1);
+  assert.equal(h.render().errorDetails.code, "stripe_reauthentication_required");
+});
+
+test('reset invalidates an outstanding authentication callback', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.deferAuthentication = true;
+  h.state.kycVerified = true;
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.authenticationCompletion);
+  h.render().reset();
+  assert.equal(h.render().step, 'idle');
+  const before = h.calls.requests.length;
+  h.state.authenticationCompletion({ result: 'success', crypto_customer_id: 'crc_test_buyer' });
+  await flow;
+  assert.equal(h.calls.requests.slice(before).some(r => r.pathname === '/api/stripe/link-auth-tokens'), false);
+  assert.equal(h.render().step, 'idle');
+});
+
+test('payment callback KYC errors use the same recovery as session creation', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = usCustomer();
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ error: { code: 'crypto_onramp_missing_identity_verification', message: 'Complete L1.' } });
+  await flow;
+  const result = h.render();
+  assert.equal(result.step, 'collecting_kyc');
+  assert.equal(result.kycTierRequired, 'l1');
+  assert.equal(result.paymentElement, null);
+  assert.equal(result.error, null);
+});
+
+test('reset clears the previous customer verification state', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified', 'verified');
+  void h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  assert.equal(h.render().kycLevel, 'L2');
+  h.render().reset();
+  const result = h.render();
+  assert.equal(result.cryptoCustomerId, null);
+  assert.equal(result.kycLevel, 'REQUIRES_KYC');
+  assert.equal(result.isAllKycCompleted, false);
+  assert.equal(result.kycTiers.length, 0);
+});
+
+test('global rejection handling uses the current receipt', t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.render({ receiptId: 'R-OLD' });
+  h.render({ receiptId: 'R-NEW' });
+  h.rejectGlobally({ code: 'crypto_onramp_unsupportable_customer', message: 'Account unavailable.' });
+  const write = h.calls.requests.find(r => r.pathname === '/api/receipts/status');
+  assert.equal(JSON.parse(write.options.body).receiptId, 'R-NEW');
+});
+
+test('a payment callback document challenge remains actionable after L2 approval', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.customerData = usCustomer('verified', 'verified');
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ error: { code: 'crypto_onramp_missing_document_verification', message: 'Repeat documents.' } });
+  await flow;
+  const result = h.render();
+  const ui = createHarness({ accordion: true }); t.after(ui.unmount);
+  const state = ui.render({ initialCountry: 'US', headlessStep: result.step, headlessError: result.error,
+    headlessErrorDetails: result.errorDetails, kycLevel: result.kycLevel, kycTiers: result.kycTiers,
+    kycTierRequired: result.kycTierRequired, isAllKycCompleted: result.isAllKycCompleted });
+  assert.equal(state.activeStep, 2);
+  assert.equal(state.step2Props.showVerifyDocs, true);
+  assert.equal(state.isStep2Satisfied, false);
+});
+
+test('a card-detection callback can reset checkout before limits or session creation', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.kycVerified = true;
+  const flow = h.render({ onCardDetected: card => { if (card) h.render().reset(); } }).startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  const before = h.calls.requests.length;
+  h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_reset', paymentMethodDetails: { type: 'card', card: { funding: 'credit', brand: 'amex' } } });
+  await flow;
+  assert.equal(h.render().step, 'idle');
+  assert.equal(h.calls.requests.slice(before).some(r => r.pathname.includes('onramp-limits') || r.pathname.includes('onramp-session')), false);
+});
+
+test('a customer read completing after reset cannot restore verification or payment collection', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.deferCustomer = true;
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.resolveCustomer);
+  h.render().reset();
+  h.state.resolveCustomer(usCustomer('verified', 'verified'));
+  await flow;
+  assert.equal(h.render().step, 'idle');
+  assert.equal(h.render().kycTiers.length, 0);
+  assert.equal(h.render().isAllKycCompleted, false);
+  assert.equal(h.calls.paymentOptions.length, 0);
+});
+
+test('a fresh EU document challenge completes documents before resuming the same purchase', async t => {
+  const h = createHarness({ ownership: { source: 'backend' } }); t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.sessionFailure = { code: 'crypto_onramp_missing_document_verification', error: 'Document verification required.' };
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_fresh_docs', paymentMethodDetails: { type: 'card', card: { funding: 'debit' } } });
+  await flow;
+  assert.equal(h.render().kycTierRequired, 'l2');
+  h.state.sessionFailure = null;
+  assert.equal(await h.render().verifyDocuments(), true);
+  await settleUntil(() => h.calls.successes.length === 1);
+  assert.equal(h.calls.verifyDocuments, 1);
+  assert.equal(h.calls.authenticate, 1);
+  assert.equal(h.render().step, 'completed');
+});
+
+test('repeated EU document requirements stop after bounded recovery attempts', async t => {
+  const h = createHarness(); t.after(h.unmount);
+  h.state.kycVerified = true;
+  h.state.sessionFailure = { code: 'crypto_onramp_missing_document_verification', error: 'Document verification required.' };
+  const flow = h.render().startOnramp();
+  await settleUntil(() => h.state.paymentCompletion);
+  h.state.paymentCompletion({ cryptoPaymentToken: 'cpt_repeated_docs', paymentMethodDetails: { type: 'card', card: { funding: 'debit' } } });
+  await flow;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    assert.equal(await h.render().verifyDocuments(), true);
+    await settleUntil(() => ['collecting_kyc', 'error'].includes(h.render().step));
+  }
+  assert.equal(h.render().step, 'error');
+  assert.equal(h.render().errorDetails.code, 'verification_recovery_exhausted');
+  assert.equal(h.calls.verifyDocuments, 2);
+  assert.equal(h.calls.requests.filter(r => r.pathname === '/api/stripe/onramp-session-v2').length, 3);
 });

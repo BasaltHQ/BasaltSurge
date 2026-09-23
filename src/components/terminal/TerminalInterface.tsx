@@ -294,7 +294,7 @@ export default function TerminalInterface({ merchantWallet, employeeId, employee
         let isChecking = false;
         if (qrOpen && selected && selected.status !== "paid") {
             const poll = async () => {
-                if (isChecking) return;
+                if (isChecking || document.visibilityState === "hidden") return;
                 isChecking = true;
                 try {
                     const res = await fetch("/api/terminal/check-payment", {

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { v4 as uuidv4 } from "uuid";
+import { getBrandKey } from "@/config/brands";
+import { notifyAgentRequest } from "@/lib/notifications/events";
 
 export const dynamic = "force-dynamic";
 
@@ -20,9 +22,9 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Connect your wallet" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const brandKey = (
+            getBrandKey(req) || process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "basaltsurge"
+        ).toLowerCase().trim();
 
         const body = await req.json();
         const { name, email, phone, notes } = body;
@@ -59,6 +61,13 @@ export async function POST(req: NextRequest) {
                     updatedAt: Date.now(),
                 };
                 await container.items.upsert(doc);
+
+                try {
+                    await notifyAgentRequest({ ...doc, isResubmission: true }, brandKey);
+                } catch (notifErr) {
+                    console.warn("[agents/signup] Notification error on resubmission:", notifErr);
+                }
+
                 return NextResponse.json({ status: "resubmitted", id: current.id });
             }
             return NextResponse.json({
@@ -84,6 +93,12 @@ export async function POST(req: NextRequest) {
 
         await container.items.create(doc);
 
+        try {
+            await notifyAgentRequest(doc, brandKey);
+        } catch (notifErr) {
+            console.warn("[agents/signup] Notification error on signup:", notifErr);
+        }
+
         return NextResponse.json({ status: "pending", id: doc.id });
     } catch (err: any) {
         console.error("[agents/signup] Error:", err);
@@ -98,9 +113,9 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "Connect your wallet" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const brandKey = (
+            getBrandKey(req) || process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "basaltsurge"
+        ).toLowerCase().trim();
 
         const container = await getContainer();
 

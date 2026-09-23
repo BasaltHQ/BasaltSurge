@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { v4 as uuidv4 } from "uuid";
+import { getBrandKey } from "@/config/brands";
+import { notifyAgentRequest } from "@/lib/notifications/events";
 
 export const dynamic = "force-dynamic";
 
@@ -20,9 +22,9 @@ export async function GET(req: NextRequest) {
             return NextResponse.json({ error: "Connect your wallet" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const brandKey = (
+            getBrandKey(req) || process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "basaltsurge"
+        ).toLowerCase().trim();
 
         const container = await getContainer();
 
@@ -92,9 +94,9 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: "Connect your wallet" }, { status: 401 });
         }
 
-        const brandKey = String(
-            process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || ""
-        ).toLowerCase();
+        const brandKey = (
+            getBrandKey(req) || process.env.BRAND_KEY || process.env.NEXT_PUBLIC_BRAND_KEY || "basaltsurge"
+        ).toLowerCase().trim();
 
         const body = await req.json();
         const { name, email, phone } = body;
@@ -143,6 +145,13 @@ export async function POST(req: NextRequest) {
         };
 
         await container.items.create(doc);
+
+        try {
+            await notifyAgentRequest(doc, brandKey);
+        } catch (notifErr) {
+            console.warn("[agents/profile] Notification error on agent profile create:", notifErr);
+        }
+
         return NextResponse.json({ success: true, created: true });
     } catch (err: any) {
         console.error("[agents/profile] POST Error:", err);

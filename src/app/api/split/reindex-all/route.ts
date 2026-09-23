@@ -6,10 +6,12 @@ import * as crypto from "node:crypto";
 import { getClient, chain } from "@/lib/thirdweb/client";
 import { debug } from "@/lib/logger";
 import { getContract, readContract } from "thirdweb";
+import { claimChainRead } from "@/lib/thirdweb/request-budget";
+import { merchantNeedsIndex, indexConfigurationKey, INDEX_ACTIVITY_DELAY_MS, MERCHANT_INDEX_COOLDOWN_MS } from "@/lib/thirdweb/merchant-index-policy";
 
 /**
  * POST /api/split/reindex-all
- * Batch reindexes all merchants with split contracts.
+ * Checks merchant activity and reindexes only merchants that need an update.
  * Admin-only endpoint. Aggregates ALL split versions per merchant.
  */
 
@@ -82,6 +84,21 @@ export async function POST(req: NextRequest) {
     const containerType = String(process.env.CONTAINER_TYPE || process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").trim().toLowerCase();
     const isPartnerContainer = containerType === "partner" || (!!envBrandKey && envBrandKey !== "portalpay" && envBrandKey !== "basaltsurge");
 
+    const requestedWallet = new URL(req.url).searchParams.get("merchantWallet")?.toLowerCase();
+    const forceMerchant = new URL(req.url).searchParams.get("force") === "true";
+    if (forceMerchant && !requestedWallet) {
+      return NextResponse.json({ ok: false, error: "force_requires_merchant_wallet" }, { status: 400 });
+    }
+    if (requestedWallet && !/^0x[a-f0-9]{40}$/i.test(requestedWallet)) {
+      return NextResponse.json({ ok: false, error: "invalid_merchant_wallet" }, { status: 400 });
+    }
+    // The legacy endpoint name is retained for existing schedulers. Discovery is
+    // cheap database work; chain scans are separately budgeted per merchant.
+    const scope = isPartnerContainer ? `partner:${envBrandKey}` : "platform";
+    if (!await claimChainRead(container, `index-discovery:${scope}:${requestedWallet || "all"}`, 5 * 60_000)) {
+      return NextResponse.json({ ok: true, skipped: true, reason: "reindex_cooldown" });
+    }
+
     // Query site_config documents with split addresses
     let spec: any;
     if (isPartnerContainer && envBrandKey) {
@@ -110,23 +127,15 @@ export async function POST(req: NextRequest) {
 
     debug("BATCH REINDEX", `Found ${configs.length} merchants with split addresses in site_config`);
 
-    // Fetch live token prices ONCE for the whole batch
-    const [ethRates, btcUsd, xrpUsd, solUsd] = await Promise.allSettled([
-      fetchEthRates(), fetchBtcUsd(), fetchXrpUsd(), fetchSolUsd()
-    ]);
-
-    const tokenPrices: Record<string, number> = {
-      ETH: ethRates.status === "fulfilled" ? Number(ethRates.value?.["USD"] || 0) : 0 || 2500,
-      USDC: 1.0,
-      USDT: 1.0,
-      cbBTC: btcUsd.status === "fulfilled" ? Number(btcUsd.value || 0) : 0 || 65000,
-      cbXRP: xrpUsd.status === "fulfilled" ? Number(xrpUsd.value || 0) : 0 || 0.50,
-      SOL: solUsd.status === "fulfilled" ? Number(solUsd.value || 0) : 0 || 150,
-    };
+    // Resolve prices only if an eligible merchant actually gets a scan slot.
+    let batchTokenPrices: Record<string, number> | undefined;
 
     const results = [];
     let successCount = 0;
     let errorCount = 0;
+    let skippedCount = 0;
+    const activityThrough = Date.now() - INDEX_ACTIVITY_DELAY_MS;
+    const runsContainer = await getContainer(undefined, "autoclose_runs");
 
     // ── PRE-AGGREGATE: Merge ALL split addresses from ALL site_config docs per merchant ──
     // Some merchants have multiple site_config docs (e.g., one with the new split in `splitAddress`,
@@ -234,7 +243,42 @@ export async function POST(req: NextRequest) {
     debug("BATCH REINDEX", `Pre-aggregated split addresses for ${merchantSplitMap.size} unique merchants from ${configs.length} site_config docs`);
 
     for (const [merchantWallet, merchantData] of merchantSplitMap.entries()) {
+      if (requestedWallet && merchantWallet !== requestedWallet) continue;
       try {
+        const addresses = [...merchantData.allAddresses.keys()];
+        const configurationKey = indexConfigurationKey(addresses, merchantData.partnerWallet, merchantData.agentWallets);
+        const indexId = `split_index_${merchantWallet}`;
+        let snapshot: any;
+        try {
+          snapshot = (await container.item(indexId, indexId).read()).resource;
+        } catch (error: any) {
+          if (Number(error?.code || error?.statusCode) !== 404) throw error;
+        }
+        if (!forceMerchant && !await merchantNeedsIndex({ container, runsContainer, wallet: merchantWallet, addresses, configurationKey, snapshot, through: activityThrough })) {
+          skippedCount++;
+          results.push({ merchant: merchantWallet, skipped: true, reason: "no_new_activity" });
+          continue;
+        }
+        // Shared key also deduplicates platform and partner workers indexing the
+        // same merchant. Failures retain the cooldown to prevent retry storms.
+        if (!await claimChainRead(container, `merchant-index:${merchantWallet}`, MERCHANT_INDEX_COOLDOWN_MS)) {
+          skippedCount++;
+          results.push({ merchant: merchantWallet, skipped: true, reason: "merchant_cooldown" });
+          continue;
+        }
+        if (!batchTokenPrices) {
+          const [ethRates, btcUsd, xrpUsd, solUsd] = await Promise.allSettled([
+            fetchEthRates(), fetchBtcUsd(), fetchXrpUsd(), fetchSolUsd()
+          ]);
+          batchTokenPrices = {
+            ETH: ethRates.status === "fulfilled" ? Number(ethRates.value?.["USD"] || 0) : 2500,
+            USDC: 1, USDT: 1,
+            cbBTC: btcUsd.status === "fulfilled" ? Number(btcUsd.value || 0) : 65000,
+            cbXRP: xrpUsd.status === "fulfilled" ? Number(xrpUsd.value || 0) : 0.50,
+            SOL: solUsd.status === "fulfilled" ? Number(solUsd.value || 0) : 150,
+          };
+        }
+        const tokenPrices = batchTokenPrices;
         debug("BATCH REINDEX", `Indexing merchant ${merchantWallet.slice(0, 10)}...`);
 
         // ── BUILD SPLIT ADDRESSES LIST ──
@@ -323,9 +367,7 @@ export async function POST(req: NextRequest) {
             agentWallets: merchantData.agentWallets,
             limit: 1000,
             deployedAt: split.deployedAt,
-          }).catch(err => {
-            console.error(`[ReindexAll] Helper error for split ${split.address}:`, err);
-            return { transactions: [], cumulative: { payments: {}, merchantReleases: {}, partnerReleases: {}, agentReleases: {}, platformReleases: {} } };
+            throwOnError: true,
           });
 
           for (const tx of (txResult.transactions || [])) {
@@ -531,6 +573,8 @@ export async function POST(req: NextRequest) {
           firstTransactionAt: firstTransactionAt === Infinity ? null : firstTransactionAt,
           lastTransactionAt: lastTransactionAt === 0 ? null : lastTransactionAt,
           lastIndexedAt: Date.now(),
+          activityCheckedThrough: activityThrough,
+          indexConfigurationKey: configurationKey,
           correlationId,
         };
 
@@ -596,7 +640,7 @@ export async function POST(req: NextRequest) {
     debug("BATCH REINDEX", `Completed - ${successCount} success, ${errorCount} errors`);
 
     return NextResponse.json(
-      { ok: true, totalMerchants: configs.length, successCount, errorCount, results },
+      { ok: true, totalMerchants: configs.length, successCount, errorCount, skippedCount, results },
       { headers: { "x-correlation-id": correlationId } }
     );
   } catch (e: any) {

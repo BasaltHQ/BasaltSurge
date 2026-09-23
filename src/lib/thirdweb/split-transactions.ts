@@ -70,6 +70,7 @@ export interface FetchSplitTransactionsParams {
   agentWallets?: string[];
   limit?: number;
   deployedAt?: number;
+  throwOnError?: boolean;
 }
 
 /**
@@ -131,6 +132,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
     events: [paymentReceivedEvent],
     fromBlock: startBlock,
   }).catch((err) => {
+    if (params.throwOnError) throw err;
     console.error(`[SplitTransactions] Error getting PaymentReceived for ${splitAddrLower}:`, err);
     return [];
   });
@@ -140,6 +142,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
     events: [paymentReleasedEvent],
     fromBlock: startBlock,
   }).catch((err) => {
+    if (params.throwOnError) throw err;
     console.error(`[SplitTransactions] Error getting PaymentReleased for ${splitAddrLower}:`, err);
     return [];
   });
@@ -167,7 +170,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
         })
       ],
       fromBlock: startBlock,
-    }).then(events => events.map(e => ({ ...e, token, flowType: "payment" }))).catch(() => []);
+    }).then(events => events.map(e => ({ ...e, token, flowType: "payment" }))).catch(err => { if (params.throwOnError) throw err; return []; });
 
     // Payouts/Releases out (Transfer from split contract)
     const p2 = getContractEvents({
@@ -179,7 +182,7 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
         })
       ],
       fromBlock: startBlock,
-    }).then(events => events.map(e => ({ ...e, token, flowType: "release" }))).catch(() => []);
+    }).then(events => events.map(e => ({ ...e, token, flowType: "release" }))).catch(err => { if (params.throwOnError) throw err; return []; });
 
     tokenPromises.push(p1, p2);
   }
@@ -195,6 +198,15 @@ export async function fetchSplitTransactionsThirdweb(params: FetchSplitTransacti
   ]);
 
   const allTokenEvents = tokenEventsLists.flat();
+
+  // Insight already returns block timestamps. Seed the cache before falling
+  // back to RPC for logs from chains/providers that omit this field.
+  for (const event of [...nativeReceived, ...nativeReleased, ...allTokenEvents]) {
+    const timestamp = Number((event as any).blockTimestamp) * 1000;
+    if (Number.isFinite(timestamp) && timestamp > 0) {
+      blockTimestampCache.set(event.blockNumber, timestamp);
+    }
+  }
 
   // Find all unique block numbers across all events to pre-resolve block timestamps in batch
   const uniqueBlocks = new Set<bigint>();

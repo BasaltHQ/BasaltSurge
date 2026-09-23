@@ -3678,7 +3678,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     if (!receipt || paymentConfirmed || isSettled(receipt.status) || loadingReceipt || !merchantWallet || !receiptId || !token || isNaN(activeAmount) || activeAmount <= 0) return;
 
     const checkPayment = async () => {
-      if (isChecking) return;
+      if (!active || isChecking || document.visibilityState === "hidden") return;
       isChecking = true;
       try {
         const queryParams = new URLSearchParams({
@@ -3755,14 +3755,21 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       }
     };
 
-    // Poll every 5s if we have a valid receipt configuration
+    let initialTimer: ReturnType<typeof setTimeout> | undefined;
+    // Fast DB status checks; the server independently budgets chain scans.
     if (merchantWallet && receiptId) {
-      timer = setInterval(checkPayment, 5000);
+      timer = setInterval(checkPayment, 15000);
       // Initial check delayed slightly
-      setTimeout(checkPayment, 2000);
+      initialTimer = setTimeout(checkPayment, 2000);
     }
 
-    return () => { active = false; clearInterval(timer); };
+    document.addEventListener("visibilitychange", checkPayment);
+    return () => {
+      active = false;
+      clearInterval(timer);
+      clearTimeout(initialTimer);
+      document.removeEventListener("visibilitychange", checkPayment);
+    };
   }, [receipt, paymentConfirmed, loadingReceipt, merchantWallet, receiptId, totalUsd, stripeWidgetAmount, widgetAmount, token]);
 
   const amountReady = useMemo(() => {
