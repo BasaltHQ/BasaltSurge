@@ -195,6 +195,18 @@ test('successful reconciliation is not submitted again until it becomes due', as
   assert.equal(h.requests.length, 1);
 });
 
+test('merchant activity discovery runs every ten minutes without polling each minute', async () => {
+  const h = harness();
+  h.advance(9 * 60 * 1000);
+  await h.scheduler.checkAndRun();
+  assert.equal(h.requests.filter(request => request.path === '/api/split/reindex-all').length, 0);
+  h.advance(60 * 1000);
+  await h.scheduler.checkAndRun();
+  assert.equal(h.requests.filter(request => request.path === '/api/split/reindex-all').length, 1);
+  await h.scheduler.checkAndRun();
+  assert.equal(h.requests.filter(request => request.path === '/api/split/reindex-all').length, 1);
+});
+
 test('notifications run every minute while reconciliation retains its ten-minute cadence', async () => {
   const h = harness();
   await h.scheduler.checkAndRun();

@@ -377,7 +377,7 @@ export default function KioskClient({ config, items: initialItems, merchantWalle
         let isChecking = false;
         if (checkoutOpen && currentReceipt && !isPaid) {
             const poll = async () => {
-                if (isChecking) return;
+                if (isChecking || document.visibilityState === "hidden") return;
                 isChecking = true;
                 try {
                     const res = await fetch("/api/terminal/check-payment", {

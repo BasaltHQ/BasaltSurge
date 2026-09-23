@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import IndexedReportStatus, { summarizeReportIndexes } from "@/components/admin/IndexedReportStatus";
 import { useActiveAccount } from "thirdweb/react";
 import { FileText, Download, Calendar, User, Loader2, Printer, Table2, DollarSign, Receipt, TrendingUp, BarChart3, PieChart, ArrowUpDown, Link2 } from "lucide-react";
 import { formatCurrency } from "@/lib/fx";
@@ -42,6 +43,8 @@ export default function ReportsPanelMerchant({ overrideWallet }: { overrideWalle
     // On-chain transactions from split_index
     const [splitTransactions, setSplitTransactions] = useState<any[]>([]);
     const [splitTxLoading, setSplitTxLoading] = useState(false);
+    const [txIndexStatus, setTxIndexStatus] = useState(() => summarizeReportIndexes([]));
+    const txRequestVersion = useRef(0);
     const [txTypeFilter, setTxTypeFilter] = useState<"all" | "payment" | "merchant" | "platform">("all");
 
     function getDateRange(r: string) {
@@ -110,16 +113,21 @@ export default function ReportsPanelMerchant({ overrideWallet }: { overrideWalle
             if (reportType !== "transactions") loadDashboard();
             fetchSplitTransactions();
         }
+        return () => { txRequestVersion.current++; };
     }, [range, reportType, merchantWallet, customStart, customEnd, employeeFilter]);
 
     async function fetchSplitTransactions() {
         if (!merchantWallet) return;
+        const version = ++txRequestVersion.current;
         setSplitTxLoading(true);
         try {
-            const r = await fetch(`/api/split/transactions?merchantWallet=${encodeURIComponent(merchantWallet)}&limit=1000`, {
+            const r = await fetch(`/api/split/transactions?merchantWallet=${encodeURIComponent(merchantWallet)}&limit=1000&indexedOnly=true`, {
                 cache: "no-store",
             });
             const j = await r.json();
+            if (version !== txRequestVersion.current) return;
+            if (!r.ok || !j.ok) throw new Error("indexed_data_unavailable");
+            setTxIndexStatus(summarizeReportIndexes([{ indexed: j.indexed === true, lastIndexedAt: j.lastIndexedAt }]));
             if (j.ok && Array.isArray(j.transactions)) {
                 const { start, end } = getDateRange(range);
                 const startMs = start * 1000;
@@ -136,9 +144,11 @@ export default function ReportsPanelMerchant({ overrideWallet }: { overrideWalle
                 setSplitTransactions([]);
             }
         } catch {
+            if (version !== txRequestVersion.current) return;
             setSplitTransactions([]);
+            setTxIndexStatus(summarizeReportIndexes([{ indexed: false, failed: true }]));
         } finally {
-            setSplitTxLoading(false);
+            if (version === txRequestVersion.current) setSplitTxLoading(false);
         }
     }
 
@@ -612,6 +622,7 @@ export default function ReportsPanelMerchant({ overrideWallet }: { overrideWalle
                                 </h3>
                             </div>
                             <div className="flex gap-2 flex-wrap">
+                                <IndexedReportStatus status={txIndexStatus} loading={splitTxLoading} />
                                 {(["all", "payment", "merchant", "platform"] as const).map(f => {
                                     const labels = { all: "All", payment: "Payment", merchant: "Merchant Release", platform: "Platform Release" };
                                     const colors = { all: "", payment: "bg-blue-500/10 text-blue-400 border-blue-500/30", merchant: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30", platform: "bg-amber-500/10 text-amber-400 border-amber-500/30" };

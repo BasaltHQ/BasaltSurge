@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
+import IndexedReportStatus, { summarizeReportIndexes } from "@/components/admin/IndexedReportStatus";
 import { useActiveAccount } from "thirdweb/react";
 import { FileText, Search, ChevronDown, ChevronRight, Loader2, Table2, Globe, Check, X, DollarSign, TrendingUp, Receipt, Users, BarChart3, PieChart, Building2, Link2 } from "lucide-react";
 import { formatCurrency } from "@/lib/fx";
@@ -42,6 +43,8 @@ export default function ReportsPanelPlatform() {
     const [viewMode, setViewMode] = useState<"dashboard" | "transactions">("dashboard");
     const [allTransactions, setAllTransactions] = useState<any[]>([]);
     const [txLoading, setTxLoading] = useState(false);
+    const [txIndexStatus, setTxIndexStatus] = useState(() => summarizeReportIndexes([]));
+    const txRequestVersion = useRef(0);
     const [txTypeFilter, setTxTypeFilter] = useState<"all" | "payment" | "merchant" | "partner" | "agent" | "platform">("all");
     const [txMerchantFilter, setTxMerchantFilter] = useState("");
     const [tokenPrices, setTokenPrices] = useState<Record<string, number>>({ USDC: 1, USDT: 1, ETH: 2500, cbBTC: 65000, cbXRP: 0.50 });
@@ -190,19 +193,21 @@ export default function ReportsPanelPlatform() {
     }
 
     // Load all on-chain transactions across merchants
-    async function loadAllTransactions(forceLive = false) {
-        if (!data?.merchants?.length) return;
+    async function loadAllTransactions() {
+        const version = ++txRequestVersion.current;
         setTxLoading(true);
+        const indexResults: Array<{ indexed: boolean; lastIndexedAt?: unknown; failed?: boolean }> = [];
         try {
             const allTxs: any[] = [];
             const seenHashes = new Set<string>();
             const mergedCum = { payments: {} as Record<string, number>, merchantReleases: {} as Record<string, number>, partnerReleases: {} as Record<string, number>, agentReleases: {} as Record<string, number>, platformReleases: {} as Record<string, number> };
             await Promise.all(
-                data.merchants.map(async (m: any) => {
+                (data?.merchants || []).map(async (m: any) => {
                     try {
-                        const liveParam = forceLive ? '&live=true' : '';
-                        const res = await fetch(`/api/split/transactions?merchantWallet=${encodeURIComponent(m.wallet)}&limit=500${liveParam}`, { cache: "no-store" });
+                        const res = await fetch(`/api/split/transactions?merchantWallet=${encodeURIComponent(m.wallet)}&limit=500&indexedOnly=true`, { cache: "no-store" });
                         const j = await res.json().catch(() => ({}));
+                        if (!res.ok || !j?.ok) throw new Error("indexed_data_unavailable");
+                        indexResults.push({ indexed: j.indexed === true, lastIndexedAt: j.lastIndexedAt });
                         if (j?.ok && Array.isArray(j.transactions)) {
                             for (const tx of j.transactions) {
                                 const hash = String(tx.hash || "").toLowerCase();
@@ -237,21 +242,24 @@ export default function ReportsPanelPlatform() {
                                 }
                             }
                         }
-                    } catch { /* skip */ }
+                    } catch { indexResults.push({ indexed: false, failed: true }); }
                 })
             );
             allTxs.sort((a, b) => Number(b.timestamp || 0) - Number(a.timestamp || 0));
+            if (version !== txRequestVersion.current) return;
             setAllTransactions(allTxs);
             setTxCumulative(mergedCum);
+            setTxIndexStatus(summarizeReportIndexes(indexResults));
         } catch { /* skip */ } finally {
-            setTxLoading(false);
+            if (version === txRequestVersion.current) setTxLoading(false);
         }
     }
 
     useEffect(() => {
-        if (viewMode === "transactions" && data?.merchants?.length && allTransactions.length === 0) {
+        if (viewMode === "transactions") {
             loadAllTransactions();
         }
+        return () => { txRequestVersion.current++; };
     }, [viewMode, data]);
 
     function exportPDF() {
@@ -909,9 +917,7 @@ export default function ReportsPanelPlatform() {
                                     {txLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
                                     {!txLoading && <span className="text-sm font-medium text-muted-foreground/70">({getFilteredTransactions().length})</span>}
                                 </h3>
-                                <button onClick={() => loadAllTransactions(true)} disabled={txLoading} className="h-8 px-3 rounded-lg border text-[10px] font-bold uppercase tracking-wider hover:bg-foreground/5 bg-foreground/[0.02] border-foreground/10 disabled:opacity-50 transition-colors">
-                                    Refresh
-                                </button>
+                                <IndexedReportStatus status={txIndexStatus} loading={txLoading} />
                             </div>
                             <div className="flex gap-2 flex-wrap items-center">
                                 {(["all", "payment", "merchant", "partner", "agent", "platform"] as const).map(f => {

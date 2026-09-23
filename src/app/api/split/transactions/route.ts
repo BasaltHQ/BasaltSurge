@@ -14,6 +14,7 @@ import { getContainer } from "@/lib/cosmos";
  * - limit: Number of transactions to fetch (default 50)
  * - merchantWallet: The merchant wallet address (for release type detection)
  * - live: If "true", skip persisted data and fetch fresh from Blockscout
+ * - indexedOnly: If "true", never scan the chain, including on a cache miss.
  */
 
 // Known decimals fallback — Blockscout sometimes returns 0 or missing decimals
@@ -45,6 +46,41 @@ export async function GET(req: NextRequest) {
   const qAgentWallets = (url.searchParams.get("agentWallets") || "").split(",").map(s => s.trim().toLowerCase()).filter(s => /^0x[a-f0-9]{40}$/i.test(s));
 
   const merchantAddrLower = merchantWallet?.toLowerCase() || "";
+
+  // Reports must not trigger paid upstream work just by being opened. This
+  // branch deliberately precedes discovery and overrides even live=true.
+  if (url.searchParams.get("indexedOnly") === "true") {
+    if (!/^0x[a-f0-9]{40}$/i.test(merchantAddrLower)) {
+      return NextResponse.json({ ok: false, error: "invalid_merchant_wallet" }, { status: 400 });
+    }
+    try {
+      const container = await getContainer();
+      const indexId = `split_index_${merchantAddrLower}`;
+      let resource: any;
+      try {
+        resource = (await container.item(indexId, indexId).read()).resource;
+      } catch (error: any) {
+        if (Number(error?.code || error?.statusCode) !== 404) throw error;
+      }
+      const indexed = !!resource && Array.isArray(resource.transactions);
+      const transactions = indexed ? resource.transactions.filter((tx: any) =>
+        !splitAddress || String(tx.splitAddress || "").toLowerCase() === splitAddress.toLowerCase()) : [];
+      return NextResponse.json({
+        ok: true, indexed, source: "persisted", transactions: transactions.slice(0, limit),
+        lastIndexedAt: indexed ? resource.lastIndexedAt || null : null,
+        cumulative: {
+          payments: resource?.cumulativePayments || {},
+          merchantReleases: resource?.cumulativeMerchantReleases || {},
+          partnerReleases: resource?.cumulativePartnerReleases || {},
+          agentReleases: resource?.cumulativeAgentReleases || {},
+          platformReleases: resource?.cumulativePlatformReleases || {},
+        },
+      }, { headers: { "Cache-Control": "private, no-store", "x-correlation-id": correlationId } });
+    } catch (error) {
+      console.error("Failed to read indexed report", error);
+      return NextResponse.json({ ok: false, error: "indexed_data_unavailable" }, { status: 503 });
+    }
+  }
 
   // If no splitAddress but merchantWallet is provided, discover ALL splits and merge transactions
   if (!splitAddress && merchantAddrLower && /^0x[a-f0-9]{40}$/i.test(merchantAddrLower)) {
