@@ -388,22 +388,6 @@ export default function AgentSignUp() {
                             <span><Check size={14} /> Perpetual smart contract split</span>
                             <span><Check size={14} /> Subsidized withdrawal gas</span>
                         </div>
-
-                        {/* Hero Analytics Visual */}
-                        <div style={{ marginTop: "40px" }}>
-                            <div className={agentStyles.heroVisualFrame}>
-                                <img src="/agent_hero_dashboard.png" alt="Agent Analytics Dashboard" />
-                                <div className={agentStyles.heroVisualOverlay} />
-                                <div className={agentStyles.heroVisualBadge}>
-                                    <span className={agentStyles.liveBadge}>
-                                        <span className={agentStyles.liveDot} /> Live Settlement Tracking
-                                    </span>
-                                    <span className={agentStyles.visualHint}>
-                                        Base L2 Atomic Splitter
-                                    </span>
-                                </div>
-                            </div>
-                        </div>
                     </div>
 
                     {/* Right Column: Application Card */}
@@ -422,7 +406,7 @@ export default function AgentSignUp() {
                 </div>
 
                 {/* ═══════════ PROTOCOL INFO STRIP ═══════════ */}
-                <div className={`${styles.container} ${styles.railStrip}`}>
+                <div className={`${styles.container} ${styles.railStrip} ${agentStyles.railStrip}`}>
                     <p>Automated payment rails.<br /><strong>Immutable settlement.</strong></p>
                     <div><span className={styles.baseMark} /> Base <small>SETTLEMENT NETWORK</small></div>
                     <div><DollarSign size={23} /> USDC <small>SETTLEMENT ASSET</small></div>

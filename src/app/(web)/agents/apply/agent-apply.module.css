@@ -558,3 +558,28 @@
     gap: 32px;
   }
 }
+
+/* ──── Settlement Rail Strip (5 Columns) ──── */
+.railStrip {
+  grid-template-columns: 1.25fr repeat(4, 1fr) !important;
+  gap: 24px !important;
+  align-items: center !important;
+}
+
+@media (max-width: 1024px) {
+  .railStrip {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 24px 20px !important;
+  }
+  .railStrip > p {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .railStrip {
+    grid-template-columns: 1fr !important;
+    gap: 20px !important;
+  }
+}
+
