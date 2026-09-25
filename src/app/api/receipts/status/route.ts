@@ -1,3 +1,4 @@
+import { receiptWebhookFailure } from "@/lib/receipt-webhook-failure";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth, assertOwnershipOrAdmin } from "@/lib/auth";
@@ -80,10 +81,7 @@ export async function GET(req: NextRequest) {
           transactionHash: typeof resource.transactionHash === "string" ? resource.transactionHash : null,
           currency: resource.expectedToken || null,
           amount: typeof resource.totalUsd === "number" ? resource.totalUsd : null,
-          ...(resource.failureCode ? { failureCode: resource.failureCode } : {}),
-          ...(resource.failureReason ? { failureReason: resource.failureReason } : {}),
-          ...(resource.failureCategory ? { failureCategory: resource.failureCategory } : {}),
-          ...(resource.failureAction ? { failureAction: resource.failureAction } : {}),
+          ...receiptWebhookFailure(resource, String(resource.status || "generated")),
         };
         return NextResponse.json(payload, { headers: { "x-correlation-id": correlationId } });
       }
@@ -101,10 +99,7 @@ export async function GET(req: NextRequest) {
           transactionHash: typeof found.transactionHash === "string" ? found.transactionHash : null,
           currency: found.expectedToken || null,
           amount: typeof found.totalUsd === "number" ? found.totalUsd : null,
-          ...(found.failureCode ? { failureCode: found.failureCode } : {}),
-          ...(found.failureReason ? { failureReason: found.failureReason } : {}),
-          ...(found.failureCategory ? { failureCategory: found.failureCategory } : {}),
-          ...(found.failureAction ? { failureAction: found.failureAction } : {}),
+          ...receiptWebhookFailure(found, String(found.status || "generated")),
         };
         return NextResponse.json(payload, { headers: { "x-correlation-id": correlationId } });
       }

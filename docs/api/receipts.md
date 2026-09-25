@@ -450,7 +450,7 @@ Success (200 OK - Paid):
 ```json
 {
   "id": "rcpt_12345",
-  "status": "completed",
+  "status": "paid",
   "transactionHash": "0xabc123...",
   "currency": "USDC",
   "amount": 27.0
@@ -459,7 +459,7 @@ Success (200 OK - Paid):
 
 Failed (200 OK - Failed Transaction):
 
-When a transaction fails (e.g. card decline, KYC requirement, limit threshold), the endpoint returns structured diagnostic fields:
+When the server records a canonical payment failure, the endpoint returns the same failure fields as the client-facing webhook. A browser error or KYC requirement alone does not establish payment failure.
 
 ```json
 {
@@ -469,6 +469,8 @@ When a transaction fails (e.g. card decline, KYC requirement, limit threshold), 
   "failureCategory": "card_decline",
   "failureReason": "The payment method was declined due to insufficient available funds.",
   "failureAction": "Ask the customer to retry with another card or use an alternate payment method.",
+  "providerErrorCode": "insufficient_funds",
+  "providerRequestId": "req_Example123",
   "currency": "USDC",
   "amount": 27.0,
   "transactionHash": null
@@ -482,10 +484,12 @@ Other responses:
 - 404: `Not found`
 - 429: `rate_limited`
 
-Status values:
+The four `failure*` fields and the two `provider*` fields above are nullable. They are all `null` for successful and other nonfailure statuses. Provider references are included only when available from a signed Stripe event or a server observation tied to the receipt's session. `failureCode` is the branded merchant code; `providerErrorCode` preserves Stripe's original code. For example, `crypto_onramp_transaction_blocked` maps to `PORTAL_PAY_TRANSACTION_BLOCKED` and must not trigger an automatic retry or a KYC step-up.
 
-- `generated`, `pending`, `completed`, `failed`, `refunded`,
-- `tx_mined`, `recipient_validated`, `tx_mismatch`
+Status values (see [webhook status semantics](./webhooks.md#status-values)):
+
+- `generated`, `pending`, `paid`, `paid - ach pending`, `reconciled`, `failed`, `refund_requested`, `refunded`
+- Legacy/provider-specific states can include `completed`, `ach_pending`, `rejected`, `abandoned`, `tx_mined`, `recipient_validated`, and `tx_mismatch`.
 
 Failure Categories:
 

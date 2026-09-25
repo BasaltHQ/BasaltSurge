@@ -329,6 +329,8 @@ setInterval(() => console.log('API Metrics:', metrics), 60_000);
 
 When inspecting receipt status (`GET /api/receipts/status`) or receiving status webhooks (`receipt.status_updated`), failed transactions include structured, branded failure codes (`failureCode`), categories (`failureCategory`), human-readable descriptions (`failureReason`), and merchant remediation actions (`failureAction`).
 
+Stripe failures can additionally include `providerErrorCode` (the original structured Stripe code) and `providerRequestId` (a `req_...` support reference). These are nullable and are derived from signed events or server observations tied to the receipt's Stripe session. `failureCode` remains the branded merchant code. Unknown causes use a generic merchant code without inventing a provider error. All failure fields and provider references are `null` for successful/nonfailure statuses. Browser checkout telemetry alone does not trigger a canonical failure webhook. See [webhook status and failure semantics](./api/webhooks.md#status-values).
+
 ### 1. Card & Bank Declines (`category: "card_decline"`)
 
 | Custom Error Code | Description | Suggested Merchant Action |
@@ -347,6 +349,7 @@ When inspecting receipt status (`GET /api/receipts/status`) or receiving status 
 
 | Custom Error Code | Description | Suggested Merchant Action |
 | :--- | :--- | :--- |
+| `PORTAL_PAY_TRANSACTION_BLOCKED` | Stripe returned `crypto_onramp_transaction_blocked` (or the legacy `transaction_blocked` code). The specific blocking reason may not be disclosed. | Do not retry the transaction. Contact support with the receipt/session and provider request references. Do not assume fraud or request additional identity verification solely from this code. |
 | `PORTAL_KYC_REQUIRED` | Basic identity verification (Level 0 Name & Address) is required. | Customer must submit their legal name and residential address. |
 | `PORTAL_KYC_STEP_UP_REQUIRED` | Level 1 identity step-up (Date of Birth & SSN/Tax ID) is required. | Customer must provide DOB and SSN/Tax ID to proceed. |
 | `PORTAL_KYC_DOC_REQUIRED` | Level 2 document verification (Photo ID & Selfie) is required. | Customer must complete document scan via Stripe verification modal. |

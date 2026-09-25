@@ -48,7 +48,7 @@ function createHarness({
   }]]);
   const callbacks = [];
   const calls = { balance: [], send: [], fetch: [], writes: [], containers: [], timers: [], errors: [], emails: [] };
-  const state = { stripeStatus: "fulfillment_complete", fallbackRace: null };
+  const state = { stripeStatus: "fulfillment_complete", fallbackRace: null, lastError: null };
   const pendingBalances = [...balances];
   const pendingBalanceErrors = [...balanceErrors];
   const pendingSendErrors = [...sendErrors];
@@ -111,6 +111,7 @@ function createHarness({
         customer_information: { email: stripeCustomerEmail },
         metadata: { receiptId: RECEIPT_ID, merchantWallet: MERCHANT, checkoutMode: "ecommerce" },
         transaction_details: {
+          last_error: state.lastError,
           wallet_address: BUYER,
           source_amount: "9.00",
           source_currency: "usd",
@@ -143,7 +144,7 @@ function createHarness({
     "@/lib/site-config": { getSiteConfigForWallet: async () => ({ splitAddress: SPLIT, splitAddressCredit: SPLIT }) },
     "@/lib/notifications/email-template": { generateHtmlEmailTemplate: () => "test email" },
     "@/app/api/auth/thirdweb-verify/route": { markEmailVerified: () => "test_verification_token" },
-    "@/lib/webhook-dispatch": { dispatchReceiptStatusWebhookBestEffort: async () => ({ ok: true }) },
+    "@/lib/webhook-dispatch": { dispatchReceiptStatusWebhookBestEffort: async (...args) => { (calls.webhooks ||= []).push(args); return { ok: true }; } },
     "@/lib/brand-config": { readBrandOverridesCached: async () => null },
     "@/lib/receipts": { recalculateReceiptForCardFunding: receipt => receipt },
     "@/lib/shopify/sync-order": { checkAndSyncShopifyOrder: async receipt => receipt },
@@ -289,6 +290,22 @@ test("launch waits for the Next.js after callback before accessing the settlemen
   await harness.runAfter();
   assert.equal(harness.calls.send.length, 1);
   assert.equal(harness.receipt().transactionHash, TX_HASH);
+});
+
+test('background Stripe rejection queues and dispatches a merchant failure with the exact provider code', async () => {
+  const h = createHarness({ receiptOverrides: { webhookUrl: 'https://merchant.example/webhook' } });
+  h.state.stripeStatus = 'requires_payment';
+  await h.post();
+  h.state.stripeStatus = 'rejected';
+  h.state.lastError = { code: 'crypto_onramp_transaction_blocked', message: 'This transaction has been blocked.' };
+  await h.runAfter();
+  assert.equal(h.receipt().status, 'failed');
+  assert.equal(h.receipt().stripeFailure.failureCode, 'PORTAL_PAY_TRANSACTION_BLOCKED');
+  assert.equal(h.receipt().stripeFailure.providerErrorCode, h.state.lastError.code);
+  assert.equal(h.receipt().webhookLastDeliveryOk, false, 'delivery remains durably queued until the dispatcher acknowledges it');
+  assert.equal(h.calls.webhooks.length, 1);
+  assert.equal(h.calls.webhooks[0][2], 'failed');
+  assert.equal(h.calls.send.length, 0);
 });
 
 test("a delayed Base balance is retried after Stripe fulfillment and settles without manual reconciliation", async () => {

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
 import { buildWebhookHeaders } from "@/lib/webhook-branding";
 import { resolveReceiptWebhookAmounts } from "@/lib/webhook-amounts";
+import { receiptWebhookFailure } from "@/lib/receipt-webhook-failure";
 
 /**
  * Developer Webhook Dispatch
@@ -48,6 +49,8 @@ export type WebhookPayload = {
   failureReason?: string | null;
   failureCategory?: string | null;
   failureAction?: string | null;
+  providerErrorCode?: string | null;
+  providerRequestId?: string | null;
 };
 
 export type ReceiptWebhookSource = {
@@ -300,10 +303,7 @@ export async function dispatchReceiptStatusWebhook(
     stripeSessionId,
     transactionId: source.transactionId || receipt?.transactionId || null,
     metadata: source.metadata || receipt?.metadata || null,
-    failureCode: receipt?.failureCode || null,
-    failureReason: receipt?.failureReason || null,
-    failureCategory: receipt?.failureCategory || null,
-    failureAction: receipt?.failureAction || null,
+    ...receiptWebhookFailure(receipt, status),
   }, receipt?.webhookSigningSecret || receipt?.webhookSecret || undefined);
 }
 
@@ -331,7 +331,14 @@ export async function dispatchReceiptStatusWebhookBestEffort(
 
   try {
     const transactionHash = source.transactionHash || receipt?.transactionHash || receipt?.txHash;
-    await container.item(receipt.id, receipt.wallet).patch([
+    const item = container.item(receipt.id, receipt.wallet);
+    const { resource: current } = await item.read();
+    // A slower old delivery must not acknowledge or replace a newer queued
+    // status (for example, paid arriving while a failure delivery is retrying).
+    if (!current || current.status !== status
+      || (current.stripeSessionId || null) !== (receipt.stripeSessionId || null)
+      || (current.webhookLastAttemptAt || null) !== (receipt.webhookLastAttemptAt || null)) return delivery;
+    await item.patch([
       { op: "set", path: "/webhookLastStatus", value: status },
       { op: "set", path: "/webhookLastPreviousStatus", value: previousStatus || "pending" },
       { op: "set", path: "/webhookLastDeliveryOk", value: delivery.ok },
@@ -343,7 +350,14 @@ export async function dispatchReceiptStatusWebhookBestEffort(
         ? [{ op: "set" as const, path: "/webhookLastStatusCode", value: delivery.statusCode }]
         : []),
       { op: "set", path: "/webhookLastError", value: delivery.error || null },
-    ] as any);
+    ] as any, {
+      matchFields: {
+        status: current.status,
+        stripeSessionId: current.stripeSessionId ?? null,
+        webhookLastAttemptAt: current.webhookLastAttemptAt ?? null,
+      },
+      ...(current._etag ? { accessCondition: { type: "IfMatch", condition: current._etag } } : {}),
+    });
   } catch (trackingError) {
     // The receipt already contains webhookLastDeliveryOk=false. A tracking
     // patch failure must not turn a successfully persisted payment into a

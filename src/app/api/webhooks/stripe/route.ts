@@ -1,3 +1,4 @@
+import { recordStripeReceiptFailure } from "@/lib/stripe-receipt-failure";
 import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
@@ -674,45 +675,8 @@ export async function POST(req: NextRequest) {
               continue;
             }
             if (!isProtectedPaymentStatus(r.status)) {
-              const previousStatus = String(r.status || "pending");
-              r.status = "failed";
-              r.stripeSessionStatus = "rejected";
-              r.statusHistory = Array.isArray(r.statusHistory)
-                ? [...r.statusHistory, { status: "failed", ts: Date.now() }]
-                : [{ status: "failed", ts: Date.now() }];
-              r.lastUpdatedAt = Date.now();
-              if (r.webhookUrl) {
-                r.webhookLastStatus = "failed";
-                r.webhookLastPreviousStatus = previousStatus;
-                r.webhookLastDeliveryOk = false;
-                r.webhookLastAttemptAt = Date.now();
-              }
-              const persisted = await patchReceiptFields(
-                container,
-                r.id,
-                r.wallet,
-                {
-                  status: "failed",
-                  stripeSessionStatus: "rejected",
-                  statusHistory: r.statusHistory,
-                  lastUpdatedAt: r.lastUpdatedAt,
-                  webhookLastStatus: r.webhookLastStatus,
-                  webhookLastPreviousStatus: r.webhookLastPreviousStatus,
-                  webhookLastDeliveryOk: r.webhookLastDeliveryOk,
-                  webhookLastAttemptAt: r.webhookLastAttemptAt,
-                },
-                (current) => !isProtectedPaymentStatus(current.status)
-              );
-              if (persisted.skipped) {
-                console.log(`[STRIPE WEBHOOK] Receipt ${r.id} became paid while processing rejection; preserved paid status.`);
-                continue;
-              }
-              const persistedReceipt = persisted.resource || r;
-              void dispatchReceiptStatusWebhookBestEffort(container, persistedReceipt, "failed", previousStatus, {
-                merchantWallet: r.wallet || merchantWallet,
-                stripeSessionId: sessionId,
-                brandKey: r.brandKey || brandKey,
-              });
+              const persisted = await recordStripeReceiptFailure(container, r, session);
+              if (persisted.skipped) continue;
               console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id} to failed due to Stripe rejection`);
             }
           }

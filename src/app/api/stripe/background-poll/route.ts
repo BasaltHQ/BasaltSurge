@@ -1,3 +1,4 @@
+import { recordStripeReceiptFailure } from "@/lib/stripe-receipt-failure";
 import { receiptRoutingFields, settlementRoutingFields } from "@/lib/payment-split-routing";
 import { after, NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
@@ -565,6 +566,7 @@ async function runBackgroundPoll(params: {
   let resolvedFunding = detectedCardFunding || null;
   let finalTxHash = "";
   let isDefinitiveFailure = false;
+  let failedSession: any = null;
   let paymentAcceptedByStripe = false;
   let cryptoCustomerId = "";
   let processingRecorded = false;
@@ -668,6 +670,7 @@ async function runBackgroundPoll(params: {
         console.warn(`[BACKGROUND POLL] Stripe session failed early: status=${status}, lastError=${JSON.stringify(data.transaction_details?.last_error || null)}`);
         resolvedStatus = "failed";
         isDefinitiveFailure = true;
+        failedSession = { ...data, requestId: response.headers.get("request-id") || undefined };
         break;
       }
     } catch (e) {
@@ -940,57 +943,62 @@ async function runBackgroundPoll(params: {
           console.log(`[BACKGROUND POLL] Receipt ${receiptId} is already paid or confirmed on-chain. Skipping failure update.`);
           return;
         }
-        // Preserve the signed Stripe payment boundary even if the earlier
-        // status write or the downstream transfer encountered a transient
-        // error. ACH remains commercially paid while exposing pending funds.
-        const fallbackFunding = resolvedFunding || detectedCardFunding || receipt.detectedCardFunding;
-        const fallbackStripeStatus = isStripePaymentAcceptedStatus(lastRecordedStripeStatus)
-          ? lastRecordedStripeStatus
-          : "fulfillment_processing";
-        const fallbackAcceptedStatus = paymentAcceptedByStripe
-          ? resolveStripeAcceptedReceiptStatus(fallbackStripeStatus, {
-            isAch: fallbackFunding === "us_bank_account",
-            checkoutMode,
-          })
-          : null;
-        const nextStatus = paymentAcceptedByStripe
-          ? (fallbackAcceptedStatus || "paid")
-          : (isDefinitiveFailure ? "failed" : "pending");
-        const writeCondition = stripeReceiptWriteCondition(receipt);
-        const previousStatus = String(receipt.status || "pending");
-        receipt.status = nextStatus;
-        if (fallbackFunding === "us_bank_account") {
-          receipt.detectedCardFunding = "us_bank_account";
-          receipt.isCreditCard = false;
-        }
-        if (paymentAcceptedByStripe) receipt.ttl = -1;
-        receipt.lastUpdatedAt = Date.now();
-        receipt.statusHistory = Array.isArray(receipt.statusHistory)
-          ? [...receipt.statusHistory, { status: nextStatus, ts: Date.now() }]
-          : [{ status: nextStatus, ts: Date.now() }];
-        if (paymentAcceptedByStripe && receipt.webhookUrl) {
-          receipt.webhookLastStatus = nextStatus;
-          receipt.webhookLastPreviousStatus = previousStatus;
-          receipt.webhookLastDeliveryOk = false;
-          receipt.webhookLastAttemptAt = Date.now();
-        }
+        if (isDefinitiveFailure && !paymentAcceptedByStripe && failedSession) {
+          const persisted = await recordStripeReceiptFailure(container, receipt, failedSession);
+          if (persisted.skipped) return;
+        } else {
+          // Preserve the signed Stripe payment boundary even if the earlier
+          // status write or the downstream transfer encountered a transient
+          // error. ACH remains commercially paid while exposing pending funds.
+          const fallbackFunding = resolvedFunding || detectedCardFunding || receipt.detectedCardFunding;
+          const fallbackStripeStatus = isStripePaymentAcceptedStatus(lastRecordedStripeStatus)
+            ? lastRecordedStripeStatus
+            : "fulfillment_processing";
+          const fallbackAcceptedStatus = paymentAcceptedByStripe
+            ? resolveStripeAcceptedReceiptStatus(fallbackStripeStatus, {
+              isAch: fallbackFunding === "us_bank_account",
+              checkoutMode,
+            })
+            : null;
+          const nextStatus = paymentAcceptedByStripe
+            ? (fallbackAcceptedStatus || "paid")
+            : (isDefinitiveFailure ? "failed" : "pending");
+          const writeCondition = stripeReceiptWriteCondition(receipt);
+          const previousStatus = String(receipt.status || "pending");
+          receipt.status = nextStatus;
+          if (fallbackFunding === "us_bank_account") {
+            receipt.detectedCardFunding = "us_bank_account";
+            receipt.isCreditCard = false;
+          }
+          if (paymentAcceptedByStripe) receipt.ttl = -1;
+          receipt.lastUpdatedAt = Date.now();
+          receipt.statusHistory = Array.isArray(receipt.statusHistory)
+            ? [...receipt.statusHistory, { status: nextStatus, ts: Date.now() }]
+            : [{ status: nextStatus, ts: Date.now() }];
+          if (paymentAcceptedByStripe && receipt.webhookUrl) {
+            receipt.webhookLastStatus = nextStatus;
+            receipt.webhookLastPreviousStatus = previousStatus;
+            receipt.webhookLastDeliveryOk = false;
+            receipt.webhookLastAttemptAt = Date.now();
+          }
 
-        // A webhook can mark the receipt paid or replace its session while
-        // this worker is finishing. Never overwrite that newer observation.
-        const fields = ["status", "detectedCardFunding", "isCreditCard", "ttl", "lastUpdatedAt", "statusHistory",
-          "webhookLastStatus", "webhookLastPreviousStatus", "webhookLastDeliveryOk", "webhookLastAttemptAt"];
-        await container.item(docId, merchantWallet).patch(
-          fields.filter(key => receipt[key] !== undefined).map(key => ({ op: "set", path: `/${key}`, value: receipt[key] })),
-          writeCondition
-        );
-        if (paymentAcceptedByStripe && receipt.webhookUrl) {
-          void dispatchReceiptStatusWebhookBestEffort(container, receipt, nextStatus, previousStatus, {
-            merchantWallet,
-            stripeSessionId: sessionId,
-            brandKey,
-          });
+          // A webhook can mark the receipt paid or replace its session while
+          // this worker is finishing. Never overwrite that newer observation.
+          const fields = ["status", "detectedCardFunding", "isCreditCard", "ttl", "lastUpdatedAt", "statusHistory",
+            "webhookLastStatus", "webhookLastPreviousStatus", "webhookLastDeliveryOk", "webhookLastAttemptAt"];
+          await container.item(docId, merchantWallet).patch(
+            fields.filter(key => receipt[key] !== undefined).map(key => ({ op: "set", path: `/${key}`, value: receipt[key] })),
+            writeCondition
+          );
+          if (paymentAcceptedByStripe && receipt.webhookUrl) {
+            void dispatchReceiptStatusWebhookBestEffort(container, receipt, nextStatus, previousStatus, {
+              merchantWallet,
+              stripeSessionId: sessionId,
+              brandKey,
+            });
+          }
+          console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to ${nextStatus} in DB`);
         }
-        console.log(`[BACKGROUND POLL] Updated receipt ${receiptId} status to ${nextStatus} in DB`);
       } else {
         console.warn(`[BACKGROUND POLL] Receipt ${receiptId} not found in DB for failure tagging`);
         return;

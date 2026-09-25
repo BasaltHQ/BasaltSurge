@@ -1697,6 +1697,14 @@ export default function ClientRequestsPanel() {
                     brandKey={items.find(i => i.wallet === approvingId)?.brandKey || brandKey}
                     account={account}
                     canEditPlatform={isPlatformContainer}
+                    merchantName={items.find(i => i.wallet === approvingId)?.shopName}
+                    showFeeExplainer
+                    approvedAgents={approvedAgents}
+                    unifiedFeeEnabled={unifiedFeeEnabled}
+                    presentedFeeBps={presentedFeeBps}
+                    creditPresentedFeeBps={creditPresentedFeeBps}
+                    requiredAgents={{ credit: getEnvAgents(false), debit: getEnvAgents(true) }}
+                    processorFeeBps={{ credit: fetchedBrand?.creditStripeFeeBps ?? (brand as any)?.creditStripeFeeBps ?? 350, debit: fetchedBrand?.debitStripeFeeBps ?? (brand as any)?.debitStripeFeeBps ?? 225 }}
                     defaults={{
                         credit: { platformBps, partnerBps, merchantBps: 10000 - platformBps - partnerBps - agents.reduce((s, a) => s + a.bps, 0), agents, partnerWallet },
                         debit: { platformBps: platformBpsDebit, partnerBps: partnerBpsDebit, merchantBps: 10000 - platformBpsDebit - partnerBpsDebit - agentsDebit.reduce((s, a) => s + a.bps, 0), agents: agentsDebit, partnerWallet },

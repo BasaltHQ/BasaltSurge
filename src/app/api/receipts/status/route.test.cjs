@@ -7,12 +7,13 @@ const ts = require('typescript');
 
 const wallet = '0x1111111111111111111111111111111111111111';
 
-function loadCustomerEmailModule() {
+function loadCustomerEmailModule(relative = 'receipt-customer-email.ts') {
   const module = { exports: {} };
-  const filename = path.resolve(__dirname, '../../../../lib/receipt-customer-email.ts');
+  const filename = path.resolve(__dirname, '../../../../lib', relative);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-  }).outputText, { module, exports: module.exports }, { filename });
+  }).outputText, { module, exports: module.exports, process: { env: {} },
+    require: name => loadCustomerEmailModule(name.slice(6) + '.ts') }, { filename });
   return module.exports;
 }
 
@@ -46,7 +47,7 @@ function harness(receiptOverrides = {}, { reserveBeforeFirstPatch = false, attac
     },
   };
   const customerEmail = loadCustomerEmailModule();
-  const telemetry = new Set(['checkout_initialized', 'payment_method_detected', 'checkout_ready']);
+  const webhookCalls = [];
   const mocks = {
     'next/server': { NextResponse: { json: (data, options = {}) => new Response(JSON.stringify(data), options) } },
     '@/lib/cosmos': { getContainer: async () => ({ item: () => item }) },
@@ -55,16 +56,10 @@ function harness(receiptOverrides = {}, { reserveBeforeFirstPatch = false, attac
     '@/lib/audit': { auditEvent: async () => {} },
     '@/lib/gateway-auth': { requireApimOrJwt: async () => ({ wallet }) },
     '@/config/brands': { getBrandKey: () => 'portalpay' },
-    '@/lib/webhook-dispatch': { dispatchReceiptStatusWebhookBestEffort: async () => {} },
+    '@/lib/webhook-dispatch': { dispatchReceiptStatusWebhookBestEffort: async (...args) => { webhookCalls.push(args); } },
+    '@/lib/receipt-webhook-failure': loadCustomerEmailModule('receipt-webhook-failure.ts'),
     '@/lib/errors/merchant-error-taxonomy': { resolveMerchantErrorInfo: () => undefined },
-    '@/lib/receipt-status-policy': {
-      getReceiptStatusInternalSecret: () => '',
-      isAuthoritativePaymentStatus: () => false,
-      isCheckoutTelemetryStatus: status => telemetry.has(String(status)),
-      isProtectedPaymentStatus: () => false,
-      normalizeReceiptStatus: status => String(status || '').trim().toLowerCase(),
-      shouldIgnoreCanonicalStatusTransition: () => false,
-    },
+    '@/lib/receipt-status-policy': loadCustomerEmailModule('receipt-status-policy.ts'),
     '@/lib/stripe-kyc-tracking': { highestKycTier: (a, b) => a || b || null, normalizeKycTier: () => null },
     '@/lib/checkout-flow-tracking': { appendAccordionStepTransition: value => value, normalizeAccordionStepTransition: () => null },
     '@/lib/request-client-ip': { resolvePersistedClientIp: () => null },
@@ -84,11 +79,16 @@ function harness(receiptOverrides = {}, { reserveBeforeFirstPatch = false, attac
 
   return {
     receipt,
+    webhookCalls,
+    async get() {
+      const response = await module.exports.GET({ url: 'https://example.test/api/receipts/status?receiptId=R1', headers: new Headers() });
+      return { status: response.status, body: await response.json() };
+    },
     get patchCalls() { return patchCalls; },
-    async post(status, email) {
+    async post(status, email, extra = {}) {
       const response = await module.exports.POST({
         headers: new Headers(),
-        json: async () => ({ receiptId: 'R1', wallet, status, ...(email ? { customerEmail: email } : {}) }),
+        json: async () => ({ receiptId: 'R1', wallet, status, ...(email ? { customerEmail: email } : {}), ...extra }),
       });
       return { status: response.status, body: await response.json() };
     },
@@ -146,4 +146,26 @@ test('a session attachment racing Step 1 locks the original email', async () => 
   assert.equal(h.receipt.customerEmail, 'chosen@example.com');
   assert.equal(h.receipt.stripeEmail, 'chosen@example.com');
   assert.equal(h.receipt.stripeSessionId, 'cos_attached');
+});
+
+test('status reads expose the same canonical failure fields as merchant webhooks', async () => {
+  const h = harness({ status: 'failed', stripeSessionId: 'cos_test', stripeFailure: {
+    sessionId: 'cos_test', failureCode: 'PORTAL_PAY_TRANSACTION_BLOCKED', failureReason: 'Blocked', failureCategory: 'compliance',
+    failureAction: 'Do not retry', providerErrorCode: 'crypto_onramp_transaction_blocked', providerRequestId: 'req_TEST',
+  } });
+  const result = await h.get();
+  assert.equal(result.status, 200);
+  assert.equal(result.body.failureCode, 'PORTAL_PAY_TRANSACTION_BLOCKED');
+  assert.equal(result.body.providerErrorCode, 'crypto_onramp_transaction_blocked');
+  assert.equal(result.body.providerRequestId, 'req_TEST');
+  h.receipt.status = 'paid';
+  assert.equal((await h.get()).body.failureCode, null);
+});
+
+test('browser-reported failure stays telemetry and cannot send an authoritative failure webhook', async () => {
+  const h = harness({ webhookUrl: 'https://merchant.example/webhook' });
+  assert.equal((await h.post('failed', undefined, { error: 'This transaction has been blocked.' })).status, 200);
+  assert.equal(h.receipt.status, 'pending');
+  assert.equal(h.receipt.checkoutStatus, 'client_reported_failed');
+  assert.equal(h.webhookCalls.length, 0);
 });
