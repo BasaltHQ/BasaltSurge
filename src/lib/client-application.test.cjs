@@ -107,6 +107,8 @@ function routeHarness({ admin = false, platformAdmin = false, resources = [], lo
     const queries = [];
     let lookups = 0;
     const api = load('../app/api/partner/client-requests/route.ts', {
+        '@/lib/payment-split-routing': { settlementRoutingFields: () => ({}) },
+        '@/lib/notifications/outbox': { enqueueNotification: async () => {} },
         'next/server': { NextResponse }, 'node:crypto': { randomUUID: () => 'application-id' },
         '@/lib/encryption': { encrypt: value => `encrypted:${value}`, decrypt: value => value },
         '@/lib/cosmos': { getContainer: async () => ({ item: () => ({ read: async () => ({ resource: null }) }), items: {
@@ -152,6 +154,27 @@ test('API rejects incomplete submissions and ignores spoofed wallet contact data
     assert.equal(h.created[0].ein, 'encrypted:12-3456789');
 });
 
+test('API requires every business and shop field before persisting an application', async () => {
+    const h = routeHarness();
+    const fields = Object.keys(valid).filter(key => key !== 'businessAddress')
+        .concat(Object.keys(valid.businessAddress).map(key => `businessAddress.${key}`));
+    for (const field of fields) {
+        for (const value of [undefined, '   ', null]) {
+            const body = structuredClone(valid);
+            const keys = field.split('.');
+            if (keys.length === 2) body[keys[0]][keys[1]] = value;
+            else body[field] = value;
+            const response = await h.api.POST({ headers: new Headers(), json: async () => body });
+            assert.equal(response.status, 400, field);
+            const data = await response.json();
+            assert.equal(data.error, 'invalid_application');
+            assert.ok(data.issues.some(issue => issue.field === field), field);
+        }
+    }
+    assert.equal(h.created.length, 0);
+    assert.equal(h.lookups, 0);
+});
+
 test('provider failure preserves complete application for an admin lookup retry', async () => {
     const h = routeHarness({ lookupFailure: true });
     assert.equal((await h.api.POST({ headers: new Headers(), json: async () => valid })).status, 200);
@@ -176,7 +199,7 @@ test('a stale session cannot attach the application to a different wallet', asyn
 });
 
 test('contact lookup requires admin access, brand scope, and an existing application', async () => {
-    const request = brand => ({ url: `https://example.com/api/partner/client-requests?brandKey=${brand}&walletContactRequestId=one` });
+    const request = brand => ({ headers: new Headers(), url: `https://example.com/api/partner/client-requests?brandKey=${brand}&walletContactRequestId=one` });
     const unauthorized = routeHarness();
     const unauthorizedResponse = await unauthorized.api.GET(request('basaltsurge'));
     assert.equal(unauthorizedResponse.status, 403);
@@ -214,7 +237,7 @@ test('normal admin list responses do not include wallet provider identity fields
         walletSignupContact: { email: 'owner@example.com', source: 'thirdweb', retrievedAt: 123 },
         walletSignerAddress: signer,
     }] });
-    const response = await h.api.GET({ url: 'https://example.com/api/partner/client-requests?brandKey=basaltsurge' });
+    const response = await h.api.GET({ headers: new Headers(), url: 'https://example.com/api/partner/client-requests?brandKey=basaltsurge' });
     assert.equal(response.status, 200);
     const data = await response.json();
     assert.equal(data.requests.length, 1);

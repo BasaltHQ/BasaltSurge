@@ -8,6 +8,7 @@ import TruncatedAddress from "@/components/truncated-address";
 import { ensureSplitForWallet } from "@/lib/thirdweb/split";
 import { useBrand } from "@/contexts/BrandContext";
 import { buildBrandApiUrl } from "@/lib/http";
+import { requiresMerchantApproval } from "@/lib/merchant-access-status";
 
 function isValidHex(addr?: string): addr is `0x${string}` {
   try {
@@ -91,7 +92,7 @@ function derivePreviewBps(
 export default function GlobalSplitGuard() {
   const brand = useBrand();
   // ...
-  const accessMode = (brand as any)?.accessMode || "open";
+  const accessMode = brand.accessMode;
   const isPrivate = accessMode === "request";
 
   // Do not run Split Guard on public shop pages (buyers should not be prompted here)
@@ -332,9 +333,9 @@ export default function GlobalSplitGuard() {
         const domContainerType = typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-pp-container-type') || '').toLowerCase() : '';
         const ct = (brand as any)?.containerType || "";
         const isPartnerFlag = domContainerType === "partner" || ct === "partner";
-        const isRegistrationRegime = process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
+        const approvalRequired = requiresMerchantApproval(isPartnerFlag, accessMode);
         
-        const isApprovedStatus = (!isPartnerFlag && !isRegistrationRegime) || String(authCheck?.shopStatus || "").toLowerCase() === "approved" || authCheck?.isPlatformAdmin || !!authCheck?.isTeamMember;
+        const isApprovedStatus = !approvalRequired || String(authCheck?.shopStatus || "").toLowerCase() === "approved" || authCheck?.isPlatformAdmin || !!authCheck?.isTeamMember;
         
         if (!isApprovedStatus) {
           setOpen(false);
@@ -516,7 +517,7 @@ export default function GlobalSplitGuard() {
         setChecking(false);
       }
     })();
-  }, [account?.address, recheckNonce]);
+  }, [account?.address, recheckNonce, accessMode]);
 
   // Listen for auth events to re-run split check after sign-in completes
   useEffect(() => {

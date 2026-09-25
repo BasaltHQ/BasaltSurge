@@ -24,7 +24,7 @@ import { getAllComparisons } from "@/lib/landing-pages/comparisons";
 import { getAllLocations } from "@/lib/landing-pages/locations";
 import { useThirdwebClient } from "@/hooks/useThirdwebClient";
 import landingNavStyles from "./landing/landing-navbar.module.css";
-import { ACCESS_STATUS_ERROR, fetchMerchantAccessStatus } from "@/lib/merchant-access-status";
+import { ACCESS_STATUS_ERROR, fetchMerchantAccessStatus, requiresMerchantApproval } from "@/lib/merchant-access-status";
 
 type SeoPageCategory = 'industries' | 'comparisons' | 'locations';
 
@@ -90,10 +90,8 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
     const wallets = useMemo(() => {
         const accessMode = (brand as any)?.accessMode || "open";
         const isPrivate = accessMode === "request";
-        const isPlatformContainer = container.containerType === "platform";
-        const shouldUsePrivateWallets = isPrivate && !isPlatformContainer;
-        return shouldUsePrivateWallets ? getPrivateLoginWallets(chain) : getWallets(chain);
-    }, [brand, container.containerType]);
+        return isPrivate ? getPrivateLoginWallets(chain) : getWallets(chain);
+    }, [brand]);
 
     const [scrolled, setScrolled] = useState(false);
     const [time, setTime] = useState('');
@@ -328,11 +326,8 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                 const domContainerType = typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-pp-container-type') || '').toLowerCase() : '';
                 const ct = (container?.containerType || "").toLowerCase();
                 const isPartner = domContainerType === "partner" || ct === "partner";
-                const isRegistrationRegime = process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
-
-                // Access Control Gating — Approval is only mandatory on partner containers for now
-                // The platform container uses the registration regime only if the env var is set.
-                const isApproved = !me?.blocked && ((!isPartner && !isRegistrationRegime) || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin || !!me?.isTeamMember);
+                const approvalRequired = requiresMerchantApproval(isPartner, brand.accessMode);
+                const isApproved = !me?.blocked && (!approvalRequired || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin || !!me?.isTeamMember);
                 const blocked = !isApproved;
 
                 if (me?.authed && !blocked && me?.wallet && String(me.wallet).toLowerCase() === w) {
@@ -436,7 +431,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
             if (promptTimer) clearTimeout(promptTimer);
             checkingAuth.current = false;
         };
-    }, [account?.address, activeWallet?.id, brand?.key, container.containerType, showSignupWizard, authCheckTrigger, pathname]);
+    }, [account?.address, activeWallet?.id, brand?.key, brand.accessMode, container.containerType, showSignupWizard, authCheckTrigger, pathname]);
 
     // Broadcast login/logout so ThemeLoader can immediately apply merchant-scoped theme
     useEffect(() => {

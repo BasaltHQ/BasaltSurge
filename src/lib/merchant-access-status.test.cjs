@@ -58,6 +58,19 @@ function routeHarness({ session = null, failure = false, status = 'approved', br
   };
 }
 
+test('closed platform mode requires approval and reopening overrides the legacy registration flag', () => {
+  for (const legacyFlag of ['false', 'true']) {
+    const { requiresMerchantApproval } = load('merchant-access-status.ts', {}, {
+      process: { env: { NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME: legacyFlag } },
+    });
+    assert.equal(requiresMerchantApproval(false, 'request'), true, 'closed platform');
+    assert.equal(requiresMerchantApproval(false, 'open'), false, 'explicitly reopened platform');
+    assert.equal(requiresMerchantApproval(false), legacyFlag === 'true', 'unconfigured platform keeps deployment behavior');
+    assert.equal(requiresMerchantApproval(true, 'open'), true, 'partner approval remains required');
+    assert.equal(requiresMerchantApproval(true, 'request'), true, 'closed partner');
+  }
+});
+
 test('a newly connected approved wallet is checked instead of the old session wallet', async () => {
   const h = routeHarness({ session: oldWallet });
   const { status, body } = await h.get(approvedWallet.toUpperCase().replace('0X', '0x'));
@@ -157,4 +170,3 @@ test('pay.data-opt.com and brand domains are recognized as main domain hosts', (
   assert.equal(routing.isMainDomainHost('canyapay.com'), true);
   assert.equal(routing.isMainDomainHost('unknown-custom-store.com'), false);
 });
-

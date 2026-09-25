@@ -31,6 +31,7 @@ import { ReserveTabs } from "@/components/admin/reserve";
 import { MerchantDashboard } from "@/components/admin/panels/merchant-dashboard";
 import { Modal } from "@/components/ui/modal";
 import { useBrand } from "@/contexts/BrandContext";
+import { requiresMerchantApproval } from "@/lib/merchant-access-status";
 import { getDefaultBrandName, isPlatformBrand, getEffectiveBrandKey, isRuntimePlatformBrand } from "@/lib/branding";
 import BrandingPanelExt from "@/app/(web)/admin/panels/BrandingPanel";
 import OnrampsPanel from "./panels/OnrampsPanel";
@@ -11696,9 +11697,9 @@ export default function AdminPage() {
         // 1. Approval Gate
         const domContainerType = typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-pp-container-type') || '').toLowerCase() : '';
         const isPartner = domContainerType === "partner" || containerType === "partner";
-        const isRegistrationRegime = process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
+        const approvalRequired = requiresMerchantApproval(isPartner, brand.accessMode);
 
-        const isApproved = (!isPartner && !isRegistrationRegime) || String(me.shopStatus || "").toLowerCase() === "approved" || me.isPlatformAdmin || !!me.isTeamMember;
+        const isApproved = !approvalRequired || String(me.shopStatus || "").toLowerCase() === "approved" || me.isPlatformAdmin || !!me.isTeamMember;
 
         if (!isApproved) {
           window.location.href = "/apply";
@@ -11730,7 +11731,7 @@ export default function AdminPage() {
       }
     })();
     return () => { cancelled = true; };
-  }, [wallet, authRevision]);
+  }, [wallet, authRevision, brand.accessMode]);
 
   // Fetch industry pack to conditionally show Kitchen tab
   useEffect(() => {
