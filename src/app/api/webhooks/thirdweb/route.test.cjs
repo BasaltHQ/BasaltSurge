@@ -53,7 +53,7 @@ function harness(siteConfig, options = {}) {
     upsert: async doc => { if (doc.type === 'receipt') receipt = doc; else events.push(doc); },
   } };
   const mocks = {
-    'next/server': { NextResponse: { json: (body, init) => new Response(JSON.stringify(body), init) } },
+    'next/server': { NextRequest: require('next/server').NextRequest, NextResponse: { json: (body, init) => new Response(JSON.stringify(body), init) } },
     '@/lib/cosmos': { getContainer: async () => container },
     '@/config/brands': { getBrandKey: () => 'basaltsurge' },
     '@/lib/audit': { auditEvent: async () => {} },
@@ -74,15 +74,18 @@ function harness(siteConfig, options = {}) {
     } } } },
   };
   const statusRoute = options.persistStatus ? load('src/app/api/receipts/status/route.ts', mocks) : null;
+  mocks['@/app/api/receipts/status/route'] = { POST: async req => {
+    const body = await req.json();
+    calls.push({ url: req.url, body, headers: Object.fromEntries(req.headers), transport: 'in-process' });
+    if (options.statusFails) return new Response('unavailable', { status: 503 });
+    return statusRoute ? statusRoute.POST({ headers: req.headers, json: async () => body }) : new Response(JSON.stringify({ ok: true }));
+  } };
   const route = load(path.join(__dirname, 'route.ts'), mocks, {
     fetch: async (url, init) => {
       const body = JSON.parse(init.body);
       calls.push({ url, body, headers: init.headers });
       if (url.endsWith('/api/split/webhook') && options.indexFails) throw new Error('index_unavailable');
-      if (url.endsWith('/api/receipts/status') && options.statusFails) return new Response('unavailable', { status: 503 });
-      if (url.endsWith('/api/receipts/status') && statusRoute) {
-        return statusRoute.POST({ headers: new Headers(init.headers), json: async () => body });
-      }
+      assert.ok(!url.endsWith('/api/receipts/status'), 'canonical status writes must not use public HTTP');
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     },
   });

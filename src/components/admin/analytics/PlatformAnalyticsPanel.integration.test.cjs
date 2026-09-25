@@ -351,10 +351,11 @@ test('a shared receipt link selects its later ledger page and restores the reque
   }));
   const aggregates = aggregateAnalyticsReceipts(rows, 'America/Los_Angeles');
   const replayCalls = [];
+  let replayResponse;
   let analyticsReads = 0;
   global.fetch = async (input, options) => {
     const url = new URL(String(input), 'https://analytics.example.invalid');
-    if (url.pathname === '/api/platform/thirdweb-replay') { replayCalls.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ ok: true, message: 'Thirdweb payment verified and receipt marked paid.' }) }; }
+    if (url.pathname === '/api/platform/thirdweb-replay') { replayCalls.push(JSON.parse(options.body)); return replayResponse || new Response(JSON.stringify({ ok: true, message: 'Thirdweb payment verified and receipt marked paid.' })); }
     if (url.pathname === '/api/platform/safe-value') return { ok: true, json: async () => ({ balanceHistory: [], tokenPrices: {}, metadata: {} }) };
     if (url.pathname === '/api/platform/git-commits') return { ok: true, json: async () => ({ ok: true, commits: [] }) };
     assert.equal(url.pathname, '/api/platform/analytics');
@@ -381,6 +382,26 @@ test('a shared receipt link selects its later ledger page and restores the reque
     const refreshed = walk(updated).find(node => node.props?.receipt?.receiptId === selected.receiptId);
     assert.equal(refreshed.props.actionLoading['thirdweb-' + selected.receiptId], false);
     assert.match(refreshed.props.actionFeedback[selected.receiptId], /receipt marked paid/);
+    const readsBeforeFailure = analyticsReads;
+    for (const status of [502, 504, 200]) {
+      replayResponse = new Response('<!DOCTYPE html><html>Cloudflare Bad gateway</html>', { status, headers: { 'content-type': 'text/html', 'cf-ray': 'ray-test' } });
+      await refreshed.props.handleThirdwebReplay(selected);
+      const failedTree = await runner.settle(Panel);
+      const failed = walk(failedTree).find(node => node.props?.receipt?.receiptId === selected.receiptId);
+      const feedback = failed.props.actionFeedback[selected.receiptId];
+      assert.match(feedback, new RegExp(`HTTP ${status}`));
+      assert.match(feedback, /Refresh the receipt/);
+      assert.match(feedback, /ray-test/);
+      assert.doesNotMatch(feedback, /<!DOCTYPE|<html|Unexpected token|marked paid/);
+      assert.equal(failed.props.actionLoading['thirdweb-' + selected.receiptId], false);
+      assert.equal(analyticsReads, readsBeforeFailure, 'an uncertain response is not reported as a successful replay');
+    }
+    replayResponse = new Response(JSON.stringify({ ok: false, error: 'Thirdweb identifies another receipt.' }), { status: 409 });
+    await refreshed.props.handleThirdwebReplay(selected);
+    const rejectedTree = await runner.settle(Panel);
+    const rejected = walk(rejectedTree).find(node => node.props?.receipt?.receiptId === selected.receiptId);
+    assert.equal(rejected.props.actionFeedback[selected.receiptId], 'Thirdweb identifies another receipt.');
+
   } finally {
     runner.dispose();
     delete global.fetch; delete global.window; delete global.localStorage; delete global.document;

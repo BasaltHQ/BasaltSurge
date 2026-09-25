@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 import { getReceiptStatusInternalHeaders } from "@/lib/receipt-status-policy";
 
 function metadataObject(value: unknown): any {
@@ -43,11 +44,15 @@ export async function postVerifiedReceiptStatus(baseOrigin: string, body: Record
     throw new Error("receipt_status_internal_secret_not_configured");
   }
 
-  const response = await fetch(`${baseOrigin}/api/receipts/status`, {
+  // Invoke the existing handler in-process. A public self-request depends on
+  // Cloudflare/Plesk availability and can wait for another Passenger worker.
+  // Keep the handler's internal-secret authorization and all canonical writes.
+  const { POST } = await import("@/app/api/receipts/status/route");
+  const response = await POST(new NextRequest(new URL("/api/receipts/status", baseOrigin), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...internalHeaders },
     body: JSON.stringify(body, (_key, value) => typeof value === "bigint" ? value.toString() : value),
-  });
+  }));
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new Error(`receipt_status_update_failed:${response.status}:${detail.slice(0, 300)}`);

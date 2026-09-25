@@ -33,7 +33,7 @@ function harness(options = {}) {
     items: { query: spec => ({ fetchAll: async () => ({ resources: events.filter(sift(parseCosmosSql(spec.query, spec.parameters).filter)) }) }) },
   };
   const mocks = {
-    'next/server': { after: fn => pending.push(fn), NextResponse: { json: (body, init) => new Response(JSON.stringify(body), init) } },
+    'next/server': { NextRequest: require('next/server').NextRequest, after: fn => pending.push(fn), NextResponse: { json: (body, init) => new Response(JSON.stringify(body), init) } },
     'thirdweb': { Bridge: { status: async args => { providerReads++; providerRequests.push(args); return options.providerData?.[args.transactionHash] || data; } } },
     '@/lib/auth': { requireThirdwebAuth: async () => ({ roles: options.nonAdmin ? [] : ['admin'] }) },
     '@/lib/partner-analytics-access': { requirePlatformAnalyticsAccess: async () => {
@@ -48,9 +48,12 @@ function harness(options = {}) {
     '@/lib/split-indexer': { indexSplitTransactions: async (...args) => { indexed.push(args); return { ok: true }; } },
     '@/lib/audit': { auditEvent: async (_req, entry) => audit.push(entry) },
   };
-  const route = load(path.join(__dirname, 'route.ts'), mocks, { fetch: async (url, init) => {
-    calls.push({ url, headers: init.headers, body: JSON.parse(init.body) });
+  mocks['@/app/api/receipts/status/route'] = { POST: async req => {
+    calls.push({ url: req.url, headers: Object.fromEntries(req.headers), body: await req.json(), transport: 'in-process' });
     return new Response(JSON.stringify({ ok: true }), { status: options.writeFails ? 503 : 200 });
+  } };
+  const route = load(path.join(__dirname, 'route.ts'), mocks, { fetch: async () => {
+    throw new Error('Replay must not make an HTTP request back to the public site');
   } });
   return { calls, audit, pending, indexed, providerRequests, get reads() { return reads; }, get providerReads() { return providerReads; }, async post(extra = {}) {
     const response = await route.POST({ method: 'POST', headers: new Headers(), nextUrl: new URL('https://example.test/api/platform/thirdweb-replay'),
@@ -67,6 +70,7 @@ test('replays saved verified evidence and queues indexing only after receipt upd
   assert.equal(h.providerReads, 0);
   assert.equal(h.calls.length, 1);
   assert.equal(h.calls[0].body.status, 'paid');
+  assert.equal(h.calls[0].transport, 'in-process');
   assert.equal(h.calls[0].body.txHash, hash);
   assert.equal(h.calls[0].headers['x-portalpay-internal-secret'], 'test-secret');
   assert.equal(h.audit[0].ok, true);

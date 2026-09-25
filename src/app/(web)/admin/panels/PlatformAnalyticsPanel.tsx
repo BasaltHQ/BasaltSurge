@@ -1,5 +1,6 @@
 "use client";
 
+import { readAnalyticsActionResponse } from "@/lib/analytics-action-response";
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { getTransactionExplorerUrl } from "@/lib/transaction-explorer";
 import { getDistinctBrandColor } from "@/components/admin/analytics/analytics-brand-colors";
@@ -1039,18 +1040,18 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
     if (isPartner) return;
     const key = `thirdweb-${receipt.receiptId}`;
     setActionLoading(prev => ({ ...prev, [key]: true }));
-    setActionFeedback(prev => ({ ...prev, [receipt.receiptId]: "Verifying Thirdweb payment evidence?" }));
+    setActionFeedback(prev => ({ ...prev, [receipt.receiptId]: "Verifying Thirdweb payment evidence..." }));
     try {
       const response = await fetch("/api/platform/thirdweb-replay", {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ receiptId: receipt.receiptId, wallet: receipt.wallet, brandKey: receipt.brandKey, transactionHash, chainId }),
       });
-      const data = await response.json();
+      const data = await readAnalyticsActionResponse(response, "Thirdweb replay");
       if (!response.ok || !data.ok) throw new Error(data.error || `Replay failed (HTTP ${response.status}).`);
       setActionFeedback(prev => ({ ...prev, [receipt.receiptId]: `${data.message}${data.transactionHash ? `\nTransaction: ${data.transactionHash}` : ""}` }));
       await fetchAnalytics();
     } catch (error: any) {
-      setActionFeedback(prev => ({ ...prev, [receipt.receiptId]: error.message || "Thirdweb replay failed. Refresh the receipt before retrying." }));
+      setActionFeedback(prev => ({ ...prev, [receipt.receiptId]: error.message || "Thirdweb replay response unavailable. Refresh the receipt before retrying." }));
     } finally {
       setActionLoading(prev => ({ ...prev, [key]: false }));
     }
