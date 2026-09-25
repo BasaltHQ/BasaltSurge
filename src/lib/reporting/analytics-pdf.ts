@@ -27,7 +27,7 @@ export interface AnalyticsReportStat {
   feeRecordedTotal?: number;
   feeModeledTotal?: number;
   aov: number;
-  cardTypes: { credit: number; debit: number; bank: number; unknown: number };
+  cardTypes: { credit: number; debit: number; bank: number; crypto?: number; unknown: number };
   kycLevels?: { none: number; l1: number; l2: number };
   kycProfile?: AnalyticsKycProfile;
 }
@@ -75,6 +75,10 @@ export interface AnalyticsReceiptItem extends AnalyticsFailureReceipt {
   paymentId?: string | null;
   transactionHash?: string | null;
   cardFunding?: string | null;
+  settlementSplitAddress?: string;
+  settlementSplitKind?: string;
+  settlementSplitVersion?: number | null;
+  splitRouteInherited?: boolean;
   kycLevel?: string;
   kycInitialLevel?: string | null;
   kycInitialVerifiedLevel?: string | null;
@@ -506,7 +510,7 @@ export async function exportExecutiveSummaryPDF(
   }
   y = drawSectionTitle(doc, "5", "Accepted funding mix", y, COLORS.emerald);
   const methods = stats?.cardTypes || { credit: 0, debit: 0, bank: 0, unknown: 0 };
-  const methodTotal = methods.credit + methods.debit + methods.bank + methods.unknown;
+  const methodTotal = methods.credit + methods.debit + methods.bank + (methods.crypto || 0) + methods.unknown;
   autoTable(doc, {
     ...standardTableOptions(doc, title, subtitle, filterContext, "portrait"),
     startY: y,
@@ -515,7 +519,8 @@ export async function exportExecutiveSummaryPDF(
       ["Credit card", methods.credit.toLocaleString(), methodTotal ? percent((methods.credit / methodTotal) * 100) : "0.0%"],
       ["Debit card", methods.debit.toLocaleString(), methodTotal ? percent((methods.debit / methodTotal) * 100) : "0.0%"],
       ["US bank account / ACH", methods.bank.toLocaleString(), methodTotal ? percent((methods.bank / methodTotal) * 100) : "0.0%"],
-      ["Crypto / unclassified", methods.unknown.toLocaleString(), methodTotal ? percent((methods.unknown / methodTotal) * 100) : "0.0%"]
+      ["Direct Crypto", (methods.crypto || 0).toLocaleString(), methodTotal ? percent(((methods.crypto || 0) / methodTotal) * 100) : "0.0%"],
+      ["Unknown", methods.unknown.toLocaleString(), methodTotal ? percent((methods.unknown / methodTotal) * 100) : "0.0%"]
     ]),
     columnStyles: { 1: { halign: "right", fontStyle: "bold" }, 2: { halign: "right" } }
   });
@@ -605,7 +610,7 @@ export async function exportTransactionLedgerPDF(
         fee,
         isAnalyticsPaidReceipt(receipt) ? (receipt.platformFeeSource || "legacy") : "not applicable",
         String(receipt.status || "unknown").toUpperCase(),
-        receipt.cardFunding || "unclassified",
+        `${receipt.cardFunding || "unknown"} -> ${receipt.settlementSplitKind || "unknown"} v${receipt.settlementSplitVersion || "?"}${receipt.splitRouteInherited ? " (shared)" : ""}\n${receipt.settlementSplitAddress || ""}`,
         `${receipt.kycInitialVerifiedLevel || receipt.kycInitialLevel || "Unknown"} -> ${receipt.kycCompletedLevel || receipt.kycVerifiedLevel || receipt.kycFinalLevel || receipt.kycLevel || "Unknown"}`,
         pdfText(session, 28),
         extractAnalyticsFailureReasons(receipt).join(" | ") || tx
@@ -615,7 +620,7 @@ export async function exportTransactionLedgerPDF(
     autoTable(doc, {
       ...standardTableOptions(doc, title, subtitle, scope, "landscape"),
       startY: 43,
-      head: [["Receipt ID", "Date / time", "Partner", "Merchant", "Customer", "Amount", "Platform fee", "Fee evidence", "Status", "Funding", "KYC", "Session / payment", "Failure / tx reference"]],
+      head: [["Receipt ID", "Date / time", "Partner", "Merchant", "Customer", "Amount", "Platform fee", "Fee evidence", "Status", "Funding / receiving split", "KYC", "Session / payment", "Failure / tx reference"]],
       body: sanitizeRows(rows),
       styles: { fontSize: 5.9, cellPadding: 1.35, overflow: "linebreak", textColor: COLORS.slate },
       headStyles: { fillColor: COLORS.slate, textColor: [255, 255, 255], fontStyle: "bold", fontSize: 6, cellPadding: 1.45 },

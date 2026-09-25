@@ -1,3 +1,4 @@
+import { pinReceiptSplitRouting } from "@/lib/receipt-split-snapshot";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { attachCreatedStripeSession, readStripeReceiptForPayment, assertStripeReceiptCanCreateSession } from "@/lib/stripe-receipt-session";
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest) {
       // already-persisted receipt identity remains authoritative in that case.
       expectedCustomerEmail = receiptCustomerEmail;
       await assertStripeReceiptCanCreateSession(container, paymentReceipt);
+      paymentReceipt = await pinReceiptSplitRouting(container, paymentReceipt);
     }
 
     if (!cryptoCustomerId || !cryptoPaymentToken) {

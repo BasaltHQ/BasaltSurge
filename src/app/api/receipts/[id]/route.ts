@@ -1,3 +1,4 @@
+import { pinReceiptSplitRouting } from "@/lib/receipt-split-snapshot";
 import { NextRequest, NextResponse } from "next/server";
 import { receiptCurrencyFields, type ReceiptPricing } from "@/lib/receipt-currency";
 import { getContainer } from "@/lib/cosmos";
@@ -18,6 +19,7 @@ type ReceiptLineItem = {
 
 export type Receipt = {
   receiptId: string;
+  splitRoutingSnapshot?: Record<string, any>;
   totalUsd: number;
   currency: string;
   crypto?: boolean;
@@ -151,7 +153,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
       parameters: [
         { name: "@id", value: id },
         { name: "@wallet", value: wallet }
@@ -166,7 +168,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       try {
         const specCrossPartition = {
           query:
-            "SELECT TOP 1 c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+            "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
           parameters: [{ name: "@id", value: id }],
         } as { query: string; parameters: { name: string; value: any }[] };
         const crossRes = await container.items.query(specCrossPartition).fetchAll();
@@ -175,8 +177,10 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
 
     if (row) {
+      row = await pinReceiptSplitRouting(container, row);
       const rec: Receipt = {
         receiptId: String(row.receiptId || id),
+        splitRoutingSnapshot: row.splitRoutingSnapshot,
         totalUsd: Number(row.totalUsd || 0),
         ...receiptCurrencyFields(row),
         createdAt: Number(row.createdAt || Date.now()),

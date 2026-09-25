@@ -31,6 +31,7 @@ function createHarness({ eurPerUsd = 0.9, stripeError = null, stripeErrorOnce = 
     return jsonResponse({ id: "cos_currency_test", crypto_customer_id: providerCustomerId, status: "initialized", transaction_details: { destination_amount: "9.65", destination_currency: "usdc" } });
   };
   const mocks = {
+    "@/lib/site-config": { getSiteConfigForWallet: async () => ({}) },
     "next/server": { NextResponse: { json: (value, init = {}) => jsonResponse(value, init.status || 200, init.headers || {}) } },
     "@/lib/cosmos": { getContainer: async () => ({
       item: () => ({

@@ -3,10 +3,10 @@ import { deduplicateAnalyticsReceipts, isAnalyticsPaidReceipt, isAnalyticsFailed
 // @ts-expect-error Native Node test execution imports the TypeScript source.
 import { getPlatformAnalyticsFeeData } from "./platform-analytics-fees.ts";
 // @ts-expect-error Native Node test execution imports the TypeScript source.
-import { analyticsDateParts, analyticsDayStart, analyticsFunding } from "./platform-analytics-query.ts";
+import { analyticsDateParts, analyticsDayStart, analyticsFunding, analyticsSplitRoute } from "./platform-analytics-query.ts";
 
 const round = (value: number, digits = 2) => Number(value.toFixed(digits));
-const fundingCounts = () => ({ credit: 0, debit: 0, bank: 0, unknown: 0 });
+const fundingCounts = () => ({ credit: 0, debit: 0, bank: 0, crypto: 0, unknown: 0 });
 const rawCounts = () => ({ total: 0, paid: 0, failed: 0, gmv: 0, fees: 0, feeKnownCount: 0, feeUnknownCount: 0, feeRecordedTotal: 0, feeModeledTotal: 0, dedupedTotal: 0, dedupedPaid: 0, dedupedFailed: 0 });
 
 function addReceipt(bucket: ReturnType<typeof rawCounts>, receipt: Record<string, any>) {
@@ -28,6 +28,8 @@ export function aggregateAnalyticsReceipts(receipts: Record<string, any>[], time
   const dedup = deduplicateAnalyticsReceipts(receipts);
   const brands = new Map<string, ReturnType<typeof rawCounts> & { brandKey: string; brandName: string }>();
   const days = new Map<string, ReturnType<typeof rawCounts> & { dateLabel: string; timestamp: number; brands: Record<string, ReturnType<typeof rawCounts>> }>();
+  const methods = new Map<string, ReturnType<typeof rawCounts>>();
+  const splitRoutes = new Map<string, ReturnType<typeof rawCounts>>();
   const allFunding = fundingCounts();
   const paidFunding = fundingCounts();
   const dayFor = (date: Date) => {
@@ -45,6 +47,12 @@ export function aggregateAnalyticsReceipts(receipts: Record<string, any>[], time
     const key = String(receipt.brandKey || "unknown");
     let brand = brands.get(key);
     if (!brand) { brand = { ...rawCounts(), brandKey: key, brandName: String(receipt.brandName || key) }; brands.set(key, brand); }
+    const method = analyticsFunding(receipt);
+    const route = analyticsSplitRoute(receipt).kind;
+    if (!methods.has(method)) methods.set(method, rawCounts());
+    if (!splitRoutes.has(route)) splitRoutes.set(route, rawCounts());
+    addReceipt(methods.get(method)!, receipt);
+    addReceipt(splitRoutes.get(route)!, receipt);
     addReceipt(raw, receipt);
     addReceipt(brand, receipt);
     allFunding[analyticsFunding(receipt)]++;
@@ -74,6 +82,7 @@ export function aggregateAnalyticsReceipts(receipts: Record<string, any>[], time
   return {
     dedup,
     stats: {
+      methodBreakdown: Object.fromEntries(methods), splitBreakdown: Object.fromEntries(splitRoutes),
       totalCreated: raw.total, totalPaid: raw.paid, totalFailed: raw.failed,
       successRate: raw.total ? round(raw.paid / raw.total * 100, 1) : 0,
       dedupedTotalCreated: dedup.dedupedTotalCreated, dedupedTotalPaid: dedup.dedupedTotalPaid, dedupedTotalFailed: dedup.dedupedTotalFailed,

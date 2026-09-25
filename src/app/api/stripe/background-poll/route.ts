@@ -1,3 +1,4 @@
+import { receiptRoutingFields, settlementRoutingFields } from "@/lib/payment-split-routing";
 import { after, NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { recoverStripeReceiptSession, stripeReceiptWriteCondition, persistStripeReceiptUpdate } from "@/lib/stripe-receipt-session";
@@ -527,6 +528,7 @@ async function runBackgroundPoll(params: {
   amount: number;
   splitAddress: string;
   splitAddressCredit: string;
+  routingSnapshot?: any;
   brandKey: string;
   detectedCardFunding?: string;
   kycOccurred?: boolean;
@@ -716,6 +718,7 @@ async function runBackgroundPoll(params: {
       funding: finalFunding,
       splitAddress,
       splitAddressCredit,
+      ...params.routingSnapshot,
       fallbackAddress: merchantWallet,
     });
 
@@ -849,6 +852,7 @@ async function runBackgroundPoll(params: {
           // Persist card funding if resolved
           receipt.isCreditCard = isCreditCard;
           receipt.detectedCardFunding = finalFunding;
+          receipt.settlementSplitAddress = targetSplitAddress;
           if (finalKycSnapshot && cryptoCustomerId) {
             receipt = applyStripeKycSnapshotToReceipt({
               receipt,
@@ -1212,6 +1216,7 @@ export async function POST(req: NextRequest) {
       if (stripeSourceAmount) receipt.onrampAmount = stripeSourceAmount;
       else if (!receipt.onrampAmount && storedOnrampAmount > 0) receipt.onrampAmount = storedOnrampAmount;
       if (providerSettlementAmount) receipt.settlementAmount = providerSettlementAmount;
+      receipt.splitRoutingSnapshot ||= { ...settlementRoutingFields(siteConfig), ...settlementRoutingFields(receipt), splitAddress, splitAddressCredit };
       receipt.splitAddress = splitAddress;
       receipt.splitAddressCredit = splitAddressCredit || null;
       receipt.detectedCardFunding = detectedCardFunding || null;
@@ -1290,6 +1295,7 @@ export async function POST(req: NextRequest) {
             amount,
             splitAddress,
             splitAddressCredit,
+            routingSnapshot: receiptRoutingFields(verifiedReceipt),
             brandKey,
             detectedCardFunding,
             kycOccurred,

@@ -250,6 +250,18 @@ for (const funding of ["debit", "credit", "us_bank_account", "prepaid"]) {
   });
 }
 
+test("ACH settles to its dedicated payment snapshot even if site configuration differs", async () => {
+  const achSplit = `0x${"7".repeat(40)}`;
+  const harness = createHarness({ funding: "us_bank_account", receiptOverrides: {
+    splitRoutingSnapshot: { splitAddress: SPLIT, splitAddressCredit: SPLIT, splitAddressAch: achSplit, splitConfigAch: { platformBps: 80 }, splitOverrides: { ach: true } },
+  } });
+  assert.equal((await harness.post()).status, 200);
+  await harness.runAfter();
+  assert.equal(harness.calls.send.length, 1);
+  assert.equal(harness.calls.send[0].transaction.params[0], achSplit);
+  assert.equal(harness.calls.send[0].transaction.params[1], 9_000_000n);
+});
+
 for (const newer of [
   { status: "paid", stripeSessionStatus: "fulfillment_complete", transactionHash: TX_HASH },
   { stripeSessionId: "cos_new_attempt", status: "pending" },

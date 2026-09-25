@@ -1,6 +1,11 @@
 import { resolveSettlementSplitConfig } from "./payment-split-routing";
 
 type PricingConfig = {
+  splitAddressAch?: string;
+  splitAddressCrypto?: string;
+  splitConfigAch?: any;
+  splitConfigCrypto?: any;
+  splitOverrides?: { ach?: boolean; crypto?: boolean };
   splitConfig?: any;
   splitConfigCredit?: any;
   presentedFeeBps?: number;
@@ -10,7 +15,7 @@ type PricingConfig = {
 
 /** Preserve the presented-fee and inverted split policies for the selected method. */
 export function resolveFundingPlatformFeePct(funding: unknown, config: PricingConfig): number {
-  const split = resolveSettlementSplitConfig({ funding, splitConfig: config.splitConfig, splitConfigCredit: config.splitConfigCredit });
+  const split = resolveSettlementSplitConfig({ ...config, funding, splitConfig: config.splitConfig, splitConfigCredit: config.splitConfigCredit });
   const partner = typeof split?.partnerBps === "number" ? split.partnerBps : 0;
   const presented = funding === "credit" ? (config.creditPresentedFeeBps ?? config.presentedFeeBps) : config.presentedFeeBps;
   if (presented !== undefined) return (presented + partner) / 100;

@@ -1,3 +1,4 @@
+import { discoverSplitContracts } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { chain, serverClient } from "@/lib/thirdweb/server";
 import { getRpcClient, eth_getBalance, eth_call } from "thirdweb/rpc";
@@ -29,6 +30,7 @@ export async function GET(req: NextRequest) {
     const readOnly = url.searchParams.get("readOnly") === "1";
     const scope = readOnly ? getMerchantBrandScope(req) : null;
     let balanceReadFailed = false;
+    const failedBalanceAddresses = new Set<string>();
     let scopedConfigs: any[] = [];
     const queryWallet = String(url.searchParams.get("wallet") || "").toLowerCase();
     const headerWallet = String(req.headers.get("x-wallet") || "").toLowerCase();
@@ -52,6 +54,7 @@ export async function GET(req: NextRequest) {
     // Resolve source wallets to query on-chain
     let splitAddressDebit = "";
     let splitAddressCredit = "";
+    const splitRecords = new Map<string, ReturnType<typeof discoverSplitContracts>[number]>();
 
     // Priority 1: Use directly provided splitAddress parameters
     if (querySplitAddress && /^0x[a-f0-9]{40}$/i.test(querySplitAddress)) {
@@ -75,6 +78,7 @@ export async function GET(req: NextRequest) {
       // The legacy resolver deliberately falls back across configs; dashboard access must not.
       const cfg = scope ? scopedConfigs[0] : await getSiteConfigForWallet(wallet, queryBrandKey);
       if (cfg) {
+        for (const split of discoverSplitContracts(cfg)) splitRecords.set(split.address, split);
         if (!splitAddressDebit) {
           const splitAddr = (cfg as any)?.splitAddress || (cfg as any)?.split?.address || (cfg as any)?.config?.splitAddress || (cfg as any)?.config?.split?.address;
           if (typeof splitAddr === "string" && /^0x[a-f0-9]{40}$/i.test(splitAddr)) {
@@ -86,7 +90,7 @@ export async function GET(req: NextRequest) {
           splitAddressCredit = splitAddrCredit.toLowerCase();
         }
       }
-    } catch { if (readOnly) balanceReadFailed = true; }
+    } catch { balanceReadFailed = true; }
 
     // Fallback: if site-config did not yield split addresses, attempt to read via split/deploy API.
     // Propagate auth headers/cookies so the deploy endpoint can read stored configuration.
@@ -168,7 +172,7 @@ export async function GET(req: NextRequest) {
       try {
         return BigInt(h);
       } catch {
-        if (readOnly) balanceReadFailed = true;
+        balanceReadFailed = true;
         return BigInt(0);
       }
     }
@@ -180,9 +184,11 @@ export async function GET(req: NextRequest) {
       try {
         const data = ("0x70a08231" + addrToTopic(wallet)) as `0x${string}`; // balanceOf(address)
         const r = await eth_call(rpc, { to: token, data });
+        if (!/^0x[a-f0-9]+$/i.test(String(r))) throw new Error("Invalid balance response");
         return hexToBigInt(String(r || "0x0"));
       } catch {
-        if (readOnly) balanceReadFailed = true;
+        balanceReadFailed = true;
+        failedBalanceAddresses.add(wallet.toLowerCase());
         return BigInt(0);
       }
     }
@@ -204,7 +210,8 @@ export async function GET(req: NextRequest) {
 
       // ETH native
       const ethWei = await eth_getBalance(rpc, { address: addressToQuery as `0x${string}` }).catch(() => {
-        if (readOnly) balanceReadFailed = true;
+        balanceReadFailed = true;
+        failedBalanceAddresses.add(addressToQuery.toLowerCase());
         return "0x0";
       });
       const ethRaw = BigInt(ethWei);
@@ -240,7 +247,7 @@ export async function GET(req: NextRequest) {
       const cbbtcUsd = cbbtcUnits * (btcUsdRate > 0 ? btcUsdRate : 0);
       const cbxrpUsd = cbxrpUnits * (xrpUsdRate > 0 ? xrpUsdRate : 0);
       const solUsdVal = solUnits * (solUsdRate > 0 ? solUsdRate : 0);
-      if (readOnly && ((ethUnits > 0 && !(ethUsdRate > 0)) || (cbbtcUnits > 0 && !(btcUsdRate > 0))
+      if (((ethUnits > 0 && !(ethUsdRate > 0)) || (cbbtcUnits > 0 && !(btcUsdRate > 0))
         || (cbxrpUnits > 0 && !(xrpUsdRate > 0)) || (solUnits > 0 && !(solUsdRate > 0)))) {
         balanceReadFailed = true;
       }
@@ -273,8 +280,8 @@ export async function GET(req: NextRequest) {
       // Use a broader query — fetch ALL fields for site_config docs matching this wallet
       // (avoid LOWER() which the MongoDB adapter may not support in SQL mode)
       const { resources: allSiteConfigs } = scope ? { resources: scopedConfigs } : await container2.items.query({
-        query: `SELECT * FROM c WHERE c.type = 'site_config' AND c.wallet = @w`,
-        parameters: [{ name: "@w", value: wallet }],
+        query: `SELECT * FROM c WHERE c.type = 'site_config' AND c.wallet = @w ${queryBrandKey ? 'AND (LOWER(c.brandKey) = @brand OR c.id = @brandDoc)' : ''}`,
+        parameters: [{ name: "@w", value: wallet }, ...(queryBrandKey ? [{ name: "@brand", value: queryBrandKey }, { name: "@brandDoc", value: queryBrandKey === 'portalpay' ? 'site:config' : `site:config:${queryBrandKey}` }] : [])],
       }).fetchAll();
 
       console.log(`[RESERVE BALANCES] Found ${(allSiteConfigs || []).length} site_config docs for wallet ${wallet.slice(0, 10)}...`);
@@ -356,8 +363,8 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) {
       console.warn("[RESERVE BALANCES] Split history merge failed:", e);
-      if (readOnly) balanceReadFailed = true;
-      else {
+      balanceReadFailed = true;
+      if (!readOnly) {
         try {
           mergedSplitHistory = (await getSiteConfigForWallet(wallet, queryBrandKey) as any)?.splitHistory || [];
         } catch { }
@@ -368,7 +375,11 @@ export async function GET(req: NextRequest) {
     const isDualResponse = isDual || hasCredit;
 
     // Gather all unique splits to fetch balances in parallel
-    const allUniqueSplits = new Set<string>();
+    for (const history of mergedSplitHistory) {
+      const address = String(history.address || "").toLowerCase();
+      if (/^0x[a-f0-9]{40}$/.test(address) && !splitRecords.has(address)) splitRecords.set(address, { address, splitKind: history.splitKind || (history.isCredit ? "debit" : "credit"), version: Number(history.version || 0), active: false });
+    }
+    const allUniqueSplits = new Set<string>(splitRecords.keys());
     const debitQueryAddr = splitAddressDebit || wallet;
     if (debitQueryAddr && /^0x[a-f0-9]{40}$/i.test(debitQueryAddr)) {
       allUniqueSplits.add(debitQueryAddr.toLowerCase());
@@ -390,7 +401,8 @@ export async function GET(req: NextRequest) {
           const res = await getBalancesForAddress(splitAddr);
           splitBalancesMap.set(splitAddr.toLowerCase(), res);
         } catch (e) {
-          if (readOnly) balanceReadFailed = true;
+          balanceReadFailed = true;
+          failedBalanceAddresses.add(splitAddr.toLowerCase());
           console.error(`[RESERVE BALANCES] Failed to fetch balances for split ${splitAddr}:`, e);
         }
       })
@@ -458,21 +470,22 @@ export async function GET(req: NextRequest) {
 
     // Fetch indexed transaction metrics for this merchant
     let indexedMetrics: any = null;
+    let indexedMetricsBySplit: any = {};
     try {
       const container = await getContainer();
       // Unbranded indexes require split-level proof even on the platform: old partner
       // index writers also omitted brandKey, so absence is not evidence of platform ownership.
       const indexBrandClause = scope?.brandKey === "basaltsurge"
         ? "(LOWER(c.brandKey) = 'basaltsurge' OR LOWER(c.brandKey) = 'portalpay')"
-        : scope?.clause;
+        : scope?.clause || (queryBrandKey ? "LOWER(c.brandKey) = @brand" : "");
       const spec = {
         query: `
           SELECT c.totalVolumeUsd, c.merchantEarnedUsd, c.platformFeeUsd, 
-                 c.customers, c.totalCustomerXp, c.transactionCount
+                 c.customers, c.totalCustomerXp, c.transactionCount, c.transactions, c.lastIndexedAt, c.cumulativePerSplit, c.tokenPricesAtIndex
           FROM c
           WHERE c.type='split_index' AND c.merchantWallet=@wallet ${indexBrandClause ? `AND ${indexBrandClause}` : ""}
         `,
-        parameters: [{ name: "@wallet", value: wallet }, ...(scope?.parameters || [])]
+        parameters: [{ name: "@wallet", value: wallet }, ...(scope?.parameters || (queryBrandKey ? [{ name: "@brand", value: queryBrandKey }] : []))]
       };
       const { resources } = await container.items.query(spec as any).fetchAll();
       let row = Array.isArray(resources) ? resources[0] : null;
@@ -492,6 +505,28 @@ export async function GET(req: NextRequest) {
       }
       if (row) {
         const metric = (value: unknown) => readOnly ? dashboardNumber(value) : Number(value || 0);
+        for (const tx of row.transactions || []) {
+          const address = String(tx.splitAddress || "").toLowerCase();
+          if (!allUniqueSplits.has(address)) continue;
+          const m = indexedMetricsBySplit[address] ||= { totalVolumeUsd: 0, merchantEarnedUsd: 0, platformFeeUsd: 0, transactionCount: 0, customers: 0, totalCustomerXp: 0, indexedAt: row.lastIndexedAt };
+          m.transactionCount++;
+          const amount = Math.max(0, Number(tx.valueUsd || 0));
+          if (tx.type === "payment") m.totalVolumeUsd += amount;
+          else if (tx.type === "release" && tx.releaseType === "merchant") m.merchantEarnedUsd += amount;
+          else if (tx.type === "release" && tx.releaseType === "platform") m.platformFeeUsd += amount;
+        }
+        // Lifetime token totals come from contract cumulative counters, not the preview page.
+        for (const [address, cumulative] of Object.entries(row.cumulativePerSplit || {}) as [string, any][]) {
+          if (!allUniqueSplits.has(address.toLowerCase())) continue;
+          const prices = row.tokenPricesAtIndex || {};
+          const usd = (values: any) => Object.entries(values || {}).reduce((total, [token, amount]) => total + Number(amount || 0) * Number(prices[token] || 0), 0);
+          const metrics = indexedMetricsBySplit[address.toLowerCase()] ||= { transactionCount: null, indexedAt: row.lastIndexedAt };
+          metrics.totalVolumeUsd = usd(cumulative.payments);
+          metrics.merchantEarnedUsd = usd(cumulative.merchantReleases);
+          metrics.platformFeeUsd = usd(cumulative.platformReleases);
+          metrics.partnerEarnedUsd = usd(cumulative.partnerReleases);
+          metrics.agentEarnedUsd = usd(cumulative.agentReleases);
+        }
         indexedMetrics = {
           totalVolumeUsd: metric(row?.totalVolumeUsd),
           merchantEarnedUsd: metric(row?.merchantEarnedUsd),
@@ -514,7 +549,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(
       {
-        ...(readOnly ? { degraded: balanceReadFailed } : {}),
+        degraded: balanceReadFailed,
+        failedBalanceAddresses: [...failedBalanceAddresses],
         merchantWallet: wallet,
         sourceWallet: debitQueryAddr,
         splitAddressUsed: splitAddressDebit || null,
@@ -531,6 +567,8 @@ export async function GET(req: NextRequest) {
         totalUsdCredit: isDualResponse ? creditRes.totalUsd : 0,
         isDual: isDualResponse,
         indexedMetrics,
+        indexedMetricsBySplit,
+        splitRecords: [...splitRecords.values()],
         splitHistory: mergedSplitHistory,
       },
       { headers: { "x-correlation-id": correlationId } }

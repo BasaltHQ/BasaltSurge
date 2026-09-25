@@ -41,12 +41,20 @@ function portalCalculation(name, values) {
 
 test("portal callback prices the newly selected credit method even before React updates debit state", () => {
   const callback = portalCalculation("getAmountForFunding", { ...config,
-    receipt: {}, achSpeed: "standard", creditStripeFeePct: 3.5, debitStripeFeePct: 2.25,
+    receipt: {}, methodSplits: {}, achSpeed: "standard", creditStripeFeePct: 3.5, debitStripeFeePct: 2.25,
     feeMinusEnabled: false, totalUsd: 105, itemsSubtotalUsd: 100, taxUsd: 0, tipUsd: 0, shippingCostUsd: 0,
     effectiveBasePlatformFeePct: 1.75, detectedCardFunding: "debit", presentedFeeBps: undefined, creditPresentedFeeBps: undefined,
   });
   assert.equal(callback("credit"), +(108 / 1.035).toFixed(2));
   assert.equal(callback("debit"), +(105 / 1.0225).toFixed(2));
+});
+
+test("dedicated ACH allocation affects the actual portal quote only after activation", () => {
+  const methodSplits = { splitAddressAch: `0x${"4".repeat(40)}`, splitConfigAch: { platformBps: 50, partnerBps: 50, agents: [] }, splitOverrides: { ach: true } };
+  const values = { ...config, methodSplits, receipt: {}, achSpeed: "standard", creditStripeFeePct: 3.5, debitStripeFeePct: 2.25, feeMinusEnabled: false, totalUsd: 105, itemsSubtotalUsd: 100, taxUsd: 0, tipUsd: 0, shippingCostUsd: 0, presentedFeeBps: undefined, creditPresentedFeeBps: undefined };
+  assert.equal(portalCalculation("getAmountForFunding", values)("us_bank_account"), +(102.6 / 1.006).toFixed(2));
+  const inactive = { ...values, methodSplits: { ...methodSplits, splitOverrides: { ach: false } } };
+  assert.equal(portalCalculation("getAmountForFunding", inactive)("us_bank_account"), quote("us_bank_account"));
 });
 
 test("portal fee− amount includes the internal allocation exactly once", () => {

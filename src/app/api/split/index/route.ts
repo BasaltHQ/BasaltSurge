@@ -1,3 +1,4 @@
+import { discoverSplitContracts } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireRole } from "@/lib/auth";
@@ -90,35 +91,12 @@ export async function POST(req: NextRequest) {
     try {
       const siteConfig = await getSiteConfigForWallet(merchantWallet.toLowerCase());
       if (siteConfig) {
-        // If credit split address exists, add it
-        const creditAddr = String((siteConfig as any).splitAddressCredit || '').toLowerCase();
-        if (creditAddr && /^0x[a-f0-9]{40}$/i.test(creditAddr)) {
-          allSplitAddresses.push({ address: creditAddr, version: "credit", fundingType: "debit" });
+        for (const split of discoverSplitContracts(siteConfig)) {
+          const entry = { address: split.address, version: `${split.splitKind}_v${split.version}`, fundingType: split.splitKind, deployedAt: split.deployedAt };
+          const existing = allSplitAddresses.find(s => s.address === split.address);
+          if (existing) Object.assign(existing, entry); else allSplitAddresses.push(entry);
         }
 
-        // If the query parameter/body splitAddress was actually the credit address, tag it correctly
-        if (splitAddress.toLowerCase() === creditAddr) {
-          const mainSplit = allSplitAddresses.find(s => s.address === splitAddress.toLowerCase());
-          if (mainSplit) {
-            mainSplit.fundingType = "debit";
-            mainSplit.version = "credit";
-          }
-        }
-
-        if (Array.isArray((siteConfig as any).splitHistory)) {
-          for (const entry of (siteConfig as any).splitHistory) {
-            const addr = String(entry?.address || "").toLowerCase();
-            const alreadyIndexed = allSplitAddresses.some(s => s.address === addr);
-            if (addr && /^0x[a-f0-9]{40}$/i.test(addr) && !alreadyIndexed) {
-              allSplitAddresses.push({
-                address: addr,
-                version: entry.isCredit ? `credit_v${allSplitAddresses.length}` : `v${allSplitAddresses.length}`,
-                deployedAt: Number(entry.deployedAt || entry.archivedAt || 0) || undefined,
-                fundingType: entry.isCredit ? "debit" : "credit",
-              });
-            }
-          }
-        }
       }
     } catch (e) {
       console.warn("[SplitIndex] Failed to read splitHistory/credit from site_config:", e);
@@ -232,6 +210,7 @@ export async function POST(req: NextRequest) {
       splitAddress: string;
       splitVersion: string;
       fundingType: string;
+    splitKind?: string;
       releaseType?: string;
     }> = [];
 
@@ -273,7 +252,8 @@ export async function POST(req: NextRequest) {
         blockNumber,
         splitAddress: String(tx.splitAddress || splitAddress).toLowerCase(),
         splitVersion: String(tx.splitVersion || "current"),
-        fundingType: tx.fundingType || "credit",
+        splitKind: tx.fundingType || "unknown",
+        fundingType: tx.paymentMethod || "unknown",
         ...(tx.releaseType ? { releaseType: tx.releaseType } : {}),
       });
     }
@@ -346,7 +326,8 @@ export async function POST(req: NextRequest) {
           txType: tx.type,
           releaseType: tx.releaseType,
           releaseTo: tx.releaseTo,
-          fundingType: tx.fundingType || "credit",
+          splitKind: tx.fundingType || "unknown",
+        fundingType: tx.paymentMethod || "unknown",
           indexedAt: Date.now(),
           correlationId,
         };

@@ -557,6 +557,7 @@ export async function POST(req: NextRequest) {
           ...(thirdwebMetadata ? { thirdwebMetadata } : {}),
           // Persist smart contract split addresses and configs
           ...(resource?.splitAddress ? { splitAddress: resource.splitAddress } : {}),
+          splitRoutingSnapshot: resource?.splitRoutingSnapshot,
           ...(resource?.splitAddressCredit ? { splitAddressCredit: resource.splitAddressCredit } : {}),
           ...(resource?.splitConfig ? { splitConfig: resource.splitConfig } : {}),
           ...(resource?.splitConfigCredit ? { splitConfigCredit: resource.splitConfigCredit } : {}),

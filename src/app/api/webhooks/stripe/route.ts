@@ -1,3 +1,4 @@
+import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { recoverStripeReceiptSession, stripeReceiptWriteCondition } from "@/lib/stripe-receipt-session";
@@ -182,7 +183,7 @@ async function resolveMerchantContext(
   if (mw && /^0x[a-f0-9]{40}$/.test(mw)) {
     try {
       const spec = {
-        query: `SELECT c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.config FROM c WHERE c.type='site_config' AND LOWER(c.wallet)=@addr`,
+        query: `SELECT c.wallet, c.splitAddress, c.splitAddressCredit, c.splitAddressAch, c.splitAddressCrypto, c.splitConfigAch, c.splitConfigCrypto, c.splitOverrides, c.split, c.splitCredit, c.config FROM c WHERE c.type='site_config' AND LOWER(c.wallet)=@addr`,
         parameters: [{ name: '@addr', value: mw }]
       };
       const { resources } = await container.items.query(spec).fetchAll();
@@ -206,6 +207,7 @@ async function resolveMerchantContext(
           funding: fundingType,
           splitAddress: splitAddressResolved,
           splitAddressCredit: splitAddressCreditResolved,
+          ...receiptRoutingFields(foundReceipt, match),
           fallbackAddress: mw,
         });
 
@@ -231,6 +233,7 @@ async function resolveMerchantContext(
       funding: fundingType,
       splitAddress: splitAddressPrimary,
       splitAddressCredit,
+      ...receiptRoutingFields(foundReceipt),
       fallbackAddress: mw,
     });
     return {

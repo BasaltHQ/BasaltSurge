@@ -1,5 +1,7 @@
 "use client";
 
+import { SPLIT_LABELS } from "@/lib/split-allocation";
+import { type SplitKind } from "@/lib/payment-split-routing";
 import React, { useEffect, useRef, useState } from "react";
 import { useActiveAccount } from "thirdweb/react";
 import { sendTransaction, prepareContractCall, getContract } from "thirdweb";
@@ -11,7 +13,10 @@ import { TransactionsViewer } from "./TransactionsViewer";
 import { TransactionHistoryChart } from "@/components/admin/ReportCharts";
 
 type ReserveBalancesResponse = {
+  splitRecords?: { address: string; splitKind: SplitKind; version: number; active: boolean }[];
+  indexedMetricsBySplit?: Record<string, any>;
   degraded?: boolean;
+  failedBalanceAddresses?: string[];
   reason?: string;
   balances?: Record<
     string,
@@ -91,21 +96,22 @@ export function ReserveAnalytics() {
     try {
       const w = merchantWallet || data?.merchantWallet || account?.address;
       if (!w) return;
-      const r = await fetch(`/api/split/transactions?merchantWallet=${encodeURIComponent(w)}&limit=500`, { cache: "no-store" });
+      const r = await fetch(`/api/split/transactions?merchantWallet=${encodeURIComponent(w)}&limit=500&brandKey=${encodeURIComponent(brand?.key || "")}`, { cache: "no-store" });
       const j = await r.json().catch(() => ({}));
       if (j && Array.isArray(j.transactions)) {
         setTransactions(j.transactions);
       }
     } catch {}
   }
-  
+
   // Tab selector: 'aggregate' (Aggregate), 'credit' (Credit & Crypto), 'debit' (Debit Card), 'legacy' (Historical splits)
-  const [activeTab, setActiveTab] = useState<'aggregate' | 'credit' | 'debit' | 'legacy'>('aggregate');
-  
+  const [activeTab, setActiveTab] = useState<'aggregate' | 'credit' | 'debit' | 'ach' | 'crypto' | 'legacy'>('aggregate');
+
   // Selected split addresses per tab
   const [selectedCreditSplit, setSelectedCreditSplit] = useState<string>("all");
   const [selectedDebitSplit, setSelectedDebitSplit] = useState<string>("all");
   const [selectedLegacySplit, setSelectedLegacySplit] = useState<string>("all");
+  const [selectedMethodVersion, setSelectedMethodVersion] = useState("all");
 
   // Keep track of latest active split addresses retrieved on initial load
   const [latestCreditSplit, setLatestCreditSplit] = useState<string>("");
@@ -136,12 +142,12 @@ export function ReserveAnalytics() {
       tabBorder: isAgg ? 'border-teal-500' : isCr ? 'border-emerald-500' : isDb ? 'border-purple-500' : 'border-zinc-500',
       btnBg: isAgg ? 'bg-teal-500 hover:bg-teal-600' : isCr ? 'bg-emerald-500 hover:bg-emerald-600' : isDb ? 'bg-purple-500 hover:bg-purple-600' : 'bg-zinc-600 hover:bg-zinc-700',
       distributionBg: isAgg ? '#0d9488' : isCr ? '#10b981' : isDb ? '#a855f7' : '#71717a',
-      assetBtnHover: isAgg 
-        ? 'hover:bg-teal-500/10 hover:border-teal-500/30 hover:text-teal-500' 
-        : isCr 
-          ? 'hover:bg-emerald-500/10 hover:border-emerald-500/30 hover:text-emerald-500' 
-          : isDb 
-            ? 'hover:bg-purple-500/10 hover:border-purple-500/30 hover:text-purple-500' 
+      assetBtnHover: isAgg
+        ? 'hover:bg-teal-500/10 hover:border-teal-500/30 hover:text-teal-500'
+        : isCr
+          ? 'hover:bg-emerald-500/10 hover:border-emerald-500/30 hover:text-emerald-500'
+          : isDb
+            ? 'hover:bg-purple-500/10 hover:border-purple-500/30 hover:text-purple-500'
             : 'hover:bg-zinc-500/10 hover:border-zinc-500/30 hover:text-zinc-400',
     };
   }, [activeTab]);
@@ -191,80 +197,26 @@ export function ReserveAnalytics() {
     return options;
   }, [data?.splitHistory, latestCreditSplit, latestDebitSplit]);
 
-  // Dynamically resolve displays based on active tab and loaded version
-  const displaySplitAddress = React.useMemo(() => {
-    if (!data) return "";
-    if (activeTab === "aggregate") {
-      return "";
-    } else if (activeTab === "credit") {
-      return selectedCreditSplit && selectedCreditSplit !== "all" ? selectedCreditSplit : (latestCreditSplit || data.splitAddressUsed || "");
-    } else if (activeTab === "debit") {
-      return selectedDebitSplit && selectedDebitSplit !== "all" ? selectedDebitSplit : (latestDebitSplit || data.splitAddressCreditUsed || "");
-    } else {
-      return selectedLegacySplit && selectedLegacySplit !== "all" ? selectedLegacySplit : (legacyOptions[0]?.address || "");
-    }
-  }, [activeTab, data, selectedCreditSplit, latestCreditSplit, selectedDebitSplit, latestDebitSplit, selectedLegacySplit, legacyOptions]);
-
+  const methodRecords = React.useMemo(() => data?.splitRecords || [], [data?.splitRecords]);
+  const scopeRecords = React.useMemo(() => methodRecords.filter(s => activeTab === "aggregate" || (activeTab === "legacy" ? !s.active : s.splitKind === activeTab)), [methodRecords, activeTab]);
+  const selectedAddresses = React.useMemo(() => [...new Set(scopeRecords.filter(s => selectedMethodVersion === "all" || s.address === selectedMethodVersion).map(s => s.address.toLowerCase()))], [scopeRecords, selectedMethodVersion]);
+  const scopedTransactions = React.useMemo(() => transactions.filter(tx => selectedAddresses.includes(String(tx.splitAddress || "").toLowerCase())), [transactions, selectedAddresses]);
+  const displaySplitAddress = selectedAddresses.length === 1 ? selectedAddresses[0] : "";
   const displayBalances = React.useMemo(() => {
-    if (!data) return {};
-    if (activeTab === "aggregate") {
-      return data.aggregateBalances || data.balances || {};
-    } else if (activeTab === "credit") {
-      return data.balances || {};
-    } else if (activeTab === "debit") {
-      const isCustomDebit = selectedDebitSplit && selectedDebitSplit !== "all" && latestDebitSplit && selectedDebitSplit.toLowerCase() !== latestDebitSplit.toLowerCase();
-      if (isCustomDebit) {
-        return data.balances || {};
-      }
-      return data.balancesCredit || data.balances || {};
-    } else {
-      return data.balances || {};
+    const result: Record<string, { units: number; usd: number; address?: string | null }> = {};
+    for (const address of selectedAddresses) for (const [symbol, value] of Object.entries(data?.splitBalancesMap?.[address]?.balances || {})) {
+      const row = result[symbol] ||= { units: 0, usd: 0, address: value.address };
+      row.units += Number(value.units || 0); row.usd += Number(value.usd || 0);
     }
-  }, [activeTab, data, selectedDebitSplit, latestDebitSplit]);
-
-  const displayTotalUsd = React.useMemo(() => {
-    if (!data) return 0;
-    if (activeTab === "aggregate") {
-      return data.aggregateTotalUsd ?? data.totalUsd ?? 0;
-    } else if (activeTab === "credit") {
-      return data.totalUsdDebit ?? data.totalUsd ?? 0;
-    } else if (activeTab === "debit") {
-      const isCustomDebit = selectedDebitSplit && selectedDebitSplit !== "all" && latestDebitSplit && selectedDebitSplit.toLowerCase() !== latestDebitSplit.toLowerCase();
-      if (isCustomDebit) {
-        return data.totalUsdDebit ?? 0;
-      }
-      return data.totalUsdCredit ?? 0;
-    } else {
-      return data.totalUsdDebit ?? data.totalUsd ?? 0;
-    }
-  }, [activeTab, data, selectedDebitSplit, latestDebitSplit]);
-
-  // Tab switching helper
-  const handleTabChange = async (tab: 'aggregate' | 'credit' | 'debit' | 'legacy') => {
-    setActiveTab(tab);
-    if (tab === 'aggregate') {
-      await fetchBalances();
-    } else if (tab === 'credit') {
-      const target = selectedCreditSplit && selectedCreditSplit !== "all" ? selectedCreditSplit : latestCreditSplit;
-      if (target) {
-        await fetchBalances(target);
-      }
-    } else if (tab === 'debit') {
-      const target = selectedDebitSplit && selectedDebitSplit !== "all" ? selectedDebitSplit : latestDebitSplit;
-      if (target) {
-        await fetchBalances(target);
-      }
-    } else if (tab === 'legacy') {
-      let target = selectedLegacySplit;
-      if ((!target || target === "all") && legacyOptions.length > 0) {
-        target = legacyOptions[0].address;
-        setSelectedLegacySplit(target);
-      }
-      if (target && target !== "all") {
-        await fetchBalances(target);
-      }
-    }
-  };
+    return result;
+  }, [data, selectedAddresses]);
+  const displayTotalUsd = Object.values(displayBalances).reduce((sum, row) => sum + row.usd, 0);
+  const scopedMetrics = React.useMemo(() => {
+    const rows = selectedAddresses.map(a => data?.indexedMetricsBySplit?.[a]);
+    if (!rows.length || rows.some(row => !row)) return null;
+    return Object.fromEntries(["totalVolumeUsd", "merchantEarnedUsd", "platformFeeUsd", "transactionCount"].map(key => [key, rows.some(row => row[key] == null) ? null : rows.reduce((sum, row) => sum + Number(row[key]), 0)]));
+  }, [data, selectedAddresses, activeTab, selectedMethodVersion]);
+  const handleTabChange = (tab: typeof activeTab) => { setActiveTab(tab); setSelectedMethodVersion("all"); };
 
   function formatReleaseMessage(rr: { symbol?: string; status?: string; transactionHash?: string; reason?: string }): string {
     try {
@@ -312,15 +264,7 @@ export function ReserveAnalytics() {
         return;
       }
 
-      let splitsToProcess: string[] = [];
-      if (activeTab === "aggregate") {
-        splitsToProcess = data?.splitsWithBalance || [];
-      } else {
-        const split = String(displaySplitAddress || "").toLowerCase();
-        if (isHex(split)) {
-          splitsToProcess = [split];
-        }
-      }
+      let splitsToProcess = selectedAddresses.filter(address => data?.splitsWithBalance?.includes(address));
 
       if (splitsToProcess.length === 0) {
         setWithdrawError("No active splits with value found");
@@ -520,7 +464,7 @@ export function ReserveAnalytics() {
         }
       }
 
-      try { await fetchBalances(displaySplitAddress); } catch { }
+      try { await fetchBalances(); } catch { }
     } catch (e: any) {
       setWithdrawError(e?.message || "Withdraw failed");
     } finally {
@@ -676,74 +620,29 @@ export function ReserveAnalytics() {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-6 md:gap-8">
+      <div className="md:col-span-12 flex flex-wrap gap-2">
+        {(["ach", "crypto"] as const).map(kind => methodRecords.some(s => s.splitKind === kind) ? <button key={kind} aria-pressed={activeTab === kind} className={`rounded-lg border px-4 py-2 ${activeTab === kind ? "bg-primary text-primary-foreground" : ""}`} onClick={() => handleTabChange(kind)}>{SPLIT_LABELS[kind]} splits</button> : <span key={kind} className="p-2 text-xs text-muted-foreground">{SPLIT_LABELS[kind]} uses shared Credit</span>)}
+        <p className="w-full text-xs text-muted-foreground">Balances belong to contracts. Shared Credit balances include methods routed through Credit. Earnings below are indexed distributions, not pending allocations.</p>
+        {data?.degraded && <p role="status" className="text-sm text-amber-600">Some balance or price reads failed. Displayed balances are incomplete; refresh before withdrawing.</p>}
+        {!scopedMetrics && <p role="status" className="text-sm">Metrics for these contract versions are not indexed yet. Refresh the index to load complete totals.</p>}
+      </div>
       {/* Header Area */}
       <div className="md:col-span-12 flex flex-col md:flex-row md:items-center justify-between shrink-0 gap-4 mb-2">
         <div>
            <h3 className="text-[10px] uppercase font-bold tracking-[0.2em] text-muted-foreground flex items-center gap-2">
-             <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: theme.hex }} /> 
+             <div className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: theme.hex }} />
              Reserve Analytics
            </h3>
            <div className="text-[9px] text-muted-foreground/60 uppercase font-semibold tracking-wider mt-1">Live balances and multi-asset distributions.</div>
         </div>
         <div className="flex items-center gap-3">
-          {/* Version Selector */}
-          {activeTab === 'credit' && creditOptions.length > 0 && (
-            <select
-              value={selectedCreditSplit}
-              onChange={(e) => {
-                const val = e.target.value;
-                setSelectedCreditSplit(val);
-                fetchBalances(val);
-              }}
-              className="h-10 px-4 rounded-xl bg-zinc-900 border border-foreground/5 focus:bg-zinc-800 focus:ring-1 focus:ring-emerald-500 focus:outline-none transition-all text-xs font-mono font-medium text-white"
-            >
-              {creditOptions.map((h) => (
-                <option key={h.address} value={h.address} className="bg-zinc-950 text-white">
-                  {h.label}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {activeTab === 'debit' && debitOptions.length > 0 && (
-            <select
-              value={selectedDebitSplit}
-              onChange={(e) => {
-                const val = e.target.value;
-                setSelectedDebitSplit(val);
-                fetchBalances(val);
-              }}
-              className="h-10 px-4 rounded-xl bg-zinc-900 border border-foreground/5 focus:bg-zinc-800 focus:ring-1 focus:ring-purple-500 focus:outline-none transition-all text-xs font-mono font-medium text-white"
-            >
-              {debitOptions.map((h) => (
-                <option key={h.address} value={h.address} className="bg-zinc-950 text-white">
-                  {h.label}
-                </option>
-              ))}
-            </select>
-          )}
-
-          {activeTab === 'legacy' && legacyOptions.length > 0 && (
-            <select
-              value={selectedLegacySplit}
-              onChange={(e) => {
-                const val = e.target.value;
-                setSelectedLegacySplit(val);
-                fetchBalances(val);
-              }}
-              className="h-10 px-4 rounded-xl bg-zinc-900 border border-foreground/5 focus:bg-zinc-800 focus:ring-1 focus:ring-zinc-500 focus:outline-none transition-all text-xs font-mono font-medium text-white"
-            >
-              {legacyOptions.map((h) => (
-                <option key={h.address} value={h.address} className="bg-zinc-950 text-white">
-                  {h.label}
-                </option>
-              ))}
-            </select>
-          )}
-
+          <select aria-label="Split version" value={selectedMethodVersion} onChange={e => setSelectedMethodVersion(e.target.value)} className="rounded border bg-background p-2 text-sm">
+            <option value="all">All versions in this view</option>
+            {scopeRecords.map(entry => <option key={entry.address} value={entry.address}>{SPLIT_LABELS[entry.splitKind]} v{entry.version || "legacy"} - {entry.active ? "Active" : "Historical / inactive"} - {entry.address.slice(0, 8)}...</option>)}
+          </select>
           {indexing && <span className="text-[9px] uppercase font-bold tracking-wider animate-pulse hidden sm:inline-block" style={{ color: theme.hex }}>Indexing…</span>}
           <button
-            onClick={() => fetchBalances(displaySplitAddress)}
+            onClick={() => fetchBalances()}
             disabled={loading}
             className="px-5 py-2.5 rounded-xl bg-foreground/[0.03] border border-foreground/[0.05] hover:bg-foreground/[0.06] hover:border-foreground/10 text-[9px] uppercase font-bold tracking-wider transition-all shadow-sm"
           >
@@ -773,7 +672,7 @@ export function ReserveAnalytics() {
                   : 'border-transparent text-muted-foreground hover:text-foreground'
               }`}
             >
-              Credit Card & Native Crypto Reserve
+              Credit Reserve (shared unless separated)
             </button>
             <button
               onClick={() => handleTabChange('debit')}
@@ -810,13 +709,13 @@ export function ReserveAnalytics() {
         </button>
       </div>
 
-      <div className={`md:col-span-12 ${activeTab === 'aggregate' ? 'lg:col-span-4' : 'lg:col-span-8'} rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col justify-between shadow-sm relative overflow-hidden min-h-[240px]`}>
+      <div className={`md:col-span-12 lg:col-span-4 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col justify-between shadow-sm relative overflow-hidden min-h-[240px]`}>
         <div className="absolute -top-20 -right-20 w-80 h-80 opacity-[0.07] blur-[100px] pointer-events-none" style={{ backgroundColor: theme.hex }} />
         <div className="relative z-10">
           <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-1 block ml-1">Total Reserve Value (USD)</div>
-          <div className="text-4xl md:text-5xl font-bold mt-2 ml-1 tracking-tight text-foreground/90">${Number(totalUsd || 0).toFixed(2)}</div>
+          <div className="text-4xl md:text-5xl font-bold mt-2 ml-1 tracking-tight text-foreground/90">{data?.degraded ? "Unavailable" : `$${Number(totalUsd || 0).toFixed(2)}`}</div>
         </div>
-        
+
         <div className="mt-8 md:mt-12 relative z-10">
           <div className="text-[9px] md:text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-3 ml-1">Reserve Distribution</div>
           <div className="h-4 w-full rounded-full overflow-hidden flex shadow-inner bg-foreground/5 border border-foreground/[0.02]">
@@ -859,28 +758,28 @@ export function ReserveAnalytics() {
         </div>
       </div>
 
-      {activeTab === 'aggregate' && (
+      {(
         <div className="md:col-span-12 lg:col-span-4 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col justify-between shadow-sm min-h-[240px] relative overflow-hidden">
           <div className="absolute -top-20 -right-20 w-80 h-80 opacity-[0.07] blur-[100px] pointer-events-none" style={{ backgroundColor: theme.hex }} />
           <div className="relative z-10">
             <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-1 block ml-1">Cumulative Earnings</div>
             <div className="text-4xl md:text-5xl font-bold mt-2 ml-1 tracking-tight text-foreground/90">
-              ${Number(data?.indexedMetrics?.merchantEarnedUsd || 0).toFixed(2)}
+              {scopedMetrics?.merchantEarnedUsd != null ? `$${Number(scopedMetrics.merchantEarnedUsd).toFixed(2)}` : "Unavailable"}
             </div>
           </div>
-          
+
           <div className="mt-8 md:mt-12 relative z-10 space-y-3 pt-4 border-t border-foreground/5 text-[9px] md:text-[10px] uppercase font-bold tracking-wider text-muted-foreground/80">
             <div className="flex justify-between items-center">
               <span>Lifetime Volume</span>
-              <span className="text-foreground/90 font-mono">${Number(data?.indexedMetrics?.totalVolumeUsd || 0).toFixed(2)}</span>
+              <span className="text-foreground/90 font-mono">{scopedMetrics?.totalVolumeUsd != null ? `$${Number(scopedMetrics.totalVolumeUsd).toFixed(2)}` : "Unavailable"}</span>
             </div>
             <div className="flex justify-between items-center">
               <span>Platform Fees</span>
-              <span className="text-foreground/90 font-mono">${Number(data?.indexedMetrics?.platformFeeUsd || 0).toFixed(2)}</span>
+              <span className="text-foreground/90 font-mono">{scopedMetrics?.platformFeeUsd != null ? `$${Number(scopedMetrics.platformFeeUsd).toFixed(2)}` : "Unavailable"}</span>
             </div>
             <div className="flex justify-between items-center">
               <span>Transactions</span>
-              <span className="text-foreground/90 font-mono">{Number(data?.indexedMetrics?.transactionCount || 0)}</span>
+              <span className="text-foreground/90 font-mono">{scopedMetrics?.transactionCount ?? "Unavailable"}</span>
             </div>
           </div>
         </div>
@@ -889,104 +788,28 @@ export function ReserveAnalytics() {
       <div className="md:col-span-12 lg:col-span-4 rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 flex flex-col justify-between shadow-sm min-h-[240px]">
         <div>
           <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-4 block ml-1">Wallet Configuration</div>
-          
+
           <div className="space-y-4">
             <div className="bg-foreground/[0.03] rounded-2xl border border-foreground/[0.05] p-4 flex flex-col gap-1">
               <div className="text-[9px] uppercase font-bold tracking-wider text-muted-foreground/60">Merchant Wallet</div>
               <div className="text-xs font-mono font-medium text-foreground/90"><TruncatedAddress address={merchantWallet || ""} /></div>
             </div>
-            
-            {activeTab === 'aggregate' ? (
-              <div className="space-y-3">
-                <div className="text-[9px] uppercase font-bold tracking-wider text-muted-foreground/60">Source Wallets (Active Splits)</div>
-                
-                {(latestCreditSplit || data?.splitAddressUsed) && (
-                  <div className="bg-foreground/[0.03] rounded-2xl border border-emerald-500/10 p-3.5 flex flex-col gap-1 relative overflow-hidden">
-                    <div className="text-[8px] uppercase font-extrabold tracking-wider text-emerald-500 flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                      Credit & Crypto Split
-                    </div>
-                    <div className="flex items-center justify-between gap-2 mt-0.5">
-                      <TruncatedAddress 
-                        address={latestCreditSplit || data?.splitAddressUsed || ""} 
-                        codeClass="text-xs font-mono font-medium text-foreground/90" 
-                      />
-                      <a
-                        href={`https://basescan.org/address/${latestCreditSplit || data?.splitAddressUsed}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="h-6 w-6 rounded-md border border-foreground/5 flex items-center justify-center bg-foreground/[0.02] hover:bg-foreground/5 text-muted-foreground hover:text-foreground transition-all"
-                        title="View on Basescan"
-                      >
-                        <svg className="w-3.5 h-3.5 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </a>
-                    </div>
-                  </div>
-                )}
 
-                {(latestDebitSplit || data?.splitAddressCreditUsed) && (
-                  <div className="bg-foreground/[0.03] rounded-2xl border border-purple-500/10 p-3.5 flex flex-col gap-1 relative overflow-hidden">
-                    <div className="text-[8px] uppercase font-extrabold tracking-wider text-purple-500 flex items-center gap-1.5">
-                      <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                      Debit Card Split
-                    </div>
-                    <div className="flex items-center justify-between gap-2 mt-0.5">
-                      <TruncatedAddress 
-                        address={latestDebitSplit || data?.splitAddressCreditUsed || ""} 
-                        codeClass="text-xs font-mono font-medium text-foreground/90" 
-                      />
-                      <a
-                        href={`https://basescan.org/address/${latestDebitSplit || data?.splitAddressCreditUsed}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="h-6 w-6 rounded-md border border-foreground/5 flex items-center justify-center bg-foreground/[0.02] hover:bg-foreground/5 text-muted-foreground hover:text-foreground transition-all"
-                        title="View on Basescan"
-                      >
-                        <svg className="w-3.5 h-3.5 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </a>
-                    </div>
-                  </div>
-                )}
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground">Selected contracts</div>
+              {scopeRecords.filter(record => selectedAddresses.includes(record.address)).map(record => <div key={record.address} className="rounded-lg border p-2 text-xs"><span>{SPLIT_LABELS[record.splitKind]} v{record.version || "legacy"} - {record.active ? "Active" : "Historical / inactive"}</span><TruncatedAddress address={record.address} /></div>)}
+            </div>
 
-                {!(latestCreditSplit || data?.splitAddressUsed) && !(latestDebitSplit || data?.splitAddressCreditUsed) && (
-                  <div className="bg-foreground/[0.03] rounded-2xl border border-foreground/[0.05] p-4 text-xs text-muted-foreground/60 italic">
-                    No active splits configured
-                  </div>
-                )}
-              </div>
-            ) : splitAddressUsed ? (
-              <div className="bg-foreground/[0.03] rounded-2xl border border-foreground/[0.05] p-4 flex flex-col gap-1">
-                <div className="text-[9px] uppercase font-bold tracking-wider text-muted-foreground/60">Source Wallet</div>
-                <div className="text-xs font-mono font-medium text-foreground/90 flex items-center justify-between gap-2">
-                  <TruncatedAddress address={splitAddressUsed || ""} />
-                  <a
-                    href={`https://basescan.org/address/${splitAddressUsed}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="h-6 w-6 rounded-md border border-foreground/5 flex items-center justify-center bg-foreground/[0.02] hover:bg-foreground/5 text-muted-foreground hover:text-foreground transition-all"
-                    title="View on Basescan"
-                  >
-                    <svg className="w-3.5 h-3.5 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                  </a>
-                </div>
-              </div>
-            ) : null}
           </div>
         </div>
-        
+
         <div className="mt-6 pt-6 border-t border-foreground/5">
           <button
             onClick={() => withdrawMerchant(undefined)}
-            disabled={withdrawLoading || (activeTab !== 'aggregate' && !splitAddressUsed) || (activeTab === 'aggregate' && !(data?.splitsWithBalance && data.splitsWithBalance.length > 0))}
+            disabled={withdrawLoading || (selectedAddresses.length === 0) || (activeTab === 'aggregate' && !(data?.splitsWithBalance && data.splitsWithBalance.length > 0))}
             className={`w-full px-6 py-4 rounded-xl text-white text-[10px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 disabled:shadow-none flex items-center justify-center gap-2 ${theme.btnBg} ${theme.shadow}`}
-            title={activeTab === 'aggregate' 
-              ? (data?.splitsWithBalance && data.splitsWithBalance.length > 0 ? "Withdraw from all splits to your wallet" : "No splits with balances found") 
+            title={activeTab === 'aggregate'
+              ? (data?.splitsWithBalance && data.splitsWithBalance.length > 0 ? "Withdraw from all splits to your wallet" : "No splits with balances found")
               : splitAddressUsed ? "Withdraw from split to your wallet" : "Split address not configured"}
           >
             {withdrawLoading ? "Withdrawing…" : "Withdraw All to Wallet"}
@@ -996,7 +819,7 @@ export function ReserveAnalytics() {
       </div>
 
       <div className="md:col-span-12">
-        <TransactionHistoryChart transactions={transactions} height={180} />
+        <TransactionHistoryChart transactions={scopedTransactions} height={180} />
       </div>
 
       <div className="md:col-span-12">
@@ -1016,10 +839,10 @@ export function ReserveAnalytics() {
               <div className="mt-5 relative z-10">
                 <button
                   onClick={() => withdrawMerchant(symbol)}
-                  disabled={withdrawLoading || (activeTab !== 'aggregate' && !splitAddressUsed) || (activeTab === 'aggregate' && !(data?.splitsWithBalance && data.splitsWithBalance.length > 0))}
+                  disabled={withdrawLoading || (selectedAddresses.length === 0) || (activeTab === 'aggregate' && !(data?.splitsWithBalance && data.splitsWithBalance.length > 0))}
                   className={`w-full px-3 py-2 rounded-lg border border-foreground/[0.05] bg-foreground/[0.03] text-[8px] font-bold uppercase tracking-wider transition-all disabled:opacity-50 ${theme.assetBtnHover}`}
-                  title={activeTab === 'aggregate' 
-                    ? (data?.splitsWithBalance && data.splitsWithBalance.length > 0 ? `Withdraw ${symbol} from all splits to your wallet` : "No splits with balances found") 
+                  title={activeTab === 'aggregate'
+                    ? (data?.splitsWithBalance && data.splitsWithBalance.length > 0 ? `Withdraw ${symbol} from all splits to your wallet` : "No splits with balances found")
                     : splitAddressUsed ? `Withdraw ${symbol} to your wallet` : "Split address not configured"}
                 >
                   {withdrawLoading ? "Working…" : `Withdraw`}
@@ -1046,10 +869,10 @@ export function ReserveAnalytics() {
 
       {/* Embedded Transactions Section */}
       <div className="md:col-span-12 border-t border-foreground/5 pt-8 mt-4">
-        <TransactionsViewer 
-          splitAddressFilter={displaySplitAddress} 
-          merchantWallet={data?.merchantWallet || account?.address} 
-          hideFilterBar={true} 
+        <TransactionsViewer
+          splitAddressesFilter={selectedAddresses}
+          merchantWallet={data?.merchantWallet || account?.address}
+          hideFilterBar={true}
         />
       </div>
 

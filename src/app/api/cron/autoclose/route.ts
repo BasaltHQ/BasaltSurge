@@ -1,3 +1,4 @@
+import { discoverSplitContracts } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { chain, serverClient } from "@/lib/thirdweb/server";
@@ -380,7 +381,7 @@ export async function POST(req: NextRequest) {
     // 2. Fetch all unique split addresses from Cosmos DB / MongoDB
     const container = await getContainer(undefined, undefined, { profile: "critical" });
     const querySpec = {
-      query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.splitHistory FROM c WHERE c.type = 'site_config' OR c.type = 'wallet_config' OR c.type = 'client_request'",
+      query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.splitAddressAch, c.splitAddressCrypto, c.splitAch, c.splitCrypto, c.splitOverrides, c.split, c.splitCredit, c.splitHistory FROM c WHERE c.type = 'site_config' OR c.type = 'wallet_config' OR c.type = 'client_request'",
     };
     const { resources: allSiteConfigs } = await container.items.query(querySpec).fetchAll();
     const splitAddresses = new Set<string>();
@@ -424,6 +425,7 @@ export async function POST(req: NextRequest) {
         }
       };
 
+      for (const split of discoverSplitContracts(doc)) addMapping(split.address);
       const topLevel = String(doc?.splitAddress || "").trim();
       const topLevelCredit = String(doc?.splitAddressCredit || "").trim();
       const nested = String(doc?.split?.address || "").trim();

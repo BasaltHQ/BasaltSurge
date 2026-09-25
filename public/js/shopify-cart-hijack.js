@@ -1,125 +1,138 @@
-/**
- * Shopify Cart Checkout Hijack Script
- * Automatically intercepts checkout button clicks and routes them to the payment gateway.
- */
-(function() {
-  // Determine brand dynamically from hostname or script source origin
-  const scriptEl = document.currentScript || document.querySelector('script[src*="shopify-cart-hijack.js"]');
-  let backendHost = "";
-  if (scriptEl && scriptEl.src) {
+/** Cart payment option. The legacy filename is retained for installed ScriptTags. */
+(function () {
+  "use strict";
+  if (window.__surgeCartPayment) return;
+  window.__surgeCartPayment = true;
+
+  const source = document.currentScript;
+  const sourceUrl = source && source.src;
+  function start() {
+    const config = document.querySelector("[data-surge-cart-config]");
+    let gateway;
     try {
-      backendHost = new URL(scriptEl.src).origin;
-    } catch {}
-  }
-  if (!backendHost) {
-    backendHost = window.location.origin; // fallback
-  }
-  const isPlatform = backendHost.includes("basaltsurge") || backendHost.includes("surge");
-  const brandName = isPlatform ? "BasaltSurge" : "PortalPay";
+      gateway = new URL(config ? config.dataset.gateway : sourceUrl).origin;
+      if (!gateway.startsWith("https://")) return;
+    } catch { return; }
+    const label = (config && config.dataset.buttonLabel) ||
+      (new URL(gateway).hostname === "surge.basalthq.com" ? "Pay with Surge" : "Pay with PortalPay");
+    const shop = (config && config.dataset.shop) || (window.Shopify && window.Shopify.shop);
+    const cartRoot = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
+    const placements = new Map();
+    let busy = false;
+    let observer;
+    let queued = false;
 
-  console.log(`[${brandName}] Shopify Cart Hijack active.`);
+    // App embeds load this same stylesheet through their schema.
+    if (!config) {
+      const css = document.createElement("link");
+      css.rel = "stylesheet";
+      css.href = gateway + "/css/shopify-cart-payment.css";
+      document.head.appendChild(css);
+    }
 
-  // Run initialization on load and when DOM changes
-  function init() {
-    const checkoutSelectors = [
-      'input[name="checkout"]',
-      'button[name="checkout"]',
-      'form[action*="/cart"] button[type="submit"]',
-      'form[action*="/cart"] input[type="submit"]',
-      '.cart__submit',
-      '.checkout-button',
-      '.cart__checkout-button',
-      '.cart__checkout',
-      '.checkout-btn',
-      'a[href*="/checkout"]',
-      'button[id*="checkout"]',
-      'button[class*="checkout"]'
-    ];
-    const buttons = document.querySelectorAll(checkoutSelectors.join(", "));
-    
-    buttons.forEach(btn => {
-      if (btn.dataset.portalpayAttached) return;
-      btn.dataset.portalpayAttached = "true";
-      
-      btn.addEventListener("click", function(e) {
-        // Intercept standard checkout redirection
-        e.preventDefault();
-        e.stopPropagation();
-        
-        console.log(`[${brandName}] Checkout intercepted. Processing cart...`);
-        
-        // Show loading state if button has text/value
-        const originalText = btn.tagName === 'INPUT' ? btn.value : btn.textContent;
-        const setBtnText = (t) => {
-          if (btn.tagName === 'INPUT') btn.value = t;
-          else btn.textContent = t;
-        };
-        setBtnText("Processing Payment...");
-        btn.disabled = true;
-
-        fetch("/cart.js")
-          .then(res => {
-            if (!res.ok) throw new Error("Failed to fetch cart");
-            return res.json();
-          })
-          .then(cart => {
-            const shop = (window.Shopify && window.Shopify.shop) || window.location.hostname;
-            return fetch(`${backendHost}/api/shopify/create-order`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                cart,
-                shop,
-                domain: window.location.hostname
-              })
-            });
-          })
-          .then(res => {
-            if (!res.ok) return res.json().then(err => { throw new Error(err.message || "Checkout generation failed"); });
-            return res.json();
-          })
-          .then(data => {
-            if (data?.paymentUrl) {
-              console.log(`[${brandName}] Redirecting to Checkout:`, data.paymentUrl);
-              window.location.href = data.paymentUrl;
-            } else {
-              throw new Error("Missing payment URL in response");
-            }
-          })
-          .catch(err => {
-            console.error(`[${brandName}] Checkout intercept error:`, err);
-            // Fallback: Proceed with standard Shopify checkout if our server fails
-            setBtnText(originalText);
-            btn.disabled = false;
-            
-            // Standard action fallback
-            const form = btn.closest("form");
-            if (form) {
-              // Add hidden input checkout to bypass standard event handler
-              const input = document.createElement("input");
-              input.type = "hidden";
-              input.name = "checkout";
-              input.value = "1";
-              form.appendChild(input);
-              form.submit();
-            } else {
-              window.location.href = "/checkout";
-            }
-          });
+    function checkoutControls() {
+      return Array.from(document.querySelectorAll(
+        'button[name="checkout"], input[name="checkout"], a[href], button#checkout'
+      )).filter(function (control) {
+        if (control.tagName !== "A") return true;
+        try {
+          const url = new URL(control.href, window.location.href);
+          return url.origin === window.location.origin && /\/(?:checkout|checkouts)\/?$/.test(url.pathname);
+        } catch { return false; }
       });
-    });
-  }
+    }
 
-  // Monitor DOM for dynamically loaded carts (e.g. drawer carts)
-  if (window.MutationObserver) {
-    const observer = new MutationObserver(() => init());
-    observer.observe(document.body, { childList: true, subtree: true });
-  }
+    function render() {
+      queued = false;
+      if (observer) observer.disconnect();
+      for (const [anchor, view] of placements) {
+        if (!anchor.isConnected || !view.wrapper.isConnected) {
+          view.wrapper.remove();
+          placements.delete(anchor);
+        }
+      }
+      for (const anchor of checkoutControls()) {
+        let view = placements.get(anchor);
+        if (!view) {
+          const wrapper = document.createElement("div");
+          wrapper.className = "surge-cart-payment";
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "surge-cart-payment__button";
+          button.dataset.surgePayment = "true";
+          button.textContent = label;
+          const message = document.createElement("p");
+          message.className = "surge-cart-payment__message";
+          message.setAttribute("role", "alert");
+          message.hidden = true;
+          wrapper.appendChild(button);
+          wrapper.appendChild(message);
+          anchor.insertAdjacentElement("afterend", wrapper);
+          view = { wrapper, button, message };
+          placements.set(anchor, view);
+        }
+        view.button.disabled = busy || anchor.disabled || anchor.getAttribute("aria-disabled") === "true";
+        view.button.textContent = busy ? "Opening secure payment…" : label;
+        view.button.setAttribute("aria-busy", String(busy));
+      }
+      if (observer) observer.observe(document.body, {
+        childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "aria-disabled"]
+      });
+    }
 
-  // Initial runs
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", init);
-  } else {
-    init();
+    document.addEventListener("click", async function (event) {
+      const button = event.target.closest && event.target.closest("[data-surge-payment]");
+      if (!button) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (busy || button.disabled) return;
+      busy = true;
+      for (const view of placements.values()) { view.message.hidden = true; view.message.textContent = ""; }
+      render();
+      const controller = new AbortController();
+      const timeout = window.setTimeout(function () { controller.abort(); }, 25000);
+      try {
+        if (!shop) throw new Error("Missing shop");
+        const cartResponse = await fetch(cartRoot.replace(/\/?$/, "/") + "cart.js", {
+          credentials: "same-origin", cache: "no-store", signal: controller.signal
+        });
+        if (!cartResponse.ok) throw new Error("Cart unavailable");
+        const cart = await cartResponse.json();
+        if (!Array.isArray(cart.items) || !cart.items.length || cart.total_price <= 0) {
+          throw new Error("Empty cart");
+        }
+        const response = await fetch(gateway + "/api/shopify/create-order", {
+          method: "POST", headers: { "Content-Type": "application/json" }, signal: controller.signal,
+          body: JSON.stringify({ cart, shop, domain: window.location.hostname })
+        });
+        if (!response.ok) throw new Error("Payment unavailable");
+        const data = await response.json();
+        const paymentUrl = new URL(data.paymentUrl);
+        if (paymentUrl.protocol !== "https:" || paymentUrl.username || paymentUrl.password) {
+          throw new Error("Invalid payment URL");
+        }
+        window.location.assign(paymentUrl.href);
+      } catch (error) {
+        busy = false;
+        render();
+        for (const view of placements.values()) {
+          view.message.textContent = "We couldn’t open payment. Your cart is saved. Please try again.";
+          view.message.hidden = false;
+        }
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    }, true);
+
+    if (window.MutationObserver) {
+      observer = new MutationObserver(function () {
+        if (queued) return;
+        queued = true;
+        window.requestAnimationFrame(render);
+      });
+    }
+    render();
   }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
+  else start();
 })();

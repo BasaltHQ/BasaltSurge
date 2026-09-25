@@ -148,12 +148,12 @@ interface Stat {
   totalFees: number;
   feeRecordedTotal?: number;
   feeModeledTotal?: number;
-  fundingProfile?: { all: { credit: number; debit: number; bank: number; unknown: number }; paid: { credit: number; debit: number; bank: number; unknown: number }; total: number; paidTotal: number };
+  fundingProfile?: { all: { credit: number; debit: number; bank: number; crypto?: number; unknown: number }; paid: { credit: number; debit: number; bank: number; crypto?: number; unknown: number }; total: number; paidTotal: number };
   feeKnownCount?: number;
   feeUnknownCount?: number;
   feeCoveragePct?: number;
   aov: number;
-  cardTypes: { credit: number; debit: number; bank: number; unknown: number };
+  cardTypes: { credit: number; debit: number; bank: number; crypto?: number; unknown: number };
   kycLevels?: { none: number; l1: number; l2: number };
   kycProfile?: AnalyticsKycProfile;
 }
@@ -531,6 +531,9 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
   }, [fetchedSiteConfigs, isPartner]);
 
   // Filters
+  const [paymentMethodFilter, setPaymentMethodFilter] = useState(initialView.paymentMethod || "all");
+  const [splitKindFilter, setSplitKindFilter] = useState(initialView.splitKind || "all");
+  const [splitContractFilter, setSplitContractFilter] = useState(initialView.splitContract || "");
   const [selectedBrand, setSelectedBrand] = useState<string>(initialView.brand);
   const [statusFilter, setStatusFilter] = useState<string>(initialView.status);
   const [timeRange, setTimeRange] = useState<string>(initialView.range);
@@ -644,19 +647,20 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
   const [fetchLimit, setFetchLimit] = useState<number | "all">(500);
   const effectiveTimezone = timezoneMode === "dynamic" ? DYNAMIC_TIMEZONE : SYSTEM_TIMEZONE;
   const resetAnalyticsQuery = () => {
+    setPaymentMethodFilter("all"); setSplitKindFilter("all"); setSplitContractFilter("");
     setSelectedBrand(isPartner ? scopedBrandKey : "all"); setStatusFilter("all"); setKycFilter("all"); setTimeRange("today");
     setSelectedWeekOffset(0); setSelectedMonthOffset(0); setSearchQuery(""); setAppliedSearch(""); setSelectedErrorCombo(null);
   };
   useEffect(() => {
     const receipt = mobileDrawerReceipt?.receiptId || Array.from(expandedReceiptIds).at(-1) || "";
-    const state: AnalyticsViewState = { workspace, density, brand: selectedBrand, status: statusFilter, kyc: kycFilter,
+    const state: AnalyticsViewState = { paymentMethod: paymentMethodFilter, splitKind: splitKindFilter, splitContract: splitContractFilter, workspace, density, brand: selectedBrand, status: statusFilter, kyc: kycFilter,
       range: timeRange, from: customStartDate, to: customEndDate, week: selectedWeekOffset, month: selectedMonthOffset,
       search: appliedSearch, searchMode, basis: successRateMode, timezone: timezoneMode, reasons: selectedErrorCombo,
       receipt, receiptTab: activeTabMap[receipt] || "overview", metric: chartMetric, scale: scaleType };
     const url = new URL(window.location.href);
     url.search = (isPartner ? writePartnerAnalyticsViewState(url.searchParams, state, scopedBrandKey) : writeAnalyticsViewState(url.searchParams, state)).toString();
     window.history.replaceState(window.history.state, "", url);
-  }, [workspace, density, selectedBrand, statusFilter, kycFilter, timeRange, customStartDate, customEndDate,
+  }, [paymentMethodFilter, splitKindFilter, splitContractFilter, workspace, density, selectedBrand, statusFilter, kycFilter, timeRange, customStartDate, customEndDate,
     selectedWeekOffset, selectedMonthOffset, appliedSearch, searchMode, successRateMode, timezoneMode, selectedErrorCombo,
     mobileDrawerReceipt, expandedReceiptIds, activeTabMap, chartMetric, scaleType, isPartner, scopedBrandKey]);
 
@@ -669,7 +673,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
   // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedBrand, statusFilter, timeRange, appliedSearch, searchMode, kycFilter, sortKey, sortDirection, fetchLimit, selectedErrorCombo, customStartDate, customEndDate, selectedWeekOffset, selectedMonthOffset, timezoneMode, pageSize]);
+  }, [paymentMethodFilter, splitKindFilter, splitContractFilter, selectedBrand, statusFilter, timeRange, appliedSearch, searchMode, kycFilter, sortKey, sortDirection, fetchLimit, selectedErrorCombo, customStartDate, customEndDate, selectedWeekOffset, selectedMonthOffset, timezoneMode, pageSize]);
 
   useEffect(() => {
     if (!exportError) return;
@@ -770,6 +774,9 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
       monthOffset: String(selectedMonthOffset),
       brandKey: isPartner ? scopedBrandKey : selectedBrand,
       statusFilter,
+      paymentMethod: paymentMethodFilter,
+      splitKind: splitKindFilter,
+      ...(splitContractFilter ? { splitContract: splitContractFilter } : {}),
       kycFilter,
       includeAggregates: includeAggregates ? "true" : "false"
     });
@@ -783,7 +790,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
       params.set("searchMode", searchMode);
     }
     return params;
-  }, [timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, statusFilter, kycFilter, customStartDate, customEndDate, appliedSearch, searchMode, selectedErrorCombo, isPartner, scopedBrandKey]);
+  }, [paymentMethodFilter, splitKindFilter, splitContractFilter, timezoneMode, timeRange, selectedWeekOffset, selectedMonthOffset, selectedBrand, statusFilter, kycFilter, customStartDate, customEndDate, appliedSearch, searchMode, selectedErrorCombo, isPartner, scopedBrandKey]);
 
   const fetchAnalyticsPage = useCallback(async (
     limit: number,
@@ -1329,7 +1336,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
         ? "ALL"
         : resolveReportBrandName(selectedBrand, reportReceipts);
       const scopeContext = isPartner ? `Brand scope: ${scopedBrandKey} | Only explicitly attributed brand records | ` : "";
-      const filterContext = `${scopeContext}Definition: ${collected.firstData.metadata?.definitionVersion || "current"} | Generated: ${collected.firstData.metadata?.generatedAt || new Date().toISOString()} | Start inclusive: ${collected.firstData.metadata?.query?.start || "All history"} | End exclusive: ${collected.firstData.metadata?.query?.end || collected.snapshotEnd} | ${collected.firstData.metadata?.consistencyDescription || "Bounded live query; records may change"} | Basis: ${successRateMode} | Failure selection: ${selectedErrorCombo ? Array.from(new Set(selectedErrorCombo)).join(" AND ") : "All"} | ${dateRangeStr} | Partner: ${partnerLabel} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
+      const filterContext = `${scopeContext}Payment: ${paymentMethodFilter} | Receiving split: ${splitKindFilter} | Contract: ${splitContractFilter || "All versions"} | Definition: ${collected.firstData.metadata?.definitionVersion || "current"} | Generated: ${collected.firstData.metadata?.generatedAt || new Date().toISOString()} | Start inclusive: ${collected.firstData.metadata?.query?.start || "All history"} | End exclusive: ${collected.firstData.metadata?.query?.end || collected.snapshotEnd} | ${collected.firstData.metadata?.consistencyDescription || "Bounded live query; records may change"} | Basis: ${successRateMode} | Failure selection: ${selectedErrorCombo ? Array.from(new Set(selectedErrorCombo)).join(" AND ") : "All"} | ${dateRangeStr} | Partner: ${partnerLabel} | Status: ${statusFilter.toUpperCase()} | KYC: ${kycFilter.toUpperCase()} | Search: ${searchLabel} | TZ: ${timezoneLabel}`;
       setExportProgress(82);
 
       if (controller.signal.aborted) throw new DOMException("Report export cancelled", "AbortError");
@@ -1376,7 +1383,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
         setActiveExportFormat(null);
       }
     }
-  }, [collectAnalyticsReceipts, timeRange, customStartDate, customEndDate, selectedBrand, statusFilter, kycFilter, selectedErrorCombo, timezoneMode, appliedSearch, searchModeLabel, successRateMode, isPartner, scopedBrandKey, brandName]);
+  }, [paymentMethodFilter, splitKindFilter, splitContractFilter, collectAnalyticsReceipts, timeRange, customStartDate, customEndDate, selectedBrand, statusFilter, kycFilter, selectedErrorCombo, timezoneMode, appliedSearch, searchModeLabel, successRateMode, isPartner, scopedBrandKey, brandName]);
 
   const displayStats = stats;
 
@@ -2032,6 +2039,17 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
           {isPartner && <p>Receipt investigations use their recorded fee and split configuration. No live platform administration actions are available in this view.</p>}
         </div></details>}
         {workspace === "treasury" && <p className="text-xs text-zinc-400">Treasury has an independent on-chain history and valuation scope. Receipt filters above apply to analytics reports.</p>}
+        <section className="space-y-4 rounded-xl border border-white/10 p-4" aria-label="Payment method and split analytics">
+          <div className="flex flex-wrap gap-3">
+            <label className="text-sm">Payment method<select aria-label="Payment method" className="ml-2 rounded border bg-background p-2" value={paymentMethodFilter} onChange={e => setPaymentMethodFilter(e.target.value)}>{["all", "credit", "debit", "bank", "crypto", "unknown"].map(k => <option key={k} value={k}>{k === "bank" ? "ACH" : k}</option>)}</select></label>
+            <label className="text-sm">Receiving split<select aria-label="Receiving split" className="ml-2 rounded border bg-background p-2" value={splitKindFilter} onChange={e => setSplitKindFilter(e.target.value)}>{["all", "credit", "debit", "ach", "crypto", "unknown"].map(k => <option key={k} value={k}>{k}</option>)}</select></label>
+            <label className="text-sm">Contract<input aria-label="Split contract address" className="ml-2 rounded border bg-background p-2 font-mono text-xs" placeholder="All contract versions" defaultValue={splitContractFilter} onBlur={e => { const value = e.target.value.trim().toLowerCase(); if (!value || /^0x[a-f0-9]{40}$/.test(value)) setSplitContractFilter(value); }} /></label>
+          </div>
+          <p className="text-xs text-muted-foreground">Payment source and receiving contract are separate breakdowns. ACH and Crypto may use shared Credit. Unknown means historical evidence is unavailable.</p>
+          <div className="grid gap-4 lg:grid-cols-2">
+            {(["methodBreakdown", "splitBreakdown"] as const).map(dimension => <div key={dimension}><h4 className="mb-2 font-semibold">{dimension === "methodBreakdown" ? "By payment method" : "By receiving split"}</h4><table className="w-full text-left text-xs"><thead><tr><th>Type</th><th>Paid / created</th><th>Paid volume</th><th>Platform revenue</th></tr></thead><tbody>{Object.entries((stats as any)?.[dimension] || {}).map(([kind, row]: [string, any]) => <tr key={kind}><td className="py-2">{kind === "bank" ? "ACH" : kind}</td><td>{row.paid} / {row.total}</td><td>${Number(row.gmv || 0).toFixed(2)}</td><td>${Number(row.fees || 0).toFixed(2)}</td></tr>)}</tbody></table></div>)}
+          </div>
+        </section>
         {isExportingReport && <div role="status" aria-live="polite" className="flex items-center gap-3 text-sm"><progress max={100} value={exportProgress} aria-label="Report export progress" /><span>Preparing {activeExportFormat?.toUpperCase()} report · {exportProgress}%</span><button type="button" className="underline" onClick={() => exportAbortRef.current?.abort()}>Cancel export</button></div>}
       </section>
 
@@ -2076,7 +2094,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
             {(() => {
               const receiptsForProfiles = baseFilteredReceipts;
               const cardTypes = (successRateMode === "process" ? displayStats.fundingProfile?.paid : displayStats.fundingProfile?.all) || displayStats.cardTypes;
-              const totalCards = cardTypes.credit + cardTypes.debit + cardTypes.bank + cardTypes.unknown;
+              const totalCards = cardTypes.credit + cardTypes.debit + cardTypes.bank + (cardTypes.crypto || 0) + cardTypes.unknown;
               const creditPct = totalCards > 0 ? ((cardTypes.credit / totalCards) * 100).toFixed(1) : "0.0";
               const debitPct = totalCards > 0 ? ((cardTypes.debit / totalCards) * 100).toFixed(1) : "0.0";
               const bankPct = totalCards > 0 ? ((cardTypes.bank / totalCards) * 100).toFixed(1) : "0.0";

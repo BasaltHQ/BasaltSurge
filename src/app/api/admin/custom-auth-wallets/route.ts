@@ -1,3 +1,4 @@
+import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireRole } from "@/lib/auth";
@@ -208,6 +209,7 @@ export async function POST(req: NextRequest) {
           isCreditCard: receipt.isCreditCard === true,
           splitAddress: receipt.splitAddress,
           splitAddressCredit: receipt.splitAddressCredit,
+          ...receiptRoutingFields(receipt),
           fallbackAddress: receipt.wallet,
         });
       }

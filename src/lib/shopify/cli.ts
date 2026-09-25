@@ -13,6 +13,7 @@ import { promisify } from "util";
 import * as fs from "fs/promises";
 import * as path from "path";
 import * as os from "os";
+import { generateCartExtensionFiles } from "./cart-extension";
 
 const execAsync = promisify(exec);
 
@@ -277,6 +278,7 @@ export function generateExtensionPackageJson(config: ShopifyAppConfig): string {
       deploy: "shopify app deploy"
     },
     dependencies: {
+      "@shopify/ui-extensions": "^2024.4.0",
       "@shopify/ui-extensions-react": "^2024.4.0",
       "react": "^18.2.0"
     },
@@ -351,6 +353,11 @@ export async function createAppProject(config: ShopifyAppConfig): Promise<string
     );
   }
 
+  for (const [relativePath, contents] of Object.entries(await generateCartExtensionFiles(config))) {
+    const target = path.join(tmpDir, relativePath);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, contents);
+  }
   return tmpDir;
 }
 
@@ -486,6 +493,7 @@ export async function deployShopifyApp(
 
   let backedUpToml = false;
   let createdExtensions = false;
+  const cartFileBackups = new Map<string, Buffer | null>();
 
   try {
     // 1. Back up existing shopify.app.toml if it exists
@@ -546,6 +554,19 @@ export async function deployShopifyApp(
       logs.push(extLog);
       if (onLog) onLog(`[debug] ${extLog}`);
     }
+
+    // The cart option is independent of the optional checkout UI extension.
+    for (const [relativePath, contents] of Object.entries(await generateCartExtensionFiles(config))) {
+      const target = path.join(workspaceRoot, relativePath);
+      let original: Buffer | null = null;
+      try { original = await fs.readFile(target); } catch (error: any) {
+        if (error.code !== "ENOENT") throw error;
+      }
+      cartFileBackups.set(target, original);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, contents);
+    }
+    logs.push("Added Cart payment option app embed. Enable it on the published theme after deployment.");
 
     const env: Record<string, string> = {};
     if (partnersToken) {
@@ -629,8 +650,16 @@ export async function deployShopifyApp(
 
     if (createdExtensions) {
       try {
-        await fs.rm(extDir, { recursive: true, force: true });
+        await fs.rm(path.join(extDir, "checkout-ui"), { recursive: true, force: true });
       } catch {}
+    }
+
+    // Restore only files staged for the cart extension, preserving other extensions.
+    for (const [target, original] of cartFileBackups) {
+      try {
+        if (original === null) await fs.rm(target, { force: true });
+        else await fs.writeFile(target, original);
+      } catch (error: any) { logs.push(`Error restoring cart extension: ${error.message}`); }
     }
 
     // Restore original toml

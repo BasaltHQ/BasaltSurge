@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import crypto from "node:crypto";
+import { getContainerIdentity } from "@/lib/brand-config";
 
 export const dynamic = "force-dynamic";
 
@@ -69,7 +70,11 @@ export async function POST(req: NextRequest) {
 
     const shopDoc = resources[0];
     const wallet = shopDoc.wallet;
-    const brandKey = shopDoc.brandKey || "basaltsurge";
+    // The gateway determines inventory scope; a shared wallet profile may retain a partner brand.
+    const publicOrigin = new URL(process.env.PLESK_MAIN_DOMAIN
+      ? `https://${process.env.PLESK_MAIN_DOMAIN}`
+      : process.env.NEXT_PUBLIC_APP_URL || req.url);
+    const { brandKey } = await getContainerIdentity(publicOrigin.hostname);
     const displayName = brandKey.toLowerCase() === "portalpay" ? "PortalPay" : "BasaltSurge";
     const brandName = shopDoc.name || `${displayName} Store`;
 
@@ -180,7 +185,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const hostUrl = process.env.NEXT_PUBLIC_APP_URL || `https://${req.headers.get("host")}`;
+    const hostUrl = process.env.NEXT_PUBLIC_APP_URL || publicOrigin.origin;
     const returnUrl = `https://${shop}/cart/clear?return_to=${encodeURIComponent("/")}`;
 
     // Call /api/orders
@@ -190,6 +195,8 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "application/json",
         "x-wallet": wallet,
+        "x-forwarded-host": publicOrigin.host,
+        "x-forwarded-proto": publicOrigin.protocol.slice(0, -1),
         "x-correlation-id": correlationId
       },
       body: JSON.stringify({

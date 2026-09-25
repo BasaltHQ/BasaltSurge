@@ -2,6 +2,49 @@
 
 This guide explains how to deploy Shopify apps for whitelabel brands using the automated deployment pipeline.
 
+## Cart payment option
+
+The app now ships a **Cart payment option** theme app embed. It adds **Pay with Surge**
+beside the normal Checkout button on the cart page and in supported cart drawers.
+Partner app packages use their configured gateway and a partner button label. This
+is a storefront payment button that opens the existing hosted portal; it does not
+register a payment provider inside Shopify checkout.
+
+1. Deploy the updated application backend and public assets. The legacy
+   `shopify-cart-hijack.js` URL now adds a separate button instead of intercepting
+   regular Checkout. Existing ScriptTags use the same behavior during migration.
+2. Deploy the existing Shopify app through Plugin Studio. Both automated deployment
+   and the downloadable package include `extensions/cart-payment/`, independently
+   of the optional checkout UI extension. Verify the existing app client ID and
+   public HTTPS gateway URL before releasing the version.
+3. In Shopify, open **Online Store → Themes → Edit theme → App embeds** on the
+   published theme. Enable **Cart payment option** and save. The label is editable.
+   App embeds must be enabled again when publishing a different theme.
+4. On the cart page, test a nonempty cart, a quantity update, the new payment button,
+   and normal Checkout. Check that the Surge button opens the expected portal.
+   Payment failures should keep the cart open with a retry message.
+5. Once the embed is active and verified, remove the old cart ScriptTag. Do not
+   disconnect the merchant integration to remove it; that would also disable the
+   backend connection. The runtime guards against double initialization while both
+   installation methods are present.
+
+The button uses named Shopify checkout controls (`name="checkout"` / `id="checkout"`)
+and same-store checkout links. Themes with custom controls need an appropriate
+selector added to `public/js/shopify-cart-hijack.js`. Assets are bundled with the
+extension and do not expose merchant API credentials. The backend remains responsible
+for inventory validation and order totals.
+
+Shopify's [storefront ScriptTag migration guide](https://shopify.dev/docs/apps/build/online-store/script-tag-deprecation/storefront)
+lists October 1, 2026 as the creation/update cutoff and March 1, 2027 as the removal
+of existing storefront injection. Admin-created custom apps that cannot use theme
+extensions require a theme-level installation instead.
+
+Run the local regression checks with:
+
+```sh
+node --test src/lib/shopify/cart-payment.test.cjs
+```
+
 ## Prerequisites
 
 ### 1. Install Shopify CLI

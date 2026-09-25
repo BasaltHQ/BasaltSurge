@@ -4,6 +4,8 @@ import { requireCsrf } from "@/lib/security";
 import { auditEvent } from "@/lib/audit";
 import JSZip from "jszip";
 import { getContainer } from "@/lib/cosmos";
+import { generateCartExtensionFiles } from "@/lib/shopify/cart-extension";
+import { generateAppToml, generateExtensionToml, generateCheckoutExtensionCode, generateExtensionPackageJson, type ShopifyAppConfig } from "@/lib/shopify/cli";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -28,56 +30,6 @@ type PackageRequest = {
   palette?: { primary?: string; accent?: string };
 };
 
-/**
- * Build Shopify app.toml content based on plugin config values.
- * This is a stub template; operators may adjust fields in the Shopify Partner UI.
- */
-function buildAppToml(brandKey: string, plugin: any, palette?: { primary?: string; accent?: string }) {
-  const name = String(plugin?.pluginName || brandKey).trim();
-  const redirectUrls = Array.isArray(plugin?.oauth?.redirectUrls) ? plugin.oauth.redirectUrls : [];
-  const scopes = Array.isArray(plugin?.oauth?.scopes) ? plugin.oauth.scopes : [];
-  const supportUrl = String(plugin?.urls?.supportUrl || "").trim();
-  const privacyUrl = String(plugin?.urls?.privacyUrl || "").trim();
-  const termsUrl = String(plugin?.urls?.termsUrl || "").trim();
-
-  return `name = "${name}"
-client_id = ""
-application_url = ""
-embedded = true
-
-[auth]
-redirect_urls = [${redirectUrls.map((u: string) => `"${u}"`).join(", ")}]
-scopes = "${scopes.join(",")}"
-
-[ui]
-primary_color = "${palette?.primary || plugin?.extension?.palette?.primary || "#0ea5e9"}"
-accent_color = "${palette?.accent || plugin?.extension?.palette?.accent || "#22c55e"}"
-
-[urls]
-support = "${supportUrl}"
-privacy = "${privacyUrl}"
-terms = "${termsUrl}"
-`;
-}
-
-function buildCheckoutExtensionJson(plugin: any) {
-  const enabled = !!plugin?.extension?.enabled;
-  const label = String(plugin?.extension?.buttonLabel || "Pay with Crypto").slice(0, 64);
-  const minTotal = Number(plugin?.extension?.eligibility?.minTotal || 0);
-  const currency = String(plugin?.extension?.eligibility?.currency || "USD").slice(0, 12);
-  const primary = String(plugin?.extension?.palette?.primary || "#0ea5e9");
-  const accent = String(plugin?.extension?.palette?.accent || "#22c55e");
-
-  return JSON.stringify({
-    extension_points: enabled ? ["checkout"] : [],
-    settings: {
-      button_label: label,
-      eligibility: { min_total: minTotal, currency },
-      palette: { primary, accent }
-    }
-  }, null, 2);
-}
-
 function buildReadme(brandKey: string, plugin: any) {
   const name = String(plugin?.pluginName || brandKey).trim();
   const short = String(plugin?.shortDescription || plugin?.tagline || "").trim();
@@ -87,27 +39,26 @@ function buildReadme(brandKey: string, plugin: any) {
   return [
     `# ${name} — Shopify App Package`,
     ``,
-    short ? short : "PortalPay-branded Shopify app with Checkout UI extension for crypto payments.",
+    short ? short : "Shopify app with a cart payment option and optional checkout UI extension.",
     ``,
     `## Contents`,
-    `- app.toml (app manifest template)`,
-    `- extensions/checkout-ui.json (extension config stub)`,
+    `- shopify.app.toml (app configuration)`,
+    `- extensions/cart-payment/ (Cart payment option app embed)`,
+    `- extensions/checkout-ui/ (when enabled)`,
     `- assets/ (icons/banners/screenshots references)`,
     ``,
     `## Quick Deploy (Shopify CLI)`,
-    `1. Authenticate:`,
-    `   shopify login --store <dev-store-domain>`,
-    `2. Create app (if not exists) and push:`,
-    `   shopify app create`,
-    `   shopify app config write --from app.toml`,
-    `   shopify extension push`,
-    `3. Configure OAuth redirect URLs & scopes in app settings if not applied by CLI.`,
-    `4. Submit for review via Shopify Partner dashboard.`,
+    `1. Verify client_id, application_url, redirect URLs, and scopes in shopify.app.toml match your existing app.`,
+    `2. Run npm install, then npx shopify app deploy. Review the app version before releasing it.`,
+    `3. In the published theme editor, open App embeds, enable Cart payment option, and Save.`,
+    `4. Test the new payment button and the regular Checkout button with an unpaid test cart.`,
+    `5. Remove the legacy cart ScriptTag only after the app embed is active and tested.`,
     ``,
     listingUrl ? `Current listing: ${listingUrl}` : (slug ? `Planned slug: ${slug}` : ""),
     ``,
     `## Notes`,
-    `- Update app.toml fields (client_id, application_url) as provided by Shopify.`,
+    `- Deploy the matching Surge backend and public assets before enabling the embed.`,
+    `- This adds a cart button; it does not register a Shopify payment provider.`,
     `- Palette and copy are derived from brand plugin config; adjust as needed in the Partner UI.`,
   ].filter(Boolean).join("\n");
 }
@@ -159,8 +110,32 @@ export async function POST(req: NextRequest) {
   // Build ZIP
   const zip = new JSZip();
   const palette = body?.palette;
-  zip.file("app.toml", buildAppToml(brandKey, plugin, palette));
-  zip.file("extensions/checkout-ui.json", buildCheckoutExtensionJson(plugin));
+  const baseUrl = process.env.PLESK_MAIN_DOMAIN ? `https://${process.env.PLESK_MAIN_DOMAIN}`
+    : process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin;
+  const appConfig: ShopifyAppConfig = {
+    name: String(plugin.pluginName || brandKey), brandKey,
+    clientId: plugin.shopifyAppId || undefined,
+    applicationUrl: plugin.urls?.appUrl || `${baseUrl}/shopify/settings?brandKey=${brandKey}`,
+    embedded: true,
+    redirectUrls: Array.isArray(plugin.oauth?.redirectUrls) ? plugin.oauth.redirectUrls : [],
+    scopes: (Array.isArray(plugin.oauth?.scopes) ? plugin.oauth.scopes : []).filter((scope: string) =>
+      !["read_payment_gateways", "write_payment_gateways", "read_payment_sessions", "write_payment_sessions"].includes(scope)),
+    extension: {
+      enabled: !!plugin.extension?.enabled,
+      buttonLabel: plugin.extension?.buttonLabel || "Pay with Crypto",
+      minTotal: Number(plugin.extension?.eligibility?.minTotal || 0),
+      currency: plugin.extension?.eligibility?.currency || "USD",
+      palette: { primary: palette?.primary || plugin.extension?.palette?.primary || "#0ea5e9",
+        accent: palette?.accent || plugin.extension?.palette?.accent || "#22c55e" }
+    }
+  };
+  zip.file("shopify.app.toml", generateAppToml(appConfig));
+  zip.file("package.json", generateExtensionPackageJson(appConfig));
+  for (const [file, contents] of Object.entries(await generateCartExtensionFiles(appConfig))) zip.file(file, contents);
+  if (appConfig.extension?.enabled) {
+    zip.file("extensions/checkout-ui/shopify.extension.toml", generateExtensionToml(appConfig));
+    zip.file("extensions/checkout-ui/src/Checkout.tsx", generateCheckoutExtensionCode(appConfig));
+  }
   zip.file("README.md", buildReadme(brandKey, plugin));
 
   // Reference assets (we store references as text pointers; operators can replace with binaries as needed)

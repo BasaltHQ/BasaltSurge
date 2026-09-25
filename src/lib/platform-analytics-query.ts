@@ -1,7 +1,7 @@
 // @ts-expect-error Native Node test execution imports the TypeScript source.
 import { resolveAnalyticsKyc } from "./platform-analytics-metrics.ts";
 
-export const ANALYTICS_DEFINITION_VERSION = "2026-09-06.2";
+export const ANALYTICS_DEFINITION_VERSION = "2026-09-25.splits";
 export const ANALYTICS_MAX_PAGE_SIZE = 5000;
 export const ANALYTICS_SYSTEM_TIME_ZONE = "America/Los_Angeles";
 
@@ -15,6 +15,9 @@ export type AnalyticsQuery = AnalyticsRange & {
   search: string;
   searchMode: string;
   failureReasons: string[];
+  paymentMethod?: string;
+  splitKind?: string;
+  splitContract?: string;
   comparison: AnalyticsRange | null;
 };
 
@@ -116,7 +119,12 @@ export function resolveAnalyticsQuery(params: URLSearchParams, clientTimezone?: 
   if (failureReasons.length > 2 || failureReasons.some(value => value.length > 500)) throw new Error("Select at most two failure reasons");
   const search = (params.get("receiptId") || params.get("email") || params.get("search") || params.get("q") || "").trim();
   if (search.length > 500) throw new Error("Search must not exceed 500 characters");
-  return { start: start?.toISOString() || null, end: end.toISOString(), timeZone: requestedTimeZone, snapshotEnd, timeRange, brandKey: normalized(params.get("brandKey")) || "all", status: normalized(params.get("statusFilter")) || "all", kyc, search, searchMode, failureReasons, comparison };
+  const paymentMethod = normalized(params.get("paymentMethod")) || "all";
+  const splitKind = normalized(params.get("splitKind")) || "all";
+  const splitContract = normalized(params.get("splitContract"));
+  if (!["all", "credit", "debit", "bank", "crypto", "unknown"].includes(paymentMethod) || !["all", "credit", "debit", "ach", "crypto", "unknown"].includes(splitKind)) throw new Error("Invalid split filter");
+  if (splitContract && !/^0x[a-f\d]{40}$/.test(splitContract)) throw new Error("Invalid split contract");
+  return { start: start?.toISOString() || null, end: end.toISOString(), timeZone: requestedTimeZone, snapshotEnd, timeRange, brandKey: normalized(params.get("brandKey")) || "all", status: normalized(params.get("statusFilter")) || "all", kyc, search, searchMode, failureReasons, comparison, paymentMethod, splitKind, splitContract };
 }
 
 export function analyticsPageSize(value: string | null): number {
@@ -151,6 +159,10 @@ export function analyticsReceiptInRange(receipt: Record<string, any>, range: Ana
 
 /** Shared backend-neutral filter runs after canonical dimensions are resolved. */
 export function matchesAnalyticsQueryDimensions(receipt: Record<string, any>, query: AnalyticsQuery): boolean {
+  if (query.paymentMethod && query.paymentMethod !== "all" && analyticsFunding(receipt) !== query.paymentMethod) return false;
+  const split = analyticsSplitRoute(receipt);
+  if (query.splitKind && query.splitKind !== "all" && split.kind !== query.splitKind) return false;
+  if (query.splitContract && split.address !== query.splitContract) return false;
   if (query.brandKey !== "all" && normalized(receipt.brandKey) !== query.brandKey) return false;
   if (query.status !== "all" && normalized(receipt.status || "pending") !== query.status) return false;
   if (query.kyc !== "ALL" && resolveAnalyticsKyc(receipt).highestCompleted.toUpperCase() !== query.kyc) return false;
@@ -187,9 +199,27 @@ export function pageAnalyticsReceipts<T extends Record<string, any>>(rows: T[], 
   return { page, hasMore, nextCursor: hasMore && page.length ? encodeAnalyticsCursor(page[page.length - 1], queryKey) : null };
 }
 
-export function analyticsFunding(receipt: Record<string, any>): "credit" | "debit" | "bank" | "unknown" {
+export function analyticsFunding(receipt: Record<string, any>): "credit" | "debit" | "bank" | "crypto" | "unknown" {
   const value = normalized(receipt.detectedCardFunding || receipt.cardFunding || receipt.funding || (receipt.isCreditCard === true ? "credit" : ""));
-  return ["us_bank_account", "ach", "bank"].includes(value) ? "bank" : value === "credit" ? "credit" : value === "debit" ? "debit" : "unknown";
+  if (["us_bank_account", "ach", "bank"].includes(value)) return "bank";
+  if (value === "credit") return "credit";
+  if (value === "debit" || value === "prepaid") return "debit";
+  if (value === "crypto" || (!receipt.stripeSessionId && (receipt.isCrypto === true || receipt.paymentMethod === "crypto"))) return "crypto";
+  return "unknown";
+}
+
+/** Historical evidence only: never infer a payment's destination from today's site config. */
+export function analyticsSplitRoute(receipt: Record<string, any>) {
+  const funding = analyticsFunding(receipt);
+  const snapshot = receipt.splitRoutingSnapshot;
+  const explicit = normalized(receipt.settlementSplitAddress || receipt.splitAddressUsed);
+  if (!snapshot) return { kind: receipt.settlementSplitKind || "unknown", address: explicit, version: receipt.settlementSplitVersion || null, inherited: false, source: explicit ? "recorded" : "unknown" };
+  const suffix = funding === "debit" ? "Credit" : funding === "bank" && snapshot.splitOverrides?.ach && snapshot.splitAddressAch && snapshot.splitConfigAch ? "Ach" : funding === "crypto" && snapshot.splitOverrides?.crypto && snapshot.splitAddressCrypto && snapshot.splitConfigCrypto ? "Crypto" : "";
+  if (funding === "unknown" && !explicit) return { kind: "unknown", address: "", version: null, inherited: false, source: "unknown" };
+  const address = normalized(explicit || snapshot[`splitAddress${suffix}`] || snapshot.splitAddress || snapshot.splitAddressCredit);
+  const matchedSuffix = [suffix, "", "Credit", "Ach", "Crypto"].find(key => address && normalized(snapshot[`splitAddress${key}`]) === address && (key !== "Ach" || snapshot.splitOverrides?.ach === true) && (key !== "Crypto" || snapshot.splitOverrides?.crypto === true));
+  const kind = matchedSuffix === "Ach" ? "ach" : matchedSuffix === "Crypto" ? "crypto" : matchedSuffix === "Credit" ? "debit" : matchedSuffix === "" ? "credit" : "unknown";
+  return { kind, address, version: snapshot[`splitVersion${matchedSuffix ?? suffix}`] || null, inherited: kind === "credit" && (funding === "bank" || funding === "crypto"), source: explicit ? "recorded" : "payment_snapshot" };
 }
 
 /** Date-scoped filter catalog, independent of currently selected dimensions. */

@@ -1,3 +1,4 @@
+import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { recoverStripeReceiptSession, retrieveStripeReceiptSession, persistStripeReceiptUpdate } from "@/lib/stripe-receipt-session";
@@ -414,9 +415,11 @@ export async function POST(req: NextRequest) {
       const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
       let splitAddress = receipt.splitAddress;
       let splitAddressCredit = receipt.splitAddressCredit;
+      let optionalRouting = receiptRoutingFields(receipt);
       if (siteConfig) {
         splitAddress = siteConfig.splitAddress || siteConfig.split?.address || splitAddress;
         splitAddressCredit = siteConfig.splitAddressCredit || siteConfig.splitCredit?.address || splitAddressCredit;
+          optionalRouting = receiptRoutingFields(receipt, siteConfig);
       }
       if (!splitAddress) {
         splitAddress = merchantWallet;
@@ -802,6 +805,7 @@ export async function POST(req: NextRequest) {
           funding: cardFunding,
           splitAddress,
           splitAddressCredit,
+          ...optionalRouting,
           fallbackAddress: merchantWallet,
         });
 
@@ -1449,6 +1453,7 @@ export async function POST(req: NextRequest) {
                 funding: recoveredFunding,
                 splitAddress: matchedReceipt.splitAddress,
                 splitAddressCredit: matchedReceipt.splitAddressCredit,
+                ...receiptRoutingFields(matchedReceipt),
               });
               const receiptAmount = Number(matchedReceipt.settlementAmount || matchedReceipt.onrampAmount || matchedReceipt.totalUsd || 0);
               if (!/^0x[a-f0-9]{40}$/i.test(targetSplit) || receiptAmount <= 0 || Number(uBalance) / 1_000_000 < receiptAmount * 0.95) {
