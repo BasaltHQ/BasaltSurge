@@ -26,6 +26,7 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
   const [error, setError] = useState("");
   const [progress, setProgress] = useState<Partial<Record<SplitKind, string>>>({});
   const [confirmation, setConfirmation] = useState<SplitKind[] | null>(null);
+  const isPartnerMerchant = !["portalpay", "basaltsurge"].includes(brandKey.toLowerCase());
   const endpoint = `/api/split/deploy?wallet=${encodeURIComponent(wallet)}&brandKey=${encodeURIComponent(brandKey)}&all=true`;
   const recoveryKey = (kind: SplitKind) => `split-deployment:${brandKey}:${wallet.toLowerCase()}:${kind}`;
   const setCurrentConfig = (next: any) => { configRef.current = next; setConfig(next); };
@@ -39,7 +40,14 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
     for(const kind of SPLIT_KINDS) {
       const allocation = cfg[SPLIT_FIELDS[kind].config];
       if(kind === "credit" || kind === "debit" || cfg.splitDrafts?.[kind] || optionalSplitActive(cfg, kind)) {
-        next[kind] = structuredClone(cfg.splitDrafts?.[kind] || { ...(defaults[kind] || defaults.credit), ...allocation, partnerWallet: defaults[kind]?.partnerWallet || defaults.credit?.partnerWallet || "", agents: allocation?.agents || defaults[kind]?.agents || [] });
+        const loadedDraft = structuredClone(cfg.splitDrafts?.[kind] || { ...(defaults[kind] || defaults.credit), ...allocation, partnerWallet: defaults[kind]?.partnerWallet || defaults.credit?.partnerWallet || "", agents: allocation?.agents || defaults[kind]?.agents || [] });
+        // Legacy allocations and saved drafts may contain a hidden partner fee.
+        // Merchant brand determines eligibility, independently of the editor's permissions.
+        next[kind] = isPartnerMerchant ? loadedDraft : {
+          ...loadedDraft,
+          partnerBps: 0,
+          merchantBps: 10000 - loadedDraft.platformBps - loadedDraft.agents.reduce((sum: number, agent: SplitDraft["agents"][number]) => sum + agent.bps, 0),
+        };
       }
     }
     setDrafts(next);
@@ -424,7 +432,8 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                   </div>
 
                   <span className="text-zinc-400 text-xs max-w-md">
-                    {active === "credit" && inherited.length ? "Credit card fee preview. ACH and direct crypto share this contract with their own processor charges." : "Top-line transaction fee presented to checkout users."}
+                    {active === "credit" && inherited.length ? "Credit card fee preview. ACH and direct crypto share this contract with their own processor charges." : active === "ach" ? "Fee-on-top preview using standard ACH processing." : "Fee-on-top preview for this split configuration."}
+                    {" Merchant add-ons and presented-fee overrides can change the checkout total."}
                   </span>
 
                   {/* 3-Part Component Cards: Stripe + Platform + Agents */}
@@ -463,7 +472,7 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                   </div>
 
                   {/* Partner Wallet Input */}
-                  {(!isPlatformContainer || !["portalpay", "basaltsurge"].includes(brandKey)) && (
+                  {isPartnerMerchant && (
                     <div className="space-y-2">
                       <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
                         <span>Partner Wallet</span>
@@ -538,7 +547,7 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                                 Base Stripe ({(stripeFeeBps / 100).toFixed(2)}%) + Platform
                               </span>
                               <span className={`font-bold ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>
-                                {(currentPlatformBps / 100).toFixed(2)}%
+                                {((stripeFeeBps + currentPlatformBps) / 100).toFixed(2)}%
                               </span>
                             </div>
                           </div>
@@ -559,7 +568,7 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                   </div>
 
                   {/* Partner Fee (Slider) - Hidden for platform containers */}
-                  {(!isPlatformContainer || !["portalpay", "basaltsurge"].includes(brandKey)) && (
+                  {isPartnerMerchant && (
                     <div className="space-y-3">
                       <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
                         <span>Partner Fee</span>
@@ -729,9 +738,15 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                             <span className="text-zinc-400">2. Platform Fee</span>
                             <span className={`font-mono ${isDebitTab ? "text-purple-400" : "text-emerald-400"}`}>{(currentPlatformBps / 100).toFixed(2)}%</span>
                           </div>
+                          {isPartnerMerchant && currentPartnerBps > 0 && (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-zinc-400">Partner Fee</span>
+                              <span className="font-mono text-zinc-300">{(currentPartnerBps / 100).toFixed(2)}%</span>
+                            </div>
+                          )}
                           {currentAgents.length > 0 && (
                             <div className="flex justify-between text-xs">
-                              <span className="text-zinc-400">3. Agents ({currentAgents.length})</span>
+                              <span className="text-zinc-400">Agents ({currentAgents.length})</span>
                               <span className="font-mono text-amber-400">{(agentsBps / 100).toFixed(2)}%</span>
                             </div>
                           )}
@@ -743,6 +758,12 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                             <span className="text-zinc-400">Platform Share</span>
                             <span className="font-mono text-zinc-300">{(currentPlatformBps / 100).toFixed(2)}%</span>
                           </div>
+                          {isPartnerMerchant && currentPartnerBps > 0 && (
+                            <div className="flex justify-between text-xs">
+                              <span className="text-zinc-400">Partner Share</span>
+                              <span className="font-mono text-zinc-300">{(currentPartnerBps / 100).toFixed(2)}%</span>
+                            </div>
+                          )}
                           {currentAgents.length > 0 && (
                             <div className="flex justify-between text-xs">
                               <span className="text-zinc-400">Agents Share</span>
@@ -773,7 +794,7 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                             <span className="text-zinc-400">Platform</span>
                             <span className="font-mono text-zinc-300">{(currentPlatformBps / 100).toFixed(2)}%</span>
                           </div>
-                          {(!isPlatformContainer || !["portalpay", "basaltsurge"].includes(brandKey)) && (
+                          {isPartnerMerchant && (
                             <div className="flex justify-between text-xs">
                               <span className="text-zinc-400">Partner</span>
                               <span className="font-mono text-zinc-300">{(currentPartnerBps / 100).toFixed(2)}%</span>
@@ -795,10 +816,11 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                         </span>
                       </div>
                     </div>
-                    {merchantBps < 0 && (
+                    <p className="text-[10px] text-zinc-500">Percentages apply to funds received by the split contract, after any onramp charges.</p>
+                    {merchantBps <= 0 && (
                       <div className="text-xs text-red-500 bg-red-500/10 p-2 rounded border border-red-500/20 flex items-center gap-1.5">
                         <AlertTriangle className="w-3.5 h-3.5" />
-                        <span>Warning: Fees exceed 100%. Merchant receives nothing.</span>
+                        <span>Fees must total less than 100% to leave a positive merchant share.</span>
                       </div>
                     )}
                     {totalFeeBps !== 10000 && merchantBps > 0 && (

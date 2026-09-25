@@ -130,6 +130,7 @@ test('deployment modal starts dual, adds independent overrides, and saves drafts
   await runner.settle(Component);
   assert.deepEqual(requests.map(r => r.action), ['draft', 'draft', 'draft']);
   assert.equal(requests.find(r => r.splitKind === 'ach').draft.platformBps, 80);
+  for (const request of requests) assert.equal(request.draft.partnerBps, 50, 'platform administrators must retain partner-brand fees');
   assert.match(text(runner.tree), /Currently|Credit currently covers Credit \+ ACH \+ Crypto/);
   runner.dispose();
 });
@@ -175,4 +176,73 @@ test('deploy all skips unchanged active allocations without another wallet trans
   await runner.settle(Component);
   assert.match(text(runner.tree), /Already active; allocation unchanged/);
   runner.dispose();
+});
+
+for (const brandKey of ['portalpay', 'basaltsurge']) {
+  test(`${brandKey} modal removes hidden partner fees from defaults, saved allocations, and drafts`, async () => {
+    const config = {
+      splitConfig: { ...defaults.credit, platformBps: 0 },
+      splitDrafts: { ach: { ...defaults.credit, platformBps: 60 } },
+    };
+    const requests = [];
+    global.fetch = async (_url, options) => {
+      const body = options?.body ? JSON.parse(options.body) : null;
+      if (body) requests.push(body);
+      return { ok: true, json: async () => ({ config: { ...config, splitRevision: requests.length } }) };
+    };
+    const runner = new HookRunner();
+    const Component = () => SplitDeployModal({ wallet: merchant, brandKey, account: { address: merchant }, defaults, canEditPlatform: true, onClose() {}, onSaved: async () => {} });
+    await runner.settle(Component);
+    // A new Crypto draft inherits Credit, including any stale partner fee unless normalized.
+    find(runner.tree, n => n.props?.['aria-label'] === 'Separate Crypto fees').props.onClick();
+    await runner.settle(Component);
+    assert.match(text(runner.tree), /Merchant Net100\.00%/);
+    await find(runner.tree, n => n.type === 'button' && text(n) === 'Save drafts').props.onClick();
+    await runner.settle(Component);
+    assert.deepEqual(requests.map(r => r.splitKind), ['credit', 'debit', 'ach', 'crypto']);
+    for (const request of requests) assert.equal(request.draft.partnerBps, 0, request.splitKind);
+    assert.deepEqual(requests.map(r => r.draft.platformBps), [0, 125, 60, 0]);
+    assert.equal(config.splitConfig.partnerBps, 50, 'loading the editor must not mutate active configuration');
+    assert.equal(config.splitDrafts.ach.partnerBps, 50);
+    runner.dispose();
+  });
+}
+
+test('modal totals match checkout and contract allocations for all four methods', async () => {
+  const { recalculateReceiptForCardFunding } = require('@/lib/receipts');
+  const { validateSplitAllocation } = require('@/lib/split-allocation');
+  for (const brandKey of ['basaltsurge', 'partner-test']) {
+    const partnerBps = brandKey === 'basaltsurge' ? 0 : 50;
+    const allocations = {
+      credit: { platformBps: 150, partnerBps, agents: [{ wallet: historical, bps: 25 }], partnerWallet: ach },
+      debit: { platformBps: 175, partnerBps, agents: [], partnerWallet: ach },
+      ach: { platformBps: 80, partnerBps, agents: [{ wallet: historical, bps: 10 }], partnerWallet: ach },
+      crypto: { platformBps: 50, partnerBps, agents: [], partnerWallet: ach },
+    };
+    const config = { splitDrafts: allocations, splitConfig: allocations.credit, splitConfigCredit: allocations.debit,
+      splitConfigAch: allocations.ach, splitConfigCrypto: allocations.crypto,
+      splitAddress: primary, splitAddressCredit: historical, splitAddressAch: ach, splitAddressCrypto: merchant,
+      splitOverrides: { ach: true, crypto: true } };
+    global.fetch = async () => ({ ok: true, json: async () => ({ config }) });
+    const runner = new HookRunner();
+    const Component = () => SplitDeployModal({ wallet: merchant, brandKey, account: { address: merchant }, defaults, canEditPlatform: true, onClose() {}, onSaved: async () => {} });
+    await runner.settle(Component);
+    for (const [kind, label, processorBps] of [['credit', 'Credit', 350], ['debit', 'Debit', 225], ['ach', 'ACH', 60], ['crypto', 'Crypto', 0]]) {
+      find(runner.tree, n => n.props?.role === 'tab' && text(n) === label).props.onClick();
+      await runner.settle(Component);
+      const output = text(runner.tree);
+      const allocation = validateSplitAllocation(allocations[kind]);
+      const priced = recalculateReceiptForCardFunding({ totalUsd: 100, lineItems: [{ label: 'Order', priceUsd: 100 }] }, kind === 'ach' ? 'us_bank_account' : kind, config);
+      const fee = priced.lineItems.find(item => item.label === 'Processing Fee').priceUsd;
+      assert.ok(output.includes(`Customer Fee${fee.toFixed(2)}%`), `${brandKey} ${kind} checkout total`);
+      assert.ok(walk(runner.tree).some(n => n.type === 'div' && text(n).replace(/\s+/g, ' ').trim() === `Base Stripe (${(processorBps / 100).toFixed(2)}%) + Platform${((processorBps + allocation.platformBps) / 100).toFixed(2)}%`), `${kind} processor + platform subtotal`);
+      assert.ok(output.includes(`Merchant Net${(allocation.merchantBps / 100).toFixed(2)}%`));
+      assert.match(output, /Percentages apply to funds received by the split contract/);
+      if (partnerBps) {
+        assert.ok(output.includes('Partner Fee0.50%'));
+        assert.ok(output.includes('Partner Share0.50%'));
+      }
+    }
+    runner.dispose();
+  }
 });

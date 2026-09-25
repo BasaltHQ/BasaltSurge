@@ -28,7 +28,7 @@ function harness(options = {}) {
     mismatch: () => { mismatch = true; },
     allocation: load("split-allocation"),
     async call(kind, action, extra = {}) {
-      const result = await update({ container, docId: document.id, wallet: merchant, brandKey: "test", body: { revision: document.splitRevision, action, ...extra }, kind, platformWallet: platform, brand: { partnerWallet: partner, ...options.brand }, platformAdmin: options.platformAdmin ?? true });
+      const result = await update({ container, docId: document.id, wallet: merchant, brandKey: options.brandKey || "test", body: { revision: document.splitRevision, action, ...extra }, kind, platformWallet: platform, brand: { partnerWallet: partner, ...options.brand }, platformAdmin: options.platformAdmin ?? true });
       if (action === "prepare") chainRecipients = result.operation.recipients;
       return result;
     },
@@ -100,3 +100,16 @@ test("activation retries preserve version and metadata sync requires no new cont
   assert.equal(h.read().splitDeployments.ach.id, operation.id);
   assert.equal(h.read().splitSyncPending, false);
 });
+
+for (const brandKey of ["portalpay", "basaltsurge"]) {
+  test(`${brandKey} rejects partner fees and prepares all four methods without them`, async () => {
+    const h = harness({ brandKey });
+    for (const kind of ["credit", "debit", "ach", "crypto"]) {
+      await assert.rejects(h.call(kind, "prepare", { draft }), /Platform merchants cannot allocate a partner fee/);
+      const { operation } = await h.call(kind, "prepare", { draft: { ...draft, partnerBps: 0 } });
+      assert.equal(operation.allocation.merchantBps, 9850);
+      assert.equal(operation.recipients.some(r => r.address === partner), false);
+      assert.equal(operation.recipients.reduce((sum, r) => sum + r.sharesBps, 0), 10000);
+    }
+  });
+}

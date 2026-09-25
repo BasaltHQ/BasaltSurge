@@ -133,3 +133,16 @@ test("presented ACH fees are not charged a second time in receipt accounting", (
     assert.equal(+(result.totalUsd / (1 + rate / 100)).toFixed(2), quote(funding, presented));
   }
 });
+
+test("175 BPS debit allocation quotes 4 percent and distributes the onramp amount", () => {
+  const config = { splitConfigCredit: { platformBps: 175, partnerBps: 0, agents: [] } };
+  const receipt = recalculateReceiptForCardFunding({ totalUsd: 100, lineItems: [{ label: "Order", priceUsd: 100 }] }, "debit", config);
+  assert.equal(receipt.totalUsd, 104);
+  const destination = resolveFundingOnrampAmount({ ...config, funding: "debit", baseUsd: 100, customerTotalUsd: 104, stripeFeePct: 2.25, feeMinusEnabled: false });
+  assert.equal(destination, 101.71);
+  const { validateSplitAllocation } = load("split-allocation");
+  const allocation = validateSplitAllocation(config.splitConfigCredit);
+  assert.equal(allocation.merchantBps, 9825);
+  assert.equal(+(destination * allocation.merchantBps / 10000).toFixed(2), 99.93);
+  assert.equal(allocation.merchantBps + allocation.platformBps, 10000);
+});
