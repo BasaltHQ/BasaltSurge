@@ -350,11 +350,15 @@ test('a shared receipt link selects its later ledger page and restores the reque
     email: 'customer@example.invalid', stripeSessionId: `session-link-${index}`,
   }));
   const aggregates = aggregateAnalyticsReceipts(rows, 'America/Los_Angeles');
-  global.fetch = async input => {
+  const replayCalls = [];
+  let analyticsReads = 0;
+  global.fetch = async (input, options) => {
     const url = new URL(String(input), 'https://analytics.example.invalid');
+    if (url.pathname === '/api/platform/thirdweb-replay') { replayCalls.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ ok: true, message: 'Thirdweb payment verified and receipt marked paid.' }) }; }
     if (url.pathname === '/api/platform/safe-value') return { ok: true, json: async () => ({ balanceHistory: [], tokenPrices: {}, metadata: {} }) };
     if (url.pathname === '/api/platform/git-commits') return { ok: true, json: async () => ({ ok: true, commits: [] }) };
     assert.equal(url.pathname, '/api/platform/analytics');
+    analyticsReads++;
     return { ok: true, json: async () => ({ ...aggregates, ok: true, recentReceipts: rows, pagination: { totalMatchingCount: rows.length, hasMore: false, snapshotEnd: '2026-09-07T00:00:00Z' } }) };
   };
   const Panel = require('../../../app/(web)/admin/panels/PlatformAnalyticsPanel.tsx').default;
@@ -368,6 +372,15 @@ test('a shared receipt link selects its later ledger page and restores the reque
     assert.ok(investigation, 'The linked receipt is expanded on its actual visible ledger page');
     assert.equal(investigation.props.activeTab, 'fees');
     assert.doesNotMatch(text(tree), /linked receipt is not present/);
+    const beforeReplay = analyticsReads;
+    const selected = { ...investigation.props.receipt, wallet: '0x' + '1'.repeat(40) };
+    await investigation.props.handleThirdwebReplay(selected, '0x' + 'a'.repeat(64), 42161);
+    const updated = await runner.settle(Panel);
+    assert.deepEqual(replayCalls, [{ receiptId: selected.receiptId, wallet: selected.wallet, brandKey: selected.brandKey, transactionHash: '0x' + 'a'.repeat(64), chainId: 42161 }]);
+    assert.ok(analyticsReads > beforeReplay, 'successful replay refreshes analytics');
+    const refreshed = walk(updated).find(node => node.props?.receipt?.receiptId === selected.receiptId);
+    assert.equal(refreshed.props.actionLoading['thirdweb-' + selected.receiptId], false);
+    assert.match(refreshed.props.actionFeedback[selected.receiptId], /receipt marked paid/);
   } finally {
     runner.dispose();
     delete global.fetch; delete global.window; delete global.localStorage; delete global.document;

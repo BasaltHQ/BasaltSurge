@@ -4,7 +4,8 @@ import { getBrandKey } from "@/config/brands";
 import { auditEvent } from "@/lib/audit";
 import crypto from "node:crypto";
 import { Bridge } from "thirdweb";
-import { getReceiptStatusInternalHeaders } from "@/lib/receipt-status-policy";
+import { extractReceiptIdFromPurchaseData, postVerifiedReceiptStatus } from "@/lib/thirdweb/receipt-webhook";
+import { SPLIT_FIELDS, SPLIT_KINDS, isSplitAddress } from "@/lib/payment-split-routing";
 
 // Force dynamic rendering to avoid build-time evaluation
 export const dynamic = 'force-dynamic';
@@ -52,94 +53,27 @@ async function resolveMerchantContext(
   container: any,
   brandKey: string
 ): Promise<{ merchantWallet?: string; splitAddress?: string; brandKey: string } | null> {
-  const receiver = receiverAddr.toLowerCase();
-  
-  try {
-    // Query site configs for this brand to find matching receiver
-    const spec = {
-      query: `SELECT c.wallet, c.splitAddress, c.split, c.config FROM c WHERE c.type='site_config' AND (LOWER(c.wallet)=@addr OR LOWER(c.splitAddress)=@addr OR LOWER(c.split.address)=@addr OR LOWER(c.config.splitAddress)=@addr OR LOWER(c.config.split.address)=@addr)`,
-      parameters: [{ name: '@addr', value: receiver }]
-    };
-    
-    const { resources } = await container.items.query(spec).fetchAll();
-    const match = resources && resources[0];
-    
-    if (match) {
-      const merchantWallet = String(match.wallet || '').toLowerCase();
-      // Resolve split address from top-level and nested config.*
-      const splitTop = String(match.splitAddress || '').toLowerCase();
-      const splitObj = String(match.split?.address || '').toLowerCase();
-      const splitCfgTop = String(match.config?.splitAddress || '').toLowerCase();
-      const splitCfgObj = String(match.config?.split?.address || '').toLowerCase();
-      const splitAddressRaw = splitTop || splitObj || splitCfgTop || splitCfgObj || '';
-      const splitAddress = /^0x[a-f0-9]{40}$/i.test(splitAddressRaw) ? splitAddressRaw : receiver.toLowerCase();
-      
-      return {
-        merchantWallet: /^0x[a-f0-9]{40}$/i.test(merchantWallet) ? merchantWallet : undefined,
-        splitAddress,
-        brandKey
-      };
-    }
-  } catch (e) {
-    console.error('[WEBHOOK] Error resolving merchant context:', e);
-  }
-  
-  return null;
-}
+  const receiver = String(receiverAddr || "").toLowerCase();
+  if (!isSplitAddress(receiver)) return null;
 
-// Helper to robustly extract receiptId from Thirdweb purchaseData, metadata, or data payloads
-function extractReceiptIdFromPurchaseData(purchaseData: any, data?: any): string | null {
-  if (purchaseData) {
-    if (typeof purchaseData.receiptId === "string" && purchaseData.receiptId.trim()) {
-      return purchaseData.receiptId.trim().replace(/^receipt:/, "");
-    }
-    if (typeof purchaseData.productId === "string" && purchaseData.productId.trim()) {
-      const raw = purchaseData.productId.trim();
-      if (raw.startsWith("portal:")) {
-        return raw.slice(7).replace(/^receipt:/, "");
-      }
-      if (/^R-\d+/i.test(raw)) {
-        return raw.replace(/^receipt:/, "");
-      }
-    }
-    if (typeof purchaseData.meta?.receiptId === "string" && purchaseData.meta.receiptId.trim()) {
-      return purchaseData.meta.receiptId.trim().replace(/^receipt:/, "");
-    }
-  }
-  if (data) {
-    if (typeof data.receiptId === "string" && data.receiptId.trim()) {
-      return data.receiptId.trim().replace(/^receipt:/, "");
-    }
-    if (typeof data.metadata?.receiptId === "string" && data.metadata.receiptId.trim()) {
-      return data.metadata.receiptId.trim().replace(/^receipt:/, "");
-    }
-    if (typeof data.clientMetadata?.receiptId === "string" && data.clientMetadata.receiptId.trim()) {
-      return data.clientMetadata.receiptId.trim().replace(/^receipt:/, "");
-    }
-  }
-  try {
-    const str = JSON.stringify({ purchaseData, data });
-    const match = str.match(/R-\d{6,}/i);
-    if (match) return match[0].toUpperCase();
-  } catch {}
-  return null;
-}
+  // The webhook must recognize the exact contract that received the payment,
+  // including optional methods and contracts replaced since checkout began.
+  const addressPaths = ["wallet", ...SPLIT_KINDS.flatMap(kind => {
+    const fields = SPLIT_FIELDS[kind];
+    return [fields.address, `${fields.contract}.address`, `config.${fields.address}`, `config.${fields.contract}.address`];
+  })];
+  const predicates = addressPaths.map(field => `LOWER(c.${field})=@addr`);
+  predicates.push('ARRAY_CONTAINS(c.splitHistory, {"address": @addr}, true)', 'ARRAY_CONTAINS(c.config.splitHistory, {"address": @addr}, true)');
+  // Let read failures propagate so the provider retries instead of acknowledging
+  // a valid payment as permanently unmapped.
+  const { resources } = await container.items.query({
+    query: `SELECT c.wallet FROM c WHERE c.type='site_config' AND (${predicates.join(" OR ")})`,
+    parameters: [{ name: "@addr", value: receiver }],
+  }).fetchAll();
+  const match = (resources || []).find((doc: any) => isSplitAddress(doc.wallet));
+  if (!match) return null;
 
-async function postVerifiedReceiptStatus(baseOrigin: string, body: Record<string, any>): Promise<void> {
-  const internalHeaders = getReceiptStatusInternalHeaders();
-  if (!internalHeaders["x-portalpay-internal-secret"]) {
-    throw new Error("receipt_status_internal_secret_not_configured");
-  }
-
-  const response = await fetch(`${baseOrigin}/api/receipts/status`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...internalHeaders },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`receipt_status_update_failed:${response.status}:${detail.slice(0, 300)}`);
-  }
+  return { merchantWallet: String(match.wallet).toLowerCase(), splitAddress: receiver, brandKey };
 }
 
 export async function POST(req: NextRequest) {
@@ -180,13 +114,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { version, type, data } = webhook;
+    // Bridge decodes token amounts as bigint; persist and forward JSON-safe values.
+    const { version, type, data } = JSON.parse(JSON.stringify(webhook, (_key, value) => typeof value === "bigint" ? value.toString() : value));
     
     console.log(`[WEBHOOK] Received ${type} v${version}`);
     
     // Get brand context
     const brandKey = getBrandKey();
-    const container = await getContainer();
+    const container = await getContainer(undefined, undefined, { profile: "critical" });
     
     // Process based on webhook type (supporting pay.onchain-transaction, pay.buy-with-crypto, pay.onramp-transaction, pay.buy-with-fiat)
     const normType = String(type || "").toLowerCase();
@@ -245,8 +180,10 @@ async function handleOnchainTransaction(
     // Store unmapped event for audit
     try {
       await container.items.upsert({
-        id: `tw_tx_unmapped:${transactionId}`,
+        id: `tw_tx_unmapped:${brandKey}:${transactionId || paymentId}`,
         type: 'payment_event_thirdweb_unmapped',
+        verifiedWebhook: { type: 'pay.onchain-transaction', data },
+        receiptId: extractReceiptIdFromPurchaseData(purchaseData, data),
         brandKey,
         transactionId,
         paymentId,
@@ -268,8 +205,10 @@ async function handleOnchainTransaction(
   // Store payment event
   try {
     const eventDoc = {
-      id: `tw_tx:${brandKey}:${transactionId}`,
+      id: `tw_tx:${brandKey}:${transactionId || paymentId}`,
       type: 'payment_event_thirdweb',
+      verifiedWebhook: { type: 'pay.onchain-transaction', data },
+      receiptId: extractReceiptIdFromPurchaseData(purchaseData, data),
       brandKey,
       merchantWallet,
       splitAddress,
@@ -355,6 +294,25 @@ async function handleOnchainTransaction(
     
     console.log(`[WEBHOOK] Triggering split indexing for ${merchantWallet.slice(0,10)}... with ${baseTxHashes.length} Base tx hashes`);
     
+    // Persist the signed completion first. Indexing is not payment verification
+    // and its RPC/cache availability must not keep a completed receipt unpaid.
+    if (receiptId) {
+      await postVerifiedReceiptStatus(baseOrigin, {
+        receiptId,
+        wallet: merchantWallet,
+        status: "paid",
+        buyerWallet: sender?.toLowerCase(),
+        txHash: baseTxHashes[0] || undefined,
+        detectedCardFunding: "crypto",
+        isCrypto: true,
+        paymentId,
+        transactions,
+        destinationChainId: destinationToken?.chainId,
+        destinationToken,
+        destinationAmount,
+      });
+    }
+
     try {
       // Trigger split webhook (which will index and reconcile)
       const webhookRes = await fetch(`${baseOrigin}/api/split/webhook`, {
@@ -369,33 +327,9 @@ async function handleOnchainTransaction(
         })
       });
       
+      if (!webhookRes.ok) throw new Error(`split_indexing_failed:${webhookRes.status}`);
       const webhookData = await webhookRes.json().catch(() => ({}));
       console.log(`[WEBHOOK] Split indexing result:`, webhookData);
-      
-      // If we extracted a valid receiptId, update receipt status
-      if (receiptId) {
-        console.log(`[WEBHOOK] Updating receipt ${receiptId} status to paid/reconciled`);
-        
-        // Post tx_mined status if tx hash is present
-        if (baseTxHashes.length > 0) {
-          await postVerifiedReceiptStatus(baseOrigin, {
-            receiptId,
-            wallet: merchantWallet,
-            status: 'tx_mined',
-            buyerWallet: sender?.toLowerCase(),
-            txHash: baseTxHashes[0]
-          });
-        }
-        
-        // Post reconciled/paid status after indexing
-        await postVerifiedReceiptStatus(baseOrigin, {
-          receiptId,
-          wallet: merchantWallet,
-          status: 'reconciled',
-          buyerWallet: sender?.toLowerCase(),
-          txHash: baseTxHashes[0] || undefined
-        });
-      }
     } catch (e) {
       console.error('[WEBHOOK] Error triggering split indexing:', e);
       throw e;

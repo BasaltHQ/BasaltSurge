@@ -119,3 +119,15 @@ test('explorer links require a recorded supported chain and keep receipt evidenc
   const ethereum = render({ activeTab: 'crypto', receipt: { ...receipt, isCrypto: true, transactionHash: '0xabc', destinationChainId: 1 } });
   assert.match(ethereum, /href="https:\/\/etherscan.io\/tx\/0xabc"/);
 });
+
+test('Thirdweb replay is available in platform actions with recovery fields and loading feedback', () => {
+  const props = { activeTab: 'reconcile', receipt: { ...receipt, wallet: '0x' + '1'.repeat(40) }, handleThirdwebReplay: noOp };
+  const html = render(props);
+  assert.match(html, /Replay Thirdweb Webhook/);
+  assert.match(html, /Thirdweb origin transaction hash/);
+  assert.match(html, /Thirdweb origin chain ID/);
+  assert.match(html, /does not charge the customer again/);
+  const loading = render({ ...props, actionLoading: { ['thirdweb-' + receipt.receiptId]: true } });
+  assert.match(loading, /Replaying Thirdweb payment/);
+  assert.doesNotMatch(render({ ...props, readOnly: true }), /Replay Thirdweb Webhook/);
+});

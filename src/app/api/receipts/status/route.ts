@@ -463,6 +463,9 @@ export async function POST(req: NextRequest) {
         resource = null;
       }
 
+      // A platform-admin replay can target a partner receipt. Keep its stored
+      // brand instead of replacing it with the container's brand.
+      if (resource?.brandKey) brandKey = resource.brandKey;
       const currentStatus = String(resource?.status || "").toLowerCase();
       const ipAddress = !isTrustedInternal
         ? resolvePersistedClientIp(resource?.ipAddress, req.headers, requestIpAddress)

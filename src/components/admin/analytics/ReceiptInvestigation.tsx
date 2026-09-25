@@ -2,7 +2,7 @@
 import { analyticsFunding, analyticsSplitRoute } from "@/lib/platform-analytics-query";
 import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   LineChart,
   Search,
@@ -209,6 +209,7 @@ export interface ReceiptInvestigationProps {
   actionFeedback: Record<string, string>;
   handleTargetedReconcile: (receiptId: string) => void | Promise<void>;
   handleStripeTelemetryCheck: (receiptId: string, sessionId: string | null) => void | Promise<void>;
+  handleThirdwebReplay?: (receipt: ReceiptInvestigationReceipt, transactionHash?: string, chainId?: number) => void | Promise<void>;
 }
 
 function ExplorerLink({ href, children, className, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
@@ -238,8 +239,11 @@ export default function ReceiptInvestigation({
   fetchReceiptLogs, expandedLogs, loadingLogs, logErrors = NO_LOG_ERRORS, logNotes = NO_LOG_ERRORS,
   refreshingLimits, refreshLimitsStatus, enrichCustomerLimits, copySuccess,
   handleCopy, actionLoading, actionFeedback, handleTargetedReconcile,
-  handleStripeTelemetryCheck, readOnly = false,
+  handleStripeTelemetryCheck, handleThirdwebReplay, readOnly = false,
 }: ReceiptInvestigationProps) {
+  const [replayHash, setReplayHash] = useState("");
+  const [replayChainId, setReplayChainId] = useState(String(r.originChainId || 8453));
+  useEffect(() => { setReplayHash(""); setReplayChainId(String(r.originChainId || 8453)); }, [r.receiptId, r.wallet, r.originChainId]);
   const siteCfg = siteConfig || r.merchantConfig || r.brandConfig || {};
   const isSettled = isAnalyticsPaidReceipt(r);
   const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase().trim();
@@ -2025,6 +2029,39 @@ export default function ReceiptInvestigation({
                <span>{actionLoading[`stripe-${r.receiptId}`] ? "Querying Stripe API..." : "Check Live Stripe Telemetry"}</span>
              </button>
            </div>
+           {handleThirdwebReplay && (
+             <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4 space-y-3.5 flex flex-col justify-between hover:border-purple-500/30 transition-all">
+               <div>
+                 <div className="flex items-center gap-2 text-xs font-bold text-white mb-1.5">
+                   <div className="w-6 h-6 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                     <RotateCcw className="w-3.5 h-3.5 text-purple-400" />
+                   </div>
+                   <span>Thirdweb Crypto Payment</span>
+                 </div>
+                 <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                   Replay a verified Thirdweb payment event to update this receipt and refresh its split transactions. This does not charge the customer again.
+                 </p>
+               </div>
+               <details className="text-xs text-muted-foreground">
+                 <summary className="cursor-pointer">Recover using an origin transaction hash</summary>
+                 <div className="mt-3 space-y-2">
+                   <label className="block">Origin transaction hash
+                     <input aria-label="Thirdweb origin transaction hash" value={replayHash} onChange={event => setReplayHash(event.target.value)} placeholder="0x?" disabled={actionLoading[`thirdweb-${r.receiptId}`]} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-xs text-white" />
+                   </label>
+                   <label className="block">Origin chain ID
+                     <input aria-label="Thirdweb origin chain ID" type="number" min="1" step="1" value={replayChainId} onChange={event => setReplayChainId(event.target.value)} disabled={actionLoading[`thirdweb-${r.receiptId}`]} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-xs text-white" />
+                   </label>
+                   <p>Use this when the original event was not saved. Thirdweb must confirm the payment and its receipt metadata.</p>
+                 </div>
+               </details>
+               <button type="button" onClick={() => handleThirdwebReplay(r, replayHash.trim() || undefined, replayHash.trim() ? Number(replayChainId) : undefined)}
+                 disabled={!r.wallet || actionLoading[`thirdweb-${r.receiptId}`] || (!!replayHash.trim() && (!/^0x[a-f0-9]{64}$/i.test(replayHash.trim()) || !Number.isSafeInteger(Number(replayChainId)) || Number(replayChainId) <= 0))}
+                 className="w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 shadow-md">
+                 <RotateCcw className={`w-3.5 h-3.5 ${actionLoading[`thirdweb-${r.receiptId}`] ? "animate-spin" : ""}`} />
+                 <span>{actionLoading[`thirdweb-${r.receiptId}`] ? "Replaying Thirdweb payment?" : "Replay Thirdweb Webhook"}</span>
+               </button>
+             </div>
+           )}
          </div>
 
          {/* Action Telemetry Output Console */}

@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/compone
 import FailureExplorer from "@/components/admin/analytics/FailureExplorer";
 import AnalyticsLoadingScreen from "@/components/admin/analytics/AnalyticsLoadingScreen";
 import StripeAuditExplorer from "@/components/admin/analytics/StripeAuditExplorer";
-import ReceiptInvestigation from "@/components/admin/analytics/ReceiptInvestigation";
+import ReceiptInvestigation, { type ReceiptInvestigationReceipt } from "@/components/admin/analytics/ReceiptInvestigation";
 import { CustomInteractiveLineChart, CustomInteractiveBarChart, type GitCommitEvent } from "@/components/admin/analytics/TrendExplorer";
 import SafeInteractiveLineChart from "@/components/admin/analytics/TreasuryExplorer";
 import { aggregateAnalyticsReceipts } from "@/lib/platform-analytics-aggregation";
@@ -1035,6 +1035,27 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
     }
   }, [wallet, fetchAnalytics, isPartner]);
 
+  const handleThirdwebReplay = useCallback(async (receipt: ReceiptInvestigationReceipt, transactionHash?: string, chainId?: number) => {
+    if (isPartner) return;
+    const key = `thirdweb-${receipt.receiptId}`;
+    setActionLoading(prev => ({ ...prev, [key]: true }));
+    setActionFeedback(prev => ({ ...prev, [receipt.receiptId]: "Verifying Thirdweb payment evidence?" }));
+    try {
+      const response = await fetch("/api/platform/thirdweb-replay", {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receiptId: receipt.receiptId, wallet: receipt.wallet, brandKey: receipt.brandKey, transactionHash, chainId }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) throw new Error(data.error || `Replay failed (HTTP ${response.status}).`);
+      setActionFeedback(prev => ({ ...prev, [receipt.receiptId]: `${data.message}${data.transactionHash ? `\nTransaction: ${data.transactionHash}` : ""}` }));
+      await fetchAnalytics();
+    } catch (error: any) {
+      setActionFeedback(prev => ({ ...prev, [receipt.receiptId]: error.message || "Thirdweb replay failed. Refresh the receipt before retrying." }));
+    } finally {
+      setActionLoading(prev => ({ ...prev, [key]: false }));
+    }
+  }, [isPartner, fetchAnalytics]);
+
   const handleStripeTelemetryCheck = useCallback(async (receiptId: string, stripeSessionId?: string | null) => {
     if (isPartner) return;
     const key = `stripe-${receiptId}`;
@@ -1587,7 +1608,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
     expandedLogs={expandedLogs} loadingLogs={loadingLogs} logErrors={logErrors} logNotes={logNotes}
     refreshingLimits={refreshingLimits} refreshLimitsStatus={refreshLimitsStatus} enrichCustomerLimits={enrichCustomerLimits}
     copySuccess={copySuccess} handleCopy={handleCopy} actionLoading={actionLoading} actionFeedback={actionFeedback}
-    handleTargetedReconcile={handleTargetedReconcile} handleStripeTelemetryCheck={handleStripeTelemetryCheck}
+    handleTargetedReconcile={handleTargetedReconcile} handleStripeTelemetryCheck={handleStripeTelemetryCheck} handleThirdwebReplay={handleThirdwebReplay}
   />;
 
   if (loading) {
