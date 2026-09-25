@@ -433,6 +433,15 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
         };
     }, [account?.address, activeWallet?.id, brand?.key, brand.accessMode, container.containerType, showSignupWizard, authCheckTrigger, pathname]);
 
+    // Resume explicit Admin navigation after an existing session, automatic
+    // login, or the sign-in modal completes the access check.
+    useEffect(() => {
+        if (authed && account?.address && pendingAdminNav) {
+            setPendingAdminNav(false);
+            router.push("/admin");
+        }
+    }, [authed, account?.address, pendingAdminNav, router]);
+
     // Broadcast login/logout so ThemeLoader can immediately apply merchant-scoped theme
     useEffect(() => {
         const w = (account?.address || "").toLowerCase();
@@ -469,7 +478,9 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
         const base: NavItem[] = [];
         if (authed && account?.address) base.push({ href: "/profile", label: tNavbar("profile"), authOnly: true });
         if (authed && account?.address) base.push({ href: "/shop", label: tNavbar("shop"), authOnly: true });
-        if (authed && account?.address) base.push({ href: "/admin", label: tNavbar("admin"), authOnly: true });
+        // Keep sign-in reachable if the wallet connected but the app session
+        // has not completed (for example, after dismissing the sign-in modal).
+        if (account?.address) base.push({ href: "/admin", label: tNavbar("admin"), authOnly: true });
         return base;
     }, [authed, account?.address, tNavbar]);
 
@@ -946,10 +957,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                                             if (it.href === "/admin" && !authed) {
                                                 e.preventDefault();
                                                 setPendingAdminNav(true);
-                                                const walletId = activeWallet?.id;
-                                                const isEmbeddedWallet = walletId === "inApp" || walletId === "embedded";
-                                                setIsSocialLogin(isEmbeddedWallet);
-                                                setShowAuthModal(true);
+                                                setAuthCheckTrigger(c => c + 1);
                                             }
                                         } catch { }
                                     }}
@@ -1273,10 +1281,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                                                 e.preventDefault();
                                                 setMobileOpen(false);
                                                 setPendingAdminNav(true);
-                                                const walletId = activeWallet?.id;
-                                                const isEmbeddedWallet = walletId === "inApp" || walletId === "embedded";
-                                                setIsSocialLogin(isEmbeddedWallet);
-                                                setShowAuthModal(true);
+                                                setAuthCheckTrigger(c => c + 1);
                                             } else {
                                                 setMobileOpen(false);
                                             }
@@ -1386,7 +1391,10 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
             <AuthModal
                 isOpen={showAuthModal}
                 isSocialLogin={isSocialLogin}
-                onClose={() => setShowAuthModal(false)}
+                onClose={() => {
+                    setShowAuthModal(false);
+                    setPendingAdminNav(false);
+                }}
                 onSuccess={() => {
                     setShowAuthModal(false);
                     setAuthed(true);
@@ -1400,12 +1408,6 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                             }).catch(() => { });
                         } catch { }
                     }
-                    try {
-                        if (pendingAdminNav) {
-                            setPendingAdminNav(false);
-                            router.push("/admin");
-                        }
-                    } catch { }
                 }}
                 onError={(error) => console.error('[Auth] Failed:', error)}
             />
@@ -1430,6 +1432,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                 }}
                 onClose={() => {
                     setShowAccessPending(false);
+                    setPendingAdminNav(false);
                     if (activeWallet) {
                         disconnect(activeWallet);
                     }

@@ -23,30 +23,41 @@ function load(file, mocks = {}, globals = {}) {
   return module.exports;
 }
 
-function routeHarness({ session = null, failure = false, status = 'approved', brand = 'partner-one' } = {}) {
+function routeHarness({ session = null, failure = false, status = 'approved', brand = 'partner-one', adminRole = null, adminBrand = 'partner-one' } = {}) {
   const queries = [];
   const profiles = [];
   let sessionRoleChecks = 0;
-  const container = { items: { query(spec) {
+  const roleReads = [];
+  const container = { item(id, partition) {
+    roleReads.push({ id, partition });
+    return { read: async () => ({ resource: id === 'admin_roles' && partition === adminBrand && adminRole
+      ? { admins: [{ wallet: approvedWallet, role: adminRole }] } : undefined }) };
+  }, items: { query(spec) {
     queries.push(spec);
     return { fetchAll: async () => {
       if (failure) throw new Error('Database unavailable');
       const wallet = spec.parameters.find(p => p.name === '@w')?.value;
-      return { resources: spec.query.includes("c.type = 'client_request'") && wallet === approvedWallet ? [{ status }] : [] };
+      return { resources: spec.query.includes("c.type = 'client_request'") && wallet === approvedWallet && status !== 'none' ? [{ status }] : [] };
     } };
   } } };
+  const cosmos = { getContainer: async (_db, _collection, options) => { profiles.push(options?.profile); return container; } };
+  const authz = load('authz-server.ts', {
+    './env': { getEnv: () => ({ ADMIN_WALLETS: [] }) },
+    '@/lib/cosmos': cosmos,
+    '@/lib/brand-config': { readBrandOverridesCached: async () => null },
+  });
   const api = load('../app/api/auth/me/route.ts', {
     'next/server': { NextResponse },
     '@/lib/auth': {
       getAuthenticatedWallet: async () => session,
       requireThirdwebAuth: async () => { sessionRoleChecks++; return { roles: ['admin'] }; },
     },
-    '@/lib/cosmos': { getContainer: async (_db, _collection, options) => { profiles.push(options?.profile); return container; } },
+    '@/lib/cosmos': cosmos,
     '@/config/brands': { getBrandKey: () => brand },
     '@/lib/merchant-team-access': { getMerchantBrandScope: () => ({ clause: 'c.brandKey = @b', parameters: [{ name: '@b', value: brand }] }) },
     '@/lib/merchant-access-status': load('merchant-access-status.ts'),
     '@/lib/brand-config': { getDynamicPartnerDomains: async () => ({}) },
-    '@/lib/authz-server': { getPlatformAdminWallets: async () => [], resolveAdminRole: async () => null },
+    '@/lib/authz-server': authz,
     '@/lib/env': { isPlatformContext: () => false },
   });
   return {
@@ -54,7 +65,8 @@ function routeHarness({ session = null, failure = false, status = 'approved', br
       const response = await api.GET({ headers: new Headers(wallet ? { 'x-wallet': wallet } : {}) });
       return { status: response.status, body: await response.json() };
     },
-    queries, profiles, get sessionRoleChecks() { return sessionRoleChecks; },
+    queries, profiles, roleReads, get sessionRoleChecks() { return sessionRoleChecks; },
+    setAdminRole(role) { adminRole = role; },
   };
 }
 
@@ -114,6 +126,47 @@ for (const status of ['pending', 'rejected', 'blocked']) {
     assert.equal(body.shopStatus, status === 'blocked' ? 'none' : status);
   });
 }
+
+for (const status of ['none', 'pending', 'rejected', 'approved']) {
+  test(`assigned partner General Admin can enter the console with ${status} merchant status`, async () => {
+    const h = routeHarness({ session: approvedWallet, status, adminRole: 'partner_admin' });
+    const result = await h.get(approvedWallet);
+    assert.equal(result.status, 200);
+    assert.equal(result.body.authed, true);
+    assert.equal(result.body.shopStatus, 'approved');
+    assert.equal(result.body.blocked, false);
+    assert.ok(result.body.roles.includes('admin'));
+    assert.ok(h.roleReads.some(read => read.partition === 'partner-one'));
+  });
+}
+
+test('partner admin approval permits login without treating a connected wallet as authenticated', async () => {
+  const { body } = await routeHarness({ status: 'pending', adminRole: 'partner_admin' }).get(approvedWallet);
+  assert.equal(body.shopStatus, 'approved');
+  assert.equal(body.authed, false);
+});
+
+test('a partner admin assignment does not grant access on another brand', async () => {
+  const { body } = await routeHarness({ status: 'pending', brand: 'partner-two', adminRole: 'partner_admin' }).get(approvedWallet);
+  assert.equal(body.shopStatus, 'pending');
+  assert.deepEqual(body.roles, []);
+});
+
+test('removing the saved admin role revokes its approval bypass on the next request', async () => {
+  const h = routeHarness({ status: 'pending', adminRole: 'partner_admin' });
+  assert.equal((await h.get(approvedWallet)).body.shopStatus, 'approved');
+  h.setAdminRole(null);
+  const { body } = await h.get(approvedWallet);
+  assert.equal(body.shopStatus, 'pending');
+  assert.deepEqual(body.roles, []);
+  assert.ok(h.profiles.every(profile => profile === 'critical'), 'authorization reads require the primary');
+});
+
+test('an explicit block still restricts an assigned partner admin', async () => {
+  const { body } = await routeHarness({ status: 'blocked', adminRole: 'partner_admin' }).get(approvedWallet);
+  assert.equal(body.blocked, true);
+  assert.notEqual(body.shopStatus, 'approved');
+});
 
 test('approval reads use primary consistency and retain the partner brand filter', async () => {
   const h = routeHarness({ brand: 'partner-two' });
