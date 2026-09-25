@@ -20,7 +20,7 @@ function load(file, mocks, globals) {
 }
 
 function harness(options = {}) {
-  const calls = [], audit = [], pending = [], indexed = [];
+  const calls = [], audit = [], pending = [], indexed = [], providerRequests = [];
   let providerReads = 0, reads = 0;
   const config = { splitAddress: wallet, splitAddressCrypto: split, splitConfigCrypto: { platformBps: 50 }, splitOverrides: { crypto: true } };
   const receipt = { id: 'receipt:R1', receiptId: 'R1', wallet, brandKey: 'test-brand', status: 'pending', splitRoutingSnapshot: config, ...options.receipt };
@@ -34,7 +34,7 @@ function harness(options = {}) {
   };
   const mocks = {
     'next/server': { after: fn => pending.push(fn), NextResponse: { json: (body, init) => new Response(JSON.stringify(body), init) } },
-    'thirdweb': { Bridge: { status: async () => { providerReads++; return data; } } },
+    'thirdweb': { Bridge: { status: async args => { providerReads++; providerRequests.push(args); return options.providerData?.[args.transactionHash] || data; } } },
     '@/lib/auth': { requireThirdwebAuth: async () => ({ roles: options.nonAdmin ? [] : ['admin'] }) },
     '@/lib/partner-analytics-access': { requirePlatformAnalyticsAccess: async () => {
       if (options.unauthorized) throw Object.assign(new Error('Unauthorized'), { status: 401 });
@@ -52,7 +52,7 @@ function harness(options = {}) {
     calls.push({ url, headers: init.headers, body: JSON.parse(init.body) });
     return new Response(JSON.stringify({ ok: true }), { status: options.writeFails ? 503 : 200 });
   } });
-  return { calls, audit, pending, indexed, get reads() { return reads; }, get providerReads() { return providerReads; }, async post(extra = {}) {
+  return { calls, audit, pending, indexed, providerRequests, get reads() { return reads; }, get providerReads() { return providerReads; }, async post(extra = {}) {
     const response = await route.POST({ method: 'POST', headers: new Headers(), nextUrl: new URL('https://example.test/api/platform/thirdweb-replay'),
       json: async () => ({ receiptId: 'R1', wallet, brandKey: 'test-brand', ...extra }) });
     return { status: response.status, body: await response.json() };
@@ -139,4 +139,74 @@ test('legacy stored events can be replayed and ambiguous payments require explic
   const scoped = harness({ data: { status: 'PENDING' }, extraEvents: [{ ...legacy, brandKey: 'other-brand' }] });
   assert.equal((await scoped.post()).status, 404);
   assert.equal(scoped.calls.length, 0);
+});
+
+test('missing webhook automatically recovers using receipt metadata or saved browser hints', async () => {
+  for (const receipt of [
+    { transactionHash: hash, destinationChainId: 8453 },
+    { thirdwebMetadata: { originChainId: 42161, transactions: [{ transactionHash: hash, chainId: 42161 }] } },
+    { thirdwebPaymentReport: { verified: false, transactions: [{ transactionHash: hash, chainId: 8453 }] } },
+  ]) {
+    const h = harness({ noEvents: true, receipt });
+    const result = await h.post();
+    assert.equal(result.status, 200);
+    assert.equal(result.body.source, 'thirdweb_status_from_receipt');
+    assert.equal(h.providerReads, 1);
+    assert.equal(h.calls[0].body.status, 'paid');
+    assert.equal(h.providerRequests[0].chainId, receipt.thirdwebMetadata ? 42161 : 8453);
+  }
+});
+
+test('automatic hints never replace provider verification or permit a mismatched receipt', async () => {
+  for (const data of [{ status: 'NOT_FOUND' }, { status: 'PENDING' }, { purchaseData: { receiptId: 'wrong' } }, { receiver: wallet }, { destinationToken: { chainId: 1 } }, { transactions: [] }]) {
+    const h = harness({ noEvents: true, receipt: { transactionHash: hash }, data });
+    assert.equal((await h.post()).status, 409);
+    assert.equal(h.calls.length, 0);
+  }
+});
+
+test('automatic recovery skips stale attempts and checks the recorded origin chain first', async () => {
+  const stale = '0x' + 'b'.repeat(64);
+  const h = harness({ noEvents: true, receipt: { thirdwebMetadata: { originChainId: 42161,
+    transactions: [{ transactionHash: hash, chainId: 8453 }, { transactionHash: stale, chainId: 42161 }] } },
+    providerData: { [stale]: { status: 'NOT_FOUND' } } });
+  assert.equal((await h.post()).status, 200);
+  assert.equal(h.providerRequests[0].transactionHash, stale);
+  assert.equal(h.providerRequests[0].chainId, 42161);
+  assert.equal(h.providerReads, 2);
+});
+
+
+test('replay distinguishes missing metadata from a conflicting receipt reference', async () => {
+  const absent = harness({ noEvents: true, data: { purchaseData: undefined } });
+  const missing = await absent.post({ transactionHash: hash, chainId: 8453 });
+  assert.equal(missing.status, 409);
+  assert.match(missing.body.error, /no receipt ID/);
+  assert.equal(absent.calls.length, 0);
+  for (const purchaseData of [{ receiptId: 'R2' }, { receiptId: 'R1', productId: 'portal:R2' }]) {
+    const h = harness({ noEvents: true, data: { purchaseData } });
+    const mismatch = await h.post({ transactionHash: hash, chainId: 8453 });
+    assert.equal(mismatch.status, 409);
+    assert.match(mismatch.body.error, /R2/);
+    assert.equal(h.calls.length, 0);
+  }
+});
+
+test('replay accepts explicit receipt references in serialized provider metadata', async () => {
+  for (const purchaseData of [JSON.stringify({ receiptId: 'receipt:R1' }), { meta: JSON.stringify({ receiptId: 'R1' }) }]) {
+    const h = harness({ noEvents: true, data: { purchaseData } });
+    assert.equal((await h.post({ transactionHash: hash, chainId: 8453 })).status, 200);
+  }
+});
+
+test('status without purchaseData can use a saved verified binding for the same payment and transaction', async () => {
+  const provider = { status: 'COMPLETED', paymentId: 'payment-1', receiver: split,
+    destinationToken: { chainId: 8453 }, transactions: [{ chainId: 8453, transactionHash: hash }] };
+  const h = harness({ providerData: { [hash]: provider } });
+  assert.equal((await h.post({ transactionHash: hash, chainId: 8453 })).status, 200);
+  for (const mismatch of [{ paymentId: 'another' }, { transactions: [{ chainId: 8453, transactionHash: '0x' + 'b'.repeat(64) }] }]) {
+    const rejected = harness({ providerData: { [hash]: { ...provider, ...mismatch } } });
+    assert.equal((await rejected.post({ transactionHash: hash, chainId: 8453 })).status, 409);
+    assert.equal(rejected.calls.length, 0);
+  }
 });

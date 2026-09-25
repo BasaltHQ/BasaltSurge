@@ -1,3 +1,4 @@
+import { thirdwebRecoveryTransactions } from "@/lib/thirdweb/receipt-recovery-hints";
 import { receiptWebhookFailure } from "@/lib/receipt-webhook-failure";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
@@ -423,6 +424,21 @@ export async function POST(req: NextRequest) {
             { ok: false, error: "receipt_not_found" },
             { status: 404, headers: { "x-correlation-id": correlationId } }
           );
+        }
+
+        if (!isTrustedInternal && isAuthoritativeStatus && isCryptoPayment && !stripeSessionId) {
+          const recoveryTransactions = thirdwebRecoveryTransactions(body, Number(process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || 8453));
+          if (recoveryTransactions.length) {
+            // Keep browser evidence separate from canonical settlement fields.
+            // Replay must independently verify these hints with Thirdweb.
+            await container.item(id, wallet).patch([{
+              op: "set", path: "/thirdwebPaymentReport", value: {
+                source: "browser", verified: false, reportedAt: ts,
+                transactions: recoveryTransactions,
+                ...(typeof paymentId === "string" ? { paymentId: paymentId.slice(0, 200) } : {}),
+              },
+            }] as any);
+          }
         }
 
         try {

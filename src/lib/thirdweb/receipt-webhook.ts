@@ -1,39 +1,37 @@
 import { getReceiptStatusInternalHeaders } from "@/lib/receipt-status-policy";
 
-// Helper to robustly extract receiptId from Thirdweb purchaseData, metadata, or data payloads
+function metadataObject(value: unknown): any {
+  if (typeof value === "string") {
+    try { value = JSON.parse(value); } catch { return null; }
+  }
+  return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+
+/** Read explicit receipt references, including serialized provider metadata. */
+export function thirdwebReceiptReferences(purchaseData: any, data?: any): string[] {
+  const ids = new Set<string>();
+  const add = (value: unknown) => {
+    if (typeof value === "string" && value.trim()) ids.add(value.trim().replace(/^receipt:/, ""));
+  };
+  const purchase = metadataObject(purchaseData);
+  add(purchase?.receiptId);
+  add(metadataObject(purchase?.meta)?.receiptId);
+  const product = typeof purchase?.productId === "string" ? purchase.productId.trim() : "";
+  if (product.startsWith("portal:")) add(product.slice(7));
+  else if (/^R-\d+/i.test(product)) add(product);
+  add(data?.receiptId);
+  add(metadataObject(data?.metadata)?.receiptId);
+  add(metadataObject(data?.clientMetadata)?.receiptId);
+  return [...ids];
+}
+
 export function extractReceiptIdFromPurchaseData(purchaseData: any, data?: any, strict = false): string | null {
-  if (purchaseData) {
-    if (typeof purchaseData.receiptId === "string" && purchaseData.receiptId.trim()) {
-      return purchaseData.receiptId.trim().replace(/^receipt:/, "");
-    }
-    if (typeof purchaseData.productId === "string" && purchaseData.productId.trim()) {
-      const raw = purchaseData.productId.trim();
-      if (raw.startsWith("portal:")) {
-        return raw.slice(7).replace(/^receipt:/, "");
-      }
-      if (/^R-\d+/i.test(raw)) {
-        return raw.replace(/^receipt:/, "");
-      }
-    }
-    if (typeof purchaseData.meta?.receiptId === "string" && purchaseData.meta.receiptId.trim()) {
-      return purchaseData.meta.receiptId.trim().replace(/^receipt:/, "");
-    }
-  }
-  if (data) {
-    if (typeof data.receiptId === "string" && data.receiptId.trim()) {
-      return data.receiptId.trim().replace(/^receipt:/, "");
-    }
-    if (typeof data.metadata?.receiptId === "string" && data.metadata.receiptId.trim()) {
-      return data.metadata.receiptId.trim().replace(/^receipt:/, "");
-    }
-    if (typeof data.clientMetadata?.receiptId === "string" && data.clientMetadata.receiptId.trim()) {
-      return data.clientMetadata.receiptId.trim().replace(/^receipt:/, "");
-    }
-  }
-  if (strict) return null;
+  const ids = thirdwebReceiptReferences(purchaseData, data);
+  if (ids.length === 1) return ids[0];
+  // Conflicting explicit references must never fall back to a loose text match.
+  if (ids.length > 1 || strict) return null;
   try {
-    const str = JSON.stringify({ purchaseData, data });
-    const match = str.match(/R-\d{6,}/i);
+    const match = JSON.stringify({ purchaseData, data }).match(/R-\d{6,}/i);
     if (match) return match[0].toUpperCase();
   } catch {}
   return null;

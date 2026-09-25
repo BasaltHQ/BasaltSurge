@@ -2023,39 +2023,27 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [methodSplits, setMethodSplits] = useState<any>({});
   const [feeMinusEnabled, setFeeMinusEnabled] = useState<boolean>(false);
 
-  const effectiveBasePlatformFeePct = useMemo(() => {
-    // Keep fee calculation on the same inverted split mapping as settlement.
-    const isCredit = detectedCardFunding === "credit";
-    const activeSplitConfig = resolveSettlementSplitConfig<any>({
-      ...methodSplits,
-      funding: detectedCardFunding,
-      splitConfig: splitConfig && typeof splitConfig === "object" ? splitConfig : null,
-      splitConfigCredit: splitConfigCredit && typeof splitConfigCredit === "object" ? splitConfigCredit : null,
-    });
+  const [receipt, setReceipt] = useState<Receipt | null>(null);
 
-    const partnerBps = activeSplitConfig && typeof activeSplitConfig.partnerBps === "number"
-      ? activeSplitConfig.partnerBps
-      : 0;
-
-    const basePresentedBps = isCredit
-      ? (creditPresentedFeeBps !== undefined ? creditPresentedFeeBps : (presentedFeeBps !== undefined ? presentedFeeBps : undefined))
-      : (presentedFeeBps !== undefined ? presentedFeeBps : undefined);
-
-    if (basePresentedBps !== undefined) {
-      return (basePresentedBps + partnerBps) / 100;
+  // Direct Crypto Pathway: activated by the receipt or an explicit crypto checkout URL
+  const isCryptoDirect = useMemo(() => {
+    const queryCrypto = searchParams?.get("crypto") === "true" || searchParams?.get("checkout") === "crypto" || searchParams?.get("checkout") === "thirdweb";
+    if (queryCrypto) return true;
+    if (typeof window !== "undefined") {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("crypto") === "true" || sp.get("checkout") === "crypto" || sp.get("checkout") === "thirdweb") return true;
     }
+    return Boolean(
+      (receipt as any)?.crypto === true ||
+      String((receipt as any)?.crypto).toLowerCase() === "true" ||
+      (receipt as any)?.paymentMethod === "crypto"
+    );
+  }, [searchParams, receipt]);
 
-    // Fallback: If basePresentedBps is not configured, fall back to split components
-    if (activeSplitConfig && typeof activeSplitConfig.platformBps === "number") {
-      const platformBps = activeSplitConfig.platformBps;
-      const agentBps = Array.isArray(activeSplitConfig.agents)
-        ? activeSplitConfig.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
-        : 0;
-      return (platformBps + partnerBps + agentBps) / 100;
-    }
-
-    return (50 + partnerBps) / 100; // Platform default of 50 BPS (0.5%) + partner
-  }, [detectedCardFunding, splitConfig, splitConfigCredit, methodSplits, presentedFeeBps, creditPresentedFeeBps]);
+  const effectiveBasePlatformFeePct = useMemo(() => resolveFundingPlatformFeePct(
+    isCryptoDirect ? "crypto" : detectedCardFunding,
+    { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps },
+  ), [isCryptoDirect, detectedCardFunding, splitConfig, splitConfigCredit, methodSplits, presentedFeeBps, creditPresentedFeeBps]);
 
   // Credit fee percentage calculation (presented fee + partner + merchant processing fee)
   // Used for the microtext footnote on the first pane before a card is scanned.
@@ -2125,7 +2113,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [detectedCardFunding, splitConfig, splitConfigCredit, methodSplits, presentedFeeBps, creditPresentedFeeBps]);
 
   // Dynamic receipt
-  const [receipt, setReceipt] = useState<Receipt | null>(null);
   const [paymentConfirmed, setPaymentConfirmed] = useState<{ txHash: string; amount: number; token: string; funding?: string } | null>(null);
   const [clientCountry, setClientCountry] = useState<string>("US");
   const [loadingReceipt, setLoadingReceipt] = useState(false);
@@ -2851,9 +2838,9 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const hasPresentedBps = detectedCardFunding === "credit"
       ? (creditPresentedFeeBps ?? presentedFeeBps) !== undefined
       : presentedFeeBps !== undefined;
-    const stripePct = (feeMinusEnabled || hasPresentedBps) ? 0 : stripeFeePct;
+    const stripePct = (isCryptoDirect || feeMinusEnabled || hasPresentedBps) ? 0 : stripeFeePct;
     return Math.max(0, effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct);
-  }, [effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps, detectedCardFunding]);
+  }, [isCryptoDirect, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps, detectedCardFunding]);
 
   const processingFeeUsd = useMemo(() => {
     return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * (activeFeePct / 100)).toFixed(2);
@@ -3836,21 +3823,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     receipt?.shippingAddress?.country,
     clientCountry,
   ), [receipt?.billingAddress?.country, receipt?.shippingAddress?.country, clientCountry]);
-
-  // Direct Crypto Pathway: activated when explicitly unsupported region, receipt.crypto=true, or query param crypto=true
-  const isCryptoDirect = useMemo(() => {
-    const queryCrypto = searchParams?.get("crypto") === "true" || searchParams?.get("checkout") === "crypto" || searchParams?.get("checkout") === "thirdweb";
-    if (queryCrypto) return true;
-    if (typeof window !== "undefined") {
-      const sp = new URLSearchParams(window.location.search);
-      if (sp.get("crypto") === "true" || sp.get("checkout") === "crypto" || sp.get("checkout") === "thirdweb") return true;
-    }
-    return Boolean(
-      (receipt as any)?.crypto === true ||
-      String((receipt as any)?.crypto).toLowerCase() === "true" ||
-      (receipt as any)?.paymentMethod === "crypto"
-    );
-  }, [searchParams, receipt]);
 
   const isV2Active = useMemo(() => {
     if (isExplicitlyUnsupportedRegion || isCryptoDirect) return false;
@@ -7732,7 +7704,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                                   itemsSubtotalUsd,
                                                   taxUsd,
                                                   processingFeeUsd,
-                                                  feePct: (resolveFundingPlatformFeePct("crypto", { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps: creditPresentedFeeBps ?? presentedFeeBps }) + Number(processingFeePct || 0)),
+                                                  feePct: (resolveFundingPlatformFeePct("crypto", { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps }) + Number(processingFeePct || 0)),
                                                   shipping: {
                                                     name: shipName,
                                                     method: shipMethod,
@@ -7847,7 +7819,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                             itemsSubtotalUsd,
                                             taxUsd,
                                             processingFeeUsd,
-                                            feePct: (resolveFundingPlatformFeePct("crypto", { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps: creditPresentedFeeBps ?? presentedFeeBps }) + Number(processingFeePct || 0)),
+                                            feePct: (resolveFundingPlatformFeePct("crypto", { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps }) + Number(processingFeePct || 0)),
                                           },
                                         }}
                                         onSuccess={async (result: any) => {
@@ -8493,7 +8465,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                               itemsSubtotalUsd,
                                               taxUsd,
                                               processingFeeUsd,
-                                              feePct: (resolveFundingPlatformFeePct("crypto", { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps: creditPresentedFeeBps ?? presentedFeeBps }) + Number(processingFeePct || 0)),
+                                              feePct: (resolveFundingPlatformFeePct("crypto", { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps }) + Number(processingFeePct || 0)),
                                               shipping: {
                                                 name: shipName,
                                                 method: shipMethod,
@@ -8605,7 +8577,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         itemsSubtotalUsd,
                                         taxUsd,
                                         processingFeeUsd: processingFeeUsd,
-                                        feePct: (resolveFundingPlatformFeePct("crypto", { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps: creditPresentedFeeBps ?? presentedFeeBps }) + Number(processingFeePct || 0)),
+                                        feePct: (resolveFundingPlatformFeePct("crypto", { ...methodSplits, splitConfig, splitConfigCredit, presentedFeeBps, creditPresentedFeeBps }) + Number(processingFeePct || 0)),
                                         employeeId: receipt?.employeeId,
                                         sessionId: receipt?.sessionId,
                                       },

@@ -1,5 +1,7 @@
 import { discoverSplitContracts, receiptRoutingFields, resolveSettlementSplitAddress } from "@/lib/payment-split-routing";
-import { extractReceiptIdFromPurchaseData, postVerifiedReceiptStatus } from "@/lib/thirdweb/receipt-webhook";
+import { extractReceiptIdFromPurchaseData, postVerifiedReceiptStatus, thirdwebReceiptReferences } from "@/lib/thirdweb/receipt-webhook";
+
+import { thirdwebRecoveryTransactions } from "@/lib/thirdweb/receipt-recovery-hints";
 
 const fail = (message: string, status = 409): never => { throw Object.assign(new Error(message), { status }); };
 const hashPattern = /^0x[a-f0-9]{64}$/i;
@@ -19,7 +21,7 @@ export async function replayThirdwebReceipt({ container, receipt, siteConfig, or
 
   // Only these documents are written by the signature-verified webhook handler.
   const { resources } = await container.items.query({
-    query: "SELECT * FROM c WHERE c.type IN ('payment_event_thirdweb', 'payment_event_thirdweb_unmapped') AND LOWER(c.brandKey)=@brand AND (c.receiptId=@id OR c.purchaseData.receiptId=@id OR c.purchaseData.receiptId=@prefixed OR c.purchaseData.meta.receiptId=@id OR c.purchaseData.productId=@product OR c.purchaseData.productId=@prefixedProduct)",
+    query: "SELECT * FROM c WHERE c.type IN ('payment_event_thirdweb', 'payment_event_thirdweb_unmapped') AND LOWER(c.brandKey)=@brand AND (c.receiptId=@id OR c.receiptId=@prefixed OR c.verifiedWebhook.data.purchaseData.receiptId=@id OR c.verifiedWebhook.data.purchaseData.receiptId=@prefixed OR c.purchaseData.receiptId=@id OR c.purchaseData.receiptId=@prefixed OR c.purchaseData.meta.receiptId=@id OR c.purchaseData.productId=@product OR c.purchaseData.productId=@prefixedProduct)",
     parameters: [{ name: "@brand", value: brandKey }, { name: "@id", value: receiptId }, { name: "@prefixed", value: `receipt:${receiptId}` }, { name: "@product", value: `portal:${receiptId}` }, { name: "@prefixedProduct", value: `portal:receipt:${receiptId}` }],
   }).fetchAll();
   const candidates = (resources || []).map((event: any) => event.verifiedWebhook?.data || event)
@@ -38,13 +40,43 @@ export async function replayThirdwebReceipt({ container, receipt, siteConfig, or
     data = await lookupStatus(transactionHash, Number(chainId));
     source = "thirdweb_status";
     if (data?.status !== "COMPLETED") fail(`Thirdweb reports ${data?.status || "unknown"}; the receipt was not changed.`);
-    if (extractReceiptIdFromPurchaseData(data.purchaseData, data, true) !== receiptId) fail("Thirdweb payment metadata does not match this receipt.");
+    const references = thirdwebReceiptReferences(data.purchaseData, data);
+    if (references.length && (references.length !== 1 || references[0] !== receiptId)) {
+      fail(`Thirdweb identifies this payment with receipt ${references.join(", ").slice(0, 240)}, not ${receiptId}. Verify the selected receipt and origin transaction hash; no receipt was changed.`);
+    }
+    if (!references.length) {
+      // Status can omit optional purchaseData. A saved signature-verified event
+      // may still bind the SAME payment and destination transaction to the receipt.
+      const boundEvent = candidates.find((event: any) =>
+        data.paymentId && (event.paymentId || event.transactionId) === data.paymentId && matchesReceiver(event) &&
+        Array.isArray(event.transactions) && Array.isArray(data.transactions) &&
+        event.transactions.some((tx: any) => Number(tx.chainId) === Number(receipt.destinationChainId || expectedChainId) &&
+          hashPattern.test(tx.transactionHash || "") && data.transactions.some((current: any) =>
+            Number(current.chainId) === Number(tx.chainId) && String(current.transactionHash).toLowerCase() === tx.transactionHash.toLowerCase())));
+      if (!boundEvent) fail("Thirdweb reports a completed payment but returned no receipt ID in its metadata, and no saved verified webhook links this payment to the selected receipt. A receipt match cannot be verified from this transaction hash alone; no receipt was changed.");
+    }
   } else {
     const matching = candidates.filter(matchesReceiver);
     const payments = new Set(matching.map((event: any) => event.paymentId || event.transactionId || JSON.stringify(event.transactions)));
     if (payments.size > 1) fail("Multiple completed payments match. Enter the origin transaction hash to select one.");
     data = matching[0];
-    if (!data) fail("No completed Thirdweb webhook was saved for this receipt. Enter the origin transaction hash and chain ID to verify it with Thirdweb.", 404);
+    if (!data) {
+      const hints = thirdwebRecoveryTransactions(receipt, expectedChainId);
+      const verified = new Map<string, any>();
+      for (const hint of hints) {
+        const result = await lookupStatus(hint.transactionHash, hint.chainId);
+        if (result?.status !== "COMPLETED" || extractReceiptIdFromPurchaseData(result.purchaseData, result, true) !== receiptId || !matchesReceiver(result)) continue;
+        const destinationChain = Number(result.destinationToken?.chainId || result.destinationChainId || expectedChainId);
+        if (destinationChain !== Number(receipt.destinationChainId || expectedChainId)) continue;
+        if (!Array.isArray(result.transactions) || !result.transactions.some((tx: any) => Number(tx.chainId) === destinationChain && hashPattern.test(tx.transactionHash || ""))) continue;
+        verified.set(result.paymentId || JSON.stringify(result.transactions), result);
+      }
+      if (verified.size > 1) fail("Multiple completed payments match. Enter the origin transaction hash to select one.");
+      data = [...verified.values()][0];
+      if (data) source = "thirdweb_status_from_receipt";
+      else if (hints.length) fail("The saved transaction details did not resolve to a completed Thirdweb payment for this receipt. Enter the origin transaction hash and chain ID from the paying wallet.");
+      else fail("No verified event or saved transaction hash is available for this older receipt. Open 'Recover using an origin transaction hash' and enter the transaction hash and chain ID from the paying wallet.", 404);
+    }
   }
   if (!matchesReceiver(data)) fail("Thirdweb payment receiver does not match this receipt's split contract.");
   const transactions = Array.isArray(data.transactions) ? data.transactions : [];

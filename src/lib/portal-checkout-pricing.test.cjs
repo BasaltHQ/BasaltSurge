@@ -35,7 +35,7 @@ function portalCalculation(name, values) {
   assert.ok(callback, `Portal calculation ${name} must exist`);
   const compiled = ts.transpileModule(`module.exports = (${callback.getText(source)});`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(compiled, { module, ...values, resolveFundingOnrampAmount });
+  vm.runInNewContext(compiled, { module, ...values, resolveFundingOnrampAmount, resolveFundingPlatformFeePct });
   return module.exports;
 }
 
@@ -145,4 +145,46 @@ test("175 BPS debit allocation quotes 4 percent and distributes the onramp amoun
   assert.equal(allocation.merchantBps, 9825);
   assert.equal(+(destination * allocation.merchantBps / 10000).toFixed(2), 99.93);
   assert.equal(allocation.merchantBps + allocation.platformBps, 10000);
+});
+
+
+test("crypto portal prices the routed allocation without Debit or Credit presented fees", () => {
+  const methodSplits = { splitAddressCrypto: `0x${"5".repeat(40)}`, splitConfigCrypto: { platformBps: 50, partnerBps: 25, agents: [{ bps: 25 }] }, splitOverrides: { crypto: true } };
+  for (const detectedCardFunding of [null, "debit", "credit", "us_bank_account"]) {
+    const values = { ...config, processingFeePct: 0.25, methodSplits, isCryptoDirect: true, detectedCardFunding,
+      presentedFeeBps: 400, creditPresentedFeeBps: 500, stripeFeePct: 2.25, feeMinusEnabled: false };
+    const effectiveBasePlatformFeePct = portalCalculation("effectiveBasePlatformFeePct", values)();
+    assert.equal(effectiveBasePlatformFeePct, 1);
+    const activeFeePct = portalCalculation("activeFeePct", { ...values, effectiveBasePlatformFeePct })();
+    assert.equal(activeFeePct, 1.25);
+    const processingFeeUsd = portalCalculation("processingFeeUsd", { activeFeePct, itemsSubtotalUsd: 100, taxUsd: 10, tipUsd: 5, shippingCostUsd: 5 })();
+    assert.equal(processingFeeUsd, 1.5);
+    const totalUsd = portalCalculation("totalUsd", { receipt: {}, feeMinusEnabled: false, processingFeeUsd, itemsSubtotalUsd: 100, taxUsd: 10, tipUsd: 5, shippingCostUsd: 5 })();
+    assert.equal(totalUsd, 121.5);
+    const receipt = recalculateReceiptForCardFunding({ totalUsd: 120, tipAmount: 5, lineItems: [
+      { label: "Item", priceUsd: 100 }, { label: "Tax", priceUsd: 10 }, { label: "Gratuity", priceUsd: 5 }, { label: "Shipping", priceUsd: 5 },
+    ] }, "crypto", { ...values, ...methodSplits });
+    assert.equal(receipt.totalUsd, totalUsd);
+    assert.equal(recalculateReceiptForCardFunding(receipt, "crypto", { ...values, ...methodSplits }).totalUsd, totalUsd);
+  }
+});
+
+test("crypto inherits Credit allocation until its split is active and supports zero fees", () => {
+  const method = { ...config, presentedFeeBps: 400, creditPresentedFeeBps: 500, splitAddressCrypto: `0x${"5".repeat(40)}`,
+    splitConfigCrypto: { platformBps: 0, partnerBps: 0, agents: [] }, splitOverrides: { crypto: false } };
+  assert.equal(resolveFundingPlatformFeePct("crypto", method), 3.5);
+  assert.equal(resolveFundingPlatformFeePct("crypto", { ...method, splitOverrides: { crypto: true } }), 0);
+  assert.equal(resolveFundingPlatformFeePct("crypto", { ...method, splitOverrides: { crypto: true }, splitAddressCrypto: "" }), 3.5);
+  const values = { ...config, methodSplits: {}, isCryptoDirect: false, detectedCardFunding: "debit", presentedFeeBps: undefined, creditPresentedFeeBps: undefined, stripeFeePct: 2.25, feeMinusEnabled: false, processingFeePct: 0 };
+  const effectiveBasePlatformFeePct = portalCalculation("effectiveBasePlatformFeePct", values)();
+  assert.equal(portalCalculation("activeFeePct", { ...values, effectiveBasePlatformFeePct })(), 4);
+});
+
+test("crypto fee-minus preserves the original customer total when allocation changes", () => {
+  const input = { totalUsd: 110, tipAmount: 10, lineItems: [
+    { label: "Order", priceUsd: 96 }, { label: "Processing Fee", priceUsd: 4 }, { label: "Gratuity", priceUsd: 10 },
+  ] };
+  const result = recalculateReceiptForCardFunding(input, "crypto", { ...config, feeMinusEnabled: true, presentedFeeBps: 400 });
+  assert.equal(result.totalUsd, 110);
+  assert.equal(recalculateReceiptForCardFunding(result, "crypto", { ...config, feeMinusEnabled: true }).totalUsd, 110);
 });

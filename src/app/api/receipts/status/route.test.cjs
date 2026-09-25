@@ -64,6 +64,7 @@ function harness(receiptOverrides = {}, { reserveBeforeFirstPatch = false, attac
     '@/lib/checkout-flow-tracking': { appendAccordionStepTransition: value => value, normalizeAccordionStepTransition: () => null },
     '@/lib/request-client-ip': { resolvePersistedClientIp: () => null },
     '@/lib/receipt-customer-email': customerEmail,
+    '@/lib/thirdweb/receipt-recovery-hints': loadCustomerEmailModule('thirdweb/receipt-recovery-hints.ts'),
   };
 
   const filename = path.join(__dirname, 'route.ts');
@@ -168,4 +169,34 @@ test('browser-reported failure stays telemetry and cannot send an authoritative 
   assert.equal(h.receipt.status, 'pending');
   assert.equal(h.receipt.checkoutStatus, 'client_reported_failed');
   assert.equal(h.webhookCalls.length, 0);
+});
+
+test('browser Crypto completion retains bounded unverified recovery hints without marking paid', async () => {
+  const h = harness();
+  const hash = '0x' + 'a'.repeat(64);
+  const result = await h.post('paid', undefined, { txHash: hash, isCrypto: true, paymentId: 'payment-1',
+    originChainId: 42161, destinationChainId: 8453,
+    transactions: [{ transactionHash: hash, chainId: 42161 }, { transactionHash: 'not-a-hash', chainId: 1 }] });
+  assert.equal(result.status, 200);
+  assert.equal(h.receipt.status, 'pending');
+  assert.equal(h.receipt.transactionHash, undefined);
+  assert.equal(h.receipt.paymentId, undefined);
+  assert.equal(h.receipt.thirdwebPaymentReport.verified, false);
+  assert.equal(h.receipt.thirdwebPaymentReport.paymentId, 'payment-1');
+  assert.equal(h.receipt.thirdwebPaymentReport.transactions[0].chainId, 42161);
+  assert.equal(h.receipt.thirdwebPaymentReport.transactions[0].transactionHash, hash);
+  assert.equal(h.webhookCalls.length, 0);
+});
+
+test('a same-chain browser hash is retained but malformed reports and Stripe telemetry are not', async () => {
+  const h = harness();
+  const hash = '0x' + 'b'.repeat(64);
+  await h.post('paid', undefined, { txHash: hash, isCrypto: true });
+  assert.equal(h.receipt.thirdwebPaymentReport.transactions[0].chainId, 8453);
+  assert.equal(h.receipt.thirdwebPaymentReport.transactions[0].transactionHash, hash);
+  await h.post('paid', undefined, { txHash: 'bad', isCrypto: true });
+  assert.equal(h.receipt.thirdwebPaymentReport.transactions[0].transactionHash, hash);
+  const stripe = harness();
+  await stripe.post('paid', undefined, { txHash: hash, stripeSessionId: 'cos_1' });
+  assert.equal(stripe.receipt.thirdwebPaymentReport, undefined);
 });

@@ -1,4 +1,4 @@
-import { resolveSettlementSplitConfig } from "./payment-split-routing";
+import { normalizeSettlementFunding, resolveSettlementSplitConfig } from "./payment-split-routing";
 
 type PricingConfig = {
   splitAddressAch?: string;
@@ -17,7 +17,10 @@ type PricingConfig = {
 export function resolveFundingPlatformFeePct(funding: unknown, config: PricingConfig): number {
   const split = resolveSettlementSplitConfig({ ...config, funding, splitConfig: config.splitConfig, splitConfigCredit: config.splitConfigCredit });
   const partner = typeof split?.partnerBps === "number" ? split.partnerBps : 0;
-  const presented = funding === "credit" ? (config.creditPresentedFeeBps ?? config.presentedFeeBps) : config.presentedFeeBps;
+  // Card presented fees may already include the processor charge. Crypto uses
+  // the allocation of its routed contract, including when it inherits Credit.
+  const presented = normalizeSettlementFunding(funding) === "crypto" ? undefined
+    : funding === "credit" ? (config.creditPresentedFeeBps ?? config.presentedFeeBps) : config.presentedFeeBps;
   if (presented !== undefined) return (presented + partner) / 100;
   if (typeof split?.platformBps === "number") {
     const agents = Array.isArray(split.agents) ? split.agents.reduce((sum: number, agent: any) => sum + (Number(agent.bps) || 0), 0) : 0;

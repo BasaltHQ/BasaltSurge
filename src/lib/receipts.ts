@@ -1,3 +1,4 @@
+import { resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
 // Shared helpers for constructing receipt endpoints and fetch options
 // Ensures TEST receipts include merchant context so branding/themes load consistently.
 
@@ -91,13 +92,17 @@ export function recalculateReceiptForCardFunding(
   });
 
   // Resolve basePresentedBps to determine the presented fee component
-  const basePresentedBps = isCredit
+  const basePresentedBps = detectedCardFunding === "crypto" ? undefined : isCredit
     ? (brandConfigDoc?.creditPresentedFeeBps ?? siteConfig.creditPresentedFeeBps ?? brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps)
     : (brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps);
 
   const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
 
-  if (basePresentedBps !== undefined) {
+  if (detectedCardFunding === "crypto") {
+    basePlatformFeePct = resolveFundingPlatformFeePct("crypto", {
+      ...receiptRoutingFields(receipt, siteConfig), splitConfig: splitCfg,
+    });
+  } else if (basePresentedBps !== undefined) {
     basePlatformFeePct = (basePresentedBps + partnerBps) / 100;
   } else if (splitCfg && typeof splitCfg === "object") {
     const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
