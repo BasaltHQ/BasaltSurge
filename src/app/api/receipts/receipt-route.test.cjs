@@ -45,7 +45,8 @@ test('receipt reload returns the canonical Step 1 customerEmail', async () => {
         const load = id => {
           if (mocks[id]) return mocks[id];
           const child = { exports: {} };
-          vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../../../lib', id.slice('@/lib/'.length) + '.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { module: child, exports: child.exports, require: load });
+          const helperPath = id.startsWith('@/lib/') ? id.slice('@/lib/'.length) : id;
+          vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../../../lib', helperPath + '.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { module: child, exports: child.exports, require: load });
           return child.exports;
         };
         vm.runInNewContext(code, { module: helper, exports: helper.exports, require: load });

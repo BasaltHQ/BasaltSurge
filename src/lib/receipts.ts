@@ -1,4 +1,4 @@
-import { resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
 // Shared helpers for constructing receipt endpoints and fetch options
 // Ensures TEST receipts include merchant context so branding/themes load consistently.
 
@@ -92,14 +92,14 @@ export function recalculateReceiptForCardFunding(
   });
 
   // Resolve basePresentedBps to determine the presented fee component
-  const basePresentedBps = detectedCardFunding === "crypto" ? undefined : isCredit
+  const basePresentedBps = detectedCardFunding === "crypto" || detectedCardFunding === "us_bank_account" ? undefined : isCredit
     ? (brandConfigDoc?.creditPresentedFeeBps ?? siteConfig.creditPresentedFeeBps ?? brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps)
     : (brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps);
 
   const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
 
-  if (detectedCardFunding === "crypto") {
-    basePlatformFeePct = resolveFundingPlatformFeePct("crypto", {
+  if (detectedCardFunding === "crypto" || detectedCardFunding === "us_bank_account") {
+    basePlatformFeePct = resolveFundingPlatformFeePct(detectedCardFunding, {
       ...receiptRoutingFields(receipt, siteConfig), splitConfig: splitCfg,
     });
   } else if (basePresentedBps !== undefined) {
@@ -212,7 +212,9 @@ export function recalculateReceiptForCardFunding(
     const originalTaxCents = scaledTaxCents;
     const tipCents = toCents(receipt.tipAmount || 0);
     const baseWithoutFeeCents = originalSubtotalCents + originalTaxCents + tipCents;
-    const finalFeeCents = Math.round(baseWithoutFeeCents * feePct);
+    const finalFeeCents = detectedCardFunding === "crypto"
+      ? toCents(calculateCryptoFeeUsd(fromCents(baseWithoutFeeCents), totalFeePct))
+      : Math.round(baseWithoutFeeCents * feePct);
 
     const finalLineItems = [
       ...baseItems,

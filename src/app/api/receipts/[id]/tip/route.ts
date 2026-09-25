@@ -3,7 +3,7 @@ import { getContainer } from "@/lib/cosmos";
 import { getSiteConfigForWallet } from "@/lib/site-config"; // If needed for fresh fees
 import { getBrandKey } from "@/config/brands";
 import { resolveSettlementSplitConfig, receiptRoutingFields } from "@/lib/payment-split-routing";
-import { resolveFeeMinusBaseCents } from "@/lib/receipts";
+import { recalculateReceiptForCardFunding, resolveFeeMinusBaseCents } from "@/lib/receipts";
 import { assertStripeReceiptUnpaid, stripeReceiptWriteCondition } from "@/lib/stripe-receipt-session";
 
 function toCents(n: number) { return Math.round(Math.max(0, Number(n || 0)) * 100); }
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey).catch(() => null as any);
         const isFeeMinus = !!cfg?.feeMinusEnabled;
-        const activeFunding = receipt.detectedCardFunding || (receipt.isCreditCard === true ? "credit" : "debit");
+        const activeFunding = receipt.crypto === true ? "crypto" : receipt.detectedCardFunding || (receipt.isCreditCard === true ? "credit" : "debit");
 
         let feePct = 0.005; // 0.5% default fallback
         try {
@@ -228,13 +228,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             finalTotalCents = subtotalCents + feeCents;
         }
 
-        const updatedReceipt = {
+        let updatedReceipt = {
             ...receipt,
             tipAmount: tipAmount,
             totalUsd: fromCents(finalTotalCents),
             lineItems: finalLineItems,
             lastUpdatedAt: Date.now()
         };
+
+        if (activeFunding === "crypto" || activeFunding === "us_bank_account") {
+            updatedReceipt = recalculateReceiptForCardFunding({ ...receipt, tipAmount, lastUpdatedAt: Date.now() }, activeFunding, cfg || {});
+        }
 
         // Never replay a pending snapshot over a payment accepted during calculation.
         await container.item(receipt.id, receipt.wallet).patch(

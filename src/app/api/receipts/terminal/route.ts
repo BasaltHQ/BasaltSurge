@@ -1,4 +1,4 @@
-import { resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
 import { settlementRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
@@ -334,7 +334,9 @@ export async function POST(req: NextRequest) {
     const baseWithoutFeeCents = baseCents + taxCents;
     const totalFeePct = Math.max(0, basePlatformFeePct + processingFeePct);
     const feePctFraction = totalFeePct / 100;
-    const processingFeeCents = Math.round(baseWithoutFeeCents * feePctFraction);
+    const processingFeeCents = isCryptoOnly
+      ? toCents(calculateCryptoFeeUsd(fromCents(baseWithoutFeeCents), totalFeePct))
+      : Math.round(baseWithoutFeeCents * feePctFraction);
 
     const isFeeMinus = !!cfg?.feeMinusEnabled;
     let lineItems: ReceiptLineItem[];

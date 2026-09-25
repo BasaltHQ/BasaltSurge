@@ -204,7 +204,7 @@ export function analyticsFunding(receipt: Record<string, any>): "credit" | "debi
   if (["us_bank_account", "ach", "bank"].includes(value)) return "bank";
   if (value === "credit") return "credit";
   if (value === "debit" || value === "prepaid") return "debit";
-  if (value === "crypto" || (!receipt.stripeSessionId && (receipt.isCrypto === true || receipt.paymentMethod === "crypto"))) return "crypto";
+  if (value === "crypto" || (!receipt.stripeSessionId && (receipt.crypto === true || receipt.isCrypto === true || receipt.paymentMethod === "crypto"))) return "crypto";
   return "unknown";
 }
 
@@ -213,6 +213,10 @@ export function analyticsSplitRoute(receipt: Record<string, any>) {
   const funding = analyticsFunding(receipt);
   const snapshot = receipt.splitRoutingSnapshot;
   const explicit = normalized(receipt.settlementSplitAddress || receipt.splitAddressUsed);
+  if (explicit && ["credit", "debit", "ach", "crypto"].includes(receipt.settlementSplitKind)) {
+    const kind = receipt.settlementSplitKind;
+    return { kind, address: explicit, version: receipt.settlementSplitVersion || null, inherited: kind === "credit" && (funding === "bank" || funding === "crypto"), source: "recorded" };
+  }
   if (!snapshot) return { kind: receipt.settlementSplitKind || "unknown", address: explicit, version: receipt.settlementSplitVersion || null, inherited: false, source: explicit ? "recorded" : "unknown" };
   const suffix = funding === "debit" ? "Credit" : funding === "bank" && snapshot.splitOverrides?.ach && snapshot.splitAddressAch && snapshot.splitConfigAch ? "Ach" : funding === "crypto" && snapshot.splitOverrides?.crypto && snapshot.splitAddressCrypto && snapshot.splitConfigCrypto ? "Crypto" : "";
   if (funding === "unknown" && !explicit) return { kind: "unknown", address: "", version: null, inherited: false, source: "unknown" };

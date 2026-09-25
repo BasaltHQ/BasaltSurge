@@ -1,3 +1,5 @@
+import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { pinReceiptSplitRouting } from "@/lib/receipt-split-snapshot";
 import { NextRequest, NextResponse } from "next/server";
 import { receiptCurrencyFields, type ReceiptPricing } from "@/lib/receipt-currency";
@@ -512,6 +514,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
 
     // Load existing receipt (for fallback brand/timestamps and previous tax inference)
     let existing: {
+      crypto?: boolean;
+      detectedCardFunding?: string;
+      splitRoutingSnapshot?: Record<string, any>;
       pricing?: ReceiptPricing;
       createdAt?: number;
       brandName?: string;
@@ -528,6 +533,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       const { resource } = await container.item(`receipt:${id}`, wallet).read<any>();
       if (resource) {
         existing = {
+          crypto: resource.crypto === true,
+          detectedCardFunding: resource.detectedCardFunding,
+          splitRoutingSnapshot: resource.splitRoutingSnapshot,
           pricing: resource.pricing,
           createdAt: Number(resource.createdAt || Date.now()),
           brandName: typeof resource.brandName === "string" ? resource.brandName : undefined,
@@ -546,6 +554,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
       const cached = Array.isArray(mem) ? mem.find((r) => String(r.receiptId || "") === id) : undefined;
       if (cached) {
         existing = {
+          crypto: (cached as any).crypto === true,
+          detectedCardFunding: (cached as any).detectedCardFunding,
+          splitRoutingSnapshot: (cached as any).splitRoutingSnapshot,
           pricing: cached.pricing,
           createdAt: Number(cached.createdAt || Date.now()),
           brandName: typeof cached.brandName === "string" ? cached.brandName : undefined,
@@ -557,7 +568,12 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     }
 
     // Site config for processing fee and default tax jurisdiction (wallet-scoped with fallback)
-    const cfg = await getSiteConfigForWallet(wallet).catch(() => null as any);
+    const currentConfig = await getSiteConfigForWallet(wallet).catch(() => null as any);
+    const isCryptoOnly = body?.crypto !== undefined
+      ? body.crypto === true || String(body.crypto).toLowerCase() === "true"
+      : existing?.crypto === true || existing?.detectedCardFunding === "crypto";
+    const isAch = !isCryptoOnly && existing?.detectedCardFunding === "us_bank_account";
+    const cfg = isCryptoOnly || isAch ? { ...currentConfig, ...receiptRoutingFields(existing, currentConfig) } : currentConfig;
     const processingFeePct = typeof cfg?.processingFeePct === "number" ? Math.max(0, Number(cfg.processingFeePct)) : 0;
 
     // Determine taxRate
@@ -611,7 +627,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     // basePlatformFeePct: platform + partner + agent fee from splitConfig (merchant-specific)
     let basePlatformFeePct: number;
     const splitCfg = (cfg as any)?.splitConfig;
-    if (splitCfg && typeof splitCfg === "object") {
+    if (isCryptoOnly || isAch) {
+      basePlatformFeePct = resolveFundingPlatformFeePct(isAch ? "us_bank_account" : "crypto", cfg || {});
+    } else if (splitCfg && typeof splitCfg === "object") {
       const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
       const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
       const agentBps = Array.isArray(splitCfg.agents)
@@ -621,9 +639,11 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     } else {
       basePlatformFeePct = typeof (cfg as any)?.basePlatformFeePct === "number" ? Math.max(0, (cfg as any).basePlatformFeePct) : 0.5;
     }
-    const totalFeePct = Math.max(0, basePlatformFeePct + Number(processingFeePct || 0));
+    const totalFeePct = Math.max(0, basePlatformFeePct + Number(processingFeePct || 0) + (isAch && !cfg?.feeMinusEnabled ? 0.6 : 0));
     const feePctFraction = totalFeePct / 100;
-    const processingFeeCents = Math.round(baseWithoutFeeCents * feePctFraction);
+    const processingFeeCents = isCryptoOnly
+      ? toCents(calculateCryptoFeeUsd(fromCents(baseWithoutFeeCents), totalFeePct))
+      : Math.round(baseWithoutFeeCents * feePctFraction);
 
     const isFeeMinus = !!cfg?.feeMinusEnabled;
     let finalLineItems: ReceiptLineItem[];

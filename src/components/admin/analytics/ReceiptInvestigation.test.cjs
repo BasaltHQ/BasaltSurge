@@ -42,6 +42,26 @@ const defaultProps = {
 };
 const render = (props = {}) => renderToStaticMarkup(React.createElement(ReceiptInvestigation, { ...defaultProps, ...props }));
 
+test('platform and partner overview and crypto tabs show the pinned Crypto split, not current Credit', () => {
+  const credit = '0x' + '1'.repeat(40);
+  const crypto = '0x' + '2'.repeat(40);
+  const current = '0x' + '3'.repeat(40);
+  const cryptoReceipt = { ...receipt, status: 'paid', stripeSessionId: null, cardFunding: 'crypto', splitAddress: credit,
+    splitRoutingSnapshot: { splitAddress: credit, splitAddressCrypto: crypto, splitConfigCrypto: { platformBps: 50 }, splitOverrides: { crypto: true } } };
+  for (const readOnly of [false, true]) for (const status of ['paid', 'generated']) for (const activeTab of ['overview', 'crypto']) {
+    const html = render({ readOnly, activeTab, receipt: { ...cryptoReceipt, status }, siteConfig: { splitAddress: current } });
+    assert.match(html, new RegExp(crypto));
+    assert.match(html, /Crypto Split/);
+    assert.doesNotMatch(html, new RegExp(`${credit}|${current}`));
+  }
+  const shared = render({ receipt: { ...cryptoReceipt, splitRoutingSnapshot: { splitAddress: credit } } });
+  assert.match(shared, new RegExp(credit));
+  assert.match(shared, /Credit Split.*shared Credit/);
+  const missing = render({ receipt: { ...cryptoReceipt, splitRoutingSnapshot: null }, siteConfig: { splitAddress: current } });
+  assert.match(missing, /Historical destination unavailable/);
+  assert.doesNotMatch(missing, new RegExp(`${credit}|${current}`));
+});
+
 test('every regular investigation section renders evidence or actions in the shared body', () => {
   const expected = {
     overview: /Card declined/,
@@ -59,6 +79,24 @@ test('every regular investigation section renders evidence or actions in the sha
   }
   const actions = render({ activeTab: 'reconcile' });
   assert.match(actions, /Check Live Stripe Telemetry/);
+});
+
+test('ACH analytics separates the 0.6 percent Stripe deduction from the routed split allocation', () => {
+  for (const readOnly of [false, true]) for (const feeMinusEnabled of [false, true]) {
+    const totalUsd = feeMinusEnabled ? 100 : 101.1;
+    const onchain = +(totalUsd / 1.006).toFixed(2);
+    const splitFee = +(onchain * 0.005).toFixed(2);
+    const html = render({ readOnly, activeTab: 'fees', receipt: { ...receipt, cardFunding: 'us_bank_account', status: 'paid', totalUsd,
+      customerSessions: [], lineItems: [{ label: 'Order', priceUsd: 100 }],
+      splitRoutingSnapshot: { feeMinusEnabled, processingFeePct: 0, presentedFeeBps: 400,
+        splitAddressAch: '0x' + '4'.repeat(40), splitConfigAch: { platformBps: 50, partnerBps: 0, agents: [] }, splitOverrides: { ach: true } } } });
+    assert.match(html, /Stripe ACH Fee/);
+    assert.match(html, /0\.60% Processing Fee/);
+    assert.match(html, /Presented Rate: 1\.10%/);
+    assert.match(html, /Split Allocation \(0\.50%\)/);
+    assert.match(html, new RegExp(`Net Settlement: \\$${(onchain - splitFee).toFixed(2)}`));
+    assert.doesNotMatch(html, /2\.25% Processing Fee|3\.50% Processing Fee/);
+  }
 });
 
 test('crypto investigation retains routing, transaction, participants, and raw payload sections', () => {

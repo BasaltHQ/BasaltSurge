@@ -1,3 +1,5 @@
+import { recalculateReceiptForCardFunding } from "@/lib/receipts";
+import { getSiteConfigForWallet } from "@/lib/site-config";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 
@@ -87,7 +89,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         // Ensure buyerEmail is at the root for easier querying if provided in shipping
         const buyerEmail = shippingAddress.email || receipt.buyerEmail;
 
-        const updatedReceipt = {
+        let updatedReceipt = {
             ...receipt,
             shippingAddress,
             shippingMethod,
@@ -98,6 +100,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             ...(buyerWallet ? { buyerWallet } : {}),
             ...(buyerEmail ? { buyerEmail } : {}),
         };
+
+        if (receipt.crypto === true || receipt.detectedCardFunding === "crypto" || receipt.detectedCardFunding === "us_bank_account") {
+            const cfg = receipt.splitRoutingSnapshot || await getSiteConfigForWallet(receipt.wallet, receipt.brandKey);
+            if (!cfg?.feeMinusEnabled) updatedReceipt = recalculateReceiptForCardFunding(updatedReceipt, receipt.crypto === true ? "crypto" : receipt.detectedCardFunding, cfg || {});
+        }
 
         await container.items.upsert(updatedReceipt);
 

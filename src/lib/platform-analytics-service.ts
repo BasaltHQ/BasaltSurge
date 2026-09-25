@@ -30,7 +30,7 @@ const RECEIPT_PROJECTION = Object.fromEntries([
   "parentUrl", "merchantName", "shopName", "ipAddress", "buyerWallet", "stripeSessionId",
   "sessionId", "stripePaidSessionId", "stripePaymentAttemptSessionId",
   "paymentId", "thirdwebMetadata.paymentId", "transactionHash", "txHash", "leg2TxHash",
-  "leg1TxHash", "onrampTxHash", "isCrypto", "paymentMethod", "splitRoutingSnapshot", "settlementSplitAddress", "settlementSplitKind", "settlementSplitVersion", "splitAddressUsed",
+  "leg1TxHash", "onrampTxHash", "crypto", "isCrypto", "paymentMethod", "splitRoutingSnapshot", "settlementSplitAddress", "settlementSplitKind", "settlementSplitVersion", "splitAddressUsed",
 ].map(field => [field, 1]));
 
 type CachedPopulation = { rows: any[]; facets: ReturnType<typeof buildAnalyticsFacets>; generatedAt: string; expiresAt: number };

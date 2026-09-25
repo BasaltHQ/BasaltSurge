@@ -28,7 +28,7 @@ function harness(status = "pending", race = false) {
     const module = { exports: {} };
     vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, {
       module, exports: module.exports,
-      require: name => mocks[name] || load(path.resolve(__dirname, "..", name.replace(/^@\//, "") + ".ts")),
+      require: name => mocks[name] || load(name.startsWith("@/") ? path.resolve(__dirname, "..", name.slice(2) + ".ts") : path.resolve(path.dirname(file), name + ".ts")),
       process: { env: {} }, console: { log() {}, warn() {} },
     });
     return module.exports;
@@ -68,4 +68,31 @@ test("the receipt total stays fixed while another tab is confirming payment", as
   assert.equal((await h.post(20)).status, 409);
   assert.equal(h.receipt.totalUsd, 110);
   assert.equal(h.writes, 0);
+});
+
+
+test("crypto tip changes retain the fee+ minimum and exclude card fees", async () => {
+  const h = harness();
+  Object.assign(h.receipt, { crypto: true, detectedCardFunding: "crypto", totalUsd: 0.5, tipAmount: 0,
+    lineItems: [{ label: "Crypto Payment", priceUsd: 0.5 }],
+    splitRoutingSnapshot: { feeMinusEnabled: false, processingFeePct: 0, splitConfig: { platformBps: 50, partnerBps: 0, agents: [] } } });
+  assert.equal((await h.post(0.1)).status, 200);
+  assert.equal(h.receipt.totalUsd, 0.61);
+  assert.equal(h.receipt.lineItems.find(row => row.label === "Processing Fee").priceUsd, 0.01);
+  assert.equal((await h.post(0)).status, 200);
+  assert.equal(h.receipt.totalUsd, 0.51);
+});
+
+test("ACH tip replacement uses the pinned allocation plus 0.6 percent Stripe and preserves fee-minus totals", async () => {
+  for (const feeMinusEnabled of [false, true]) {
+    const h = harness();
+    Object.assign(h.receipt, { detectedCardFunding: "us_bank_account", totalUsd: 100, tipAmount: 0,
+      lineItems: [{ label: "Order", priceUsd: 100 }],
+      splitRoutingSnapshot: { feeMinusEnabled, processingFeePct: 0, presentedFeeBps: 500,
+        splitAddressAch: '0x' + '4'.repeat(40), splitConfigAch: { platformBps: 50, partnerBps: 0, agents: [] }, splitOverrides: { ach: true } } });
+    assert.equal((await h.post(10)).status, 200);
+    assert.equal(h.receipt.totalUsd, feeMinusEnabled ? 110 : 111.21);
+    assert.equal((await h.post(0)).status, 200);
+    assert.equal(h.receipt.totalUsd, feeMinusEnabled ? 100 : 101.1);
+  }
 });

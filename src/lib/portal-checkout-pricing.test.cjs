@@ -11,7 +11,7 @@ function load(name) {
   vm.runInNewContext(output, { module, exports: module.exports, require: id => load(id.replace(/^@\/lib\//, "").replace(/^\.\//, "")) }, { filename: file });
   return module.exports;
 }
-const { resolveFundingOnrampAmount, resolveFundingPlatformFeePct } = load("portal-checkout-pricing");
+const { calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct } = load("portal-checkout-pricing");
 const { recalculateReceiptForCardFunding, resolveFeeMinusBaseCents } = load("receipts");
 const { receiptAmountFromUsd } = load("receipt-currency");
 const config = {
@@ -35,7 +35,7 @@ function portalCalculation(name, values) {
   assert.ok(callback, `Portal calculation ${name} must exist`);
   const compiled = ts.transpileModule(`module.exports = (${callback.getText(source)});`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(compiled, { module, ...values, resolveFundingOnrampAmount, resolveFundingPlatformFeePct });
+  vm.runInNewContext(compiled, { module, isCryptoDirect: false, feeMinusEnabled: false, ...values, calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct });
   return module.exports;
 }
 
@@ -93,8 +93,8 @@ test("credit-only presented fees do not suppress the debit processor fee", () =>
   assert.equal(quote("credit", { creditPresentedFeeBps: 350 }), +(106.5 / 1.035).toFixed(2));
 });
 
-test("fee− keeps the customer total fixed for credit, debit, standard ACH, and instant ACH", () => {
-  for (const [funding, rate] of [["credit", 3.5], ["debit", 2.25], ["us_bank_account", 0.6], ["us_bank_account", 4]]) {
+test("fee− keeps the customer total fixed for credit, debit, and ACH", () => {
+  for (const [funding, rate] of [["credit", 3.5], ["debit", 2.25], ["us_bank_account", 0.6]]) {
     assert.equal(quote(funding, { feeMinusEnabled: true, stripeFeePct: rate, customerTotalUsd: 123.45 }), +(123.45 / (1 + rate / 100)).toFixed(2));
   }
 });
@@ -124,7 +124,7 @@ test("fee− receipt recalculation preserves the total and tip across funding sw
   }
 });
 
-test("presented ACH fees are not charged a second time in receipt accounting", () => {
+test("card presented fees are applied once while ACH uses its allocation plus Stripe", () => {
   const receipt = { totalUsd: 100, lineItems: [{ label: "Order", priceUsd: 100 }] };
   const presented = { ...config, presentedFeeBps: 225, creditPresentedFeeBps: 350 };
   for (const funding of ["credit", "debit", "us_bank_account"]) {
@@ -132,6 +132,31 @@ test("presented ACH fees are not charged a second time in receipt accounting", (
     const rate = funding === "credit" ? 3.5 : funding === "debit" ? 2.25 : 0.6;
     assert.equal(+(result.totalUsd / (1 + rate / 100)).toFixed(2), quote(funding, presented));
   }
+});
+
+test("ACH quotes, portal totals, and receipt accounting use 0.6 percent Stripe with dedicated or shared splits", () => {
+  for (const enabled of [false, true]) for (const feeMinusEnabled of [false, true]) {
+    const methodSplits = { splitAddressAch: `0x${"4".repeat(40)}`, splitConfigAch: { platformBps: 50, partnerBps: 0, agents: [] }, splitOverrides: { ach: enabled } };
+    const cfg = { ...methodSplits, splitConfig: { platformBps: 150, partnerBps: 0, agents: [] }, processingFeePct: 0,
+      presentedFeeBps: 400, creditPresentedFeeBps: 500, feeMinusEnabled };
+    const values = { ...cfg, methodSplits, receipt: {}, splitConfigCredit: undefined, creditStripeFeePct: 3.5, debitStripeFeePct: 2.25,
+      detectedCardFunding: "us_bank_account", itemsSubtotalUsd: 100, taxUsd: 0, shippingCostUsd: 0, tipUsd: 0, storedProcessingFeeUsd: 0 };
+    const effectiveBasePlatformFeePct = portalCalculation("effectiveBasePlatformFeePct", values)();
+    assert.equal(effectiveBasePlatformFeePct, enabled ? 0.5 : 1.5);
+    const stripeFeePct = portalCalculation("stripeFeePct", values)();
+    assert.equal(stripeFeePct, 0.6);
+    const activeFeePct = portalCalculation("activeFeePct", { ...values, stripeFeePct, effectiveBasePlatformFeePct })();
+    const processingFeeUsd = portalCalculation("processingFeeUsd", { ...values, activeFeePct })();
+    const totalUsd = portalCalculation("totalUsd", { ...values, processingFeeUsd })();
+    assert.equal(totalUsd, feeMinusEnabled ? 100 : enabled ? 101.1 : 102.1);
+    const onramp = portalCalculation("getAmountForFunding", { ...values, totalUsd })("us_bank_account");
+    assert.equal(onramp, +(totalUsd / 1.006).toFixed(2));
+    assert.equal(portalCalculation("stripeTotalUsd", { ...values, totalUsd })(), onramp);
+    const receipt = recalculateReceiptForCardFunding({ totalUsd: 100, lineItems: [{ label: "Order", priceUsd: 100 }] }, "us_bank_account", cfg);
+    assert.equal(receipt.totalUsd, totalUsd);
+    assert.equal(recalculateReceiptForCardFunding(receipt, "us_bank_account", cfg).totalUsd, totalUsd);
+  }
+  assert.equal(quote("us_bank_account", { stripeFeePct: 4 }), quote("us_bank_account"), "legacy instant rate cannot override the ACH rate");
 });
 
 test("175 BPS debit allocation quotes 4 percent and distributes the onramp amount", () => {
@@ -202,5 +227,31 @@ test("crypto sends the full checkout total without deducting Stripe's processor 
     assert.match(widget, /seller=\{cryptoSeller\}/);
     assert.match(widget, /feePayer="user"/);
     assert.doesNotMatch(widget, /amount=\{[^\n]*stripe/i);
+  }
+});
+
+
+test("R-672004 fee+ preview adds a one-cent minimum and sends the same total to crypto checkout", () => {
+  const values = { receipt: {}, isCryptoDirect: true, feeMinusEnabled: false,
+    activeFeePct: 0.5, itemsSubtotalUsd: 0.5, taxUsd: 0, tipUsd: 0, shippingCostUsd: 0, storedProcessingFeeUsd: 0 };
+  const processingFeeUsd = portalCalculation("processingFeeUsd", values)();
+  assert.equal(processingFeeUsd, 0.01, "positive fee keeps the processing-fee row visible");
+  const totalUsd = portalCalculation("totalUsd", { ...values, processingFeeUsd })();
+  assert.equal(totalUsd, 0.51);
+  assert.equal(portalCalculation("widgetFiatAmount", { widgetCurrency: "USD", totalUsd })(), "0.51");
+  assert.equal(portalCalculation("stripeTotalUsd", { ...values, totalUsd })(), 0.51);
+  assert.equal(portalCalculation("processingFeeUsd", { ...values, activeFeePct: 0 })(), 0);
+  assert.equal(portalCalculation("processingFeeUsd", { ...values, isCryptoDirect: false })(), 0, "card rounding is unchanged");
+  assert.equal(portalCalculation("totalUsd", { ...values, feeMinusEnabled: true, processingFeeUsd: 0.01 })(), 0.5, "fee-minus never adds the minimum");
+});
+
+test("crypto minimum rounds positive fees to cents without inventing a fee for zero rates or zero bases", () => {
+  for (const [base, rate, fee] of [[0.01, 0.5, 0.01], [0.5, 0.5, 0.01], [1, 0.5, 0.01], [2, 0.5, 0.01], [10, 0.5, 0.05], [100, 0.5, 0.5], [0.5, 0, 0], [0, 0.5, 0]]) {
+    assert.equal(calculateCryptoFeeUsd(base, rate), fee);
+    const receipt = { totalUsd: base, lineItems: [{ label: "Crypto Payment", priceUsd: base }] };
+    const cfg = { splitConfig: { platformBps: rate * 100, partnerBps: 0, agents: [] }, processingFeePct: 0 };
+    const once = recalculateReceiptForCardFunding(receipt, "crypto", cfg);
+    assert.equal(once.totalUsd, +(base + fee).toFixed(2));
+    assert.equal(recalculateReceiptForCardFunding(once, "crypto", cfg).totalUsd, once.totalUsd);
   }
 });

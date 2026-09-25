@@ -52,3 +52,14 @@ test("disabled overrides sharing a primary address do not relabel inherited paym
   assert.equal(route.kind, "credit");
   assert.equal(route.inherited, true);
 });
+
+test("crypto-only flags and recorded destinations retain their historical attribution", () => {
+  const crypto = `0x${"3".repeat(40)}`;
+  const receipt = { crypto: true, splitRoutingSnapshot: { ...snapshot, splitAddressCrypto: crypto, splitConfigCrypto: { platformBps: 50 }, splitOverrides: { crypto: true } } };
+  assert.equal(analyticsFunding(receipt), "crypto");
+  assert.equal(analyticsSplitRoute(receipt).address, crypto);
+  const explicit = analyticsSplitRoute({ ...receipt, settlementSplitAddress: ach, settlementSplitKind: "crypto", settlementSplitVersion: 3 });
+  assert.equal(explicit.address, ach);
+  assert.equal(explicit.kind, "crypto");
+  assert.equal(explicit.version, 3);
+});

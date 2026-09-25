@@ -244,54 +244,16 @@ export default function ReceiptInvestigation({
   const [replayHash, setReplayHash] = useState("");
   const [replayChainId, setReplayChainId] = useState(String(r.originChainId || 8453));
   useEffect(() => { setReplayHash(""); setReplayChainId(String(r.originChainId || 8453)); }, [r.receiptId, r.wallet, r.originChainId]);
-  const siteCfg = siteConfig || r.merchantConfig || r.brandConfig || {};
   const isSettled = isAnalyticsPaidReceipt(r);
   const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase().trim();
   const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
   const isCrypto = analyticsFunding(r) === "crypto";
   const isDirectCrypto = isCoinbase || isCrypto;
 
-  const isDebit = !isDirectCrypto && rawFunding === "debit";
-  const actualSplitAddress = isDebit
-  ? (
-  siteCfg.splitAddressCredit ||
-  r.splitAddressCredit ||
-  siteCfg.splitConfigCredit?.contractAddress ||
-  siteCfg.splitConfigCredit?.address ||
-  r.splitConfigCredit?.contractAddress ||
-  r.splitConfigCredit?.address ||
-  r.merchantConfig?.splitAddressCredit ||
-  r.merchantConfig?.splitConfigCredit?.contractAddress ||
-  r.brandConfig?.splitAddressCredit ||
-  siteCfg.splitAddress ||
-  r.splitAddress ||
-  siteCfg.splitConfig?.contractAddress ||
-  siteCfg.splitConfig?.address ||
-  r.splitConfig?.contractAddress ||
-  r.splitConfig?.address ||
-  r.merchantConfig?.splitAddress ||
-  r.brandConfig?.splitAddress
-  )
-  : (
-  siteCfg.splitAddress ||
-  r.splitAddress ||
-  siteCfg.splitConfig?.contractAddress ||
-  siteCfg.splitConfig?.address ||
-  r.splitConfig?.contractAddress ||
-  r.splitConfig?.address ||
-  r.merchantConfig?.splitAddress ||
-  r.merchantConfig?.splitConfig?.contractAddress ||
-  r.brandConfig?.splitAddress ||
-  siteCfg.splitAddressCredit ||
-  r.splitAddressCredit ||
-  siteCfg.splitConfigCredit?.contractAddress ||
-  siteCfg.splitConfigCredit?.address ||
-  r.splitConfigCredit?.contractAddress ||
-  r.splitConfigCredit?.address ||
-  r.merchantConfig?.splitAddressCredit ||
-  r.brandConfig?.splitAddressCredit
-  );
-  const splitBadgeLabel = isDebit ? "Debit Split" : "Credit/Crypto/ACH Split";
+  const recordedRoute = analyticsSplitRoute(r);
+  const actualSplitAddress = recordedRoute.address;
+  const isDebit = recordedRoute.kind === "debit";
+  const splitBadgeLabel = ({ credit: "Credit Split", debit: "Debit Split", ach: "ACH Split", crypto: "Crypto Split" } as Record<string, string>)[recordedRoute.kind] || "Recorded Split";
 
   const isReceiptCrypto = analyticsFunding(r) === "crypto" || !!r.thirdwebMetadata || !!r.paymentId;
   const investigationTabs = [
@@ -657,7 +619,7 @@ export default function ReceiptInvestigation({
           <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-1.5">
             <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider flex items-center gap-1.5">
               <Building2 className="w-3 h-3 text-emerald-400" />
-              <span>Merchant / Split Receiver Wallet</span>
+              <span>Merchant / Split Receiver Wallet{actualSplitAddress ? ` (${splitBadgeLabel}${recordedRoute.inherited ? ", shared Credit" : ""})` : ""}</span>
             </div>
             <div className="flex items-center justify-between gap-2">
               <span className="font-mono text-emerald-400 text-xs truncate max-w-[280px]" title={receiverWallet}>
@@ -1266,18 +1228,18 @@ export default function ReceiptInvestigation({
         {/* Intended / Actual Split Address */}
         <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2">
-            {isSettled ? "Settled Split Address" : "Intended Split Addresses"}
+            {isSettled ? "Settled Split Address" : "Intended Split Address"}
           </div>
-          {isSettled ? (
+          {(
             <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
               <span className={`font-bold border px-2 py-0.5 rounded-full text-[10px] uppercase ${
                 isDebit
                   ? "text-purple-400 bg-purple-500/15 border-purple-500/30"
                   : "text-emerald-400 bg-emerald-500/15 border-emerald-500/30"
               }`}>
-                {splitBadgeLabel}
+                {splitBadgeLabel}{recordedRoute.inherited ? " (shared Credit)" : ""}
               </span>
-              <span className="truncate max-w-full">{actualSplitAddress || "N/A"}</span>
+              <span className="truncate max-w-full">{actualSplitAddress || "Historical destination unavailable"}</span>
               {actualSplitAddress && (
                 <button
                   onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
@@ -1287,35 +1249,6 @@ export default function ReceiptInvestigation({
                 </button>
               )}
               {copySuccess[`split-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
-                <span className="text-muted-foreground w-28 font-medium">Standard Split:</span>
-                <span className="truncate max-w-full">{r.splitAddress || "N/A"}</span>
-                {r.splitAddress && (
-                  <button
-                    onClick={() => handleCopy(r.splitAddress!, `split-std-${r.receiptId}`)}
-                    className="text-muted-foreground hover:text-white transition-colors"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                {copySuccess[`split-std-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-              </div>
-              {r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress && (
-                <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
-                  <span className="text-muted-foreground w-28 font-medium">Credit Split:</span>
-                  <span className="truncate max-w-full">{r.splitAddressCredit}</span>
-                  <button
-                    onClick={() => handleCopy(r.splitAddressCredit!, `split-cred-${r.receiptId}`)}
-                    className="text-muted-foreground hover:text-white transition-colors"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                  {copySuccess[`split-cred-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -1641,6 +1574,7 @@ export default function ReceiptInvestigation({
       const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
       const isCrypto = analyticsFunding(r) === "crypto";
       const isDirectCrypto = isCoinbase || isCrypto;
+      const isAch = analyticsFunding(r) === "bank";
 
       const isCredit = !isDirectCrypto && (rawFunding === "credit" || r.isCreditCard === true || (rawFunding !== "debit" && rawFunding !== "us_bank_account" && rawFunding !== "ach"));
       const fundingType = isCoinbase ? "COINBASE ONRAMP" : (isCrypto ? "CRYPTO ONRAMP" : (rawFunding || (isCredit ? "credit" : "debit")).toUpperCase());
@@ -1649,7 +1583,7 @@ export default function ReceiptInvestigation({
        ? !!siteCfg.feeMinusEnabled
        : (r.feeMinusEnabled !== undefined ? !!r.feeMinusEnabled : (r.merchantConfig?.feeMinusEnabled !== undefined ? !!r.merchantConfig.feeMinusEnabled : true));
      
-     const rawPresentedBps = isCredit
+     const rawPresentedBps = isAch ? undefined : isCredit
        ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? r.merchantConfig?.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps)
        : (siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps);
 
@@ -1672,7 +1606,9 @@ export default function ReceiptInvestigation({
        ? (splitCfg?.platformBps ?? siteCfg.creditPlatformFeeBps ?? siteCfg.platformFeeBps ?? r.creditPlatformFeeBps ?? r.platformFeeBps ?? r.merchantConfig?.creditPlatformFeeBps ?? r.merchantConfig?.platformFeeBps ?? 50)
        : (splitCfg?.platformBps ?? siteCfg.platformFeeBps ?? siteCfg.creditPlatformFeeBps ?? r.platformFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.platformFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 75);
 
-     const agentBps = isCredit
+     const agentBps = isAch && splitCfg
+       ? (Array.isArray(splitCfg.agents) ? splitCfg.agents : []).reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+       : isCredit
        ? (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
            ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
            : (siteCfg.creditAgentFeeBps ?? siteCfg.agentFeeBps ?? r.creditAgentFeeBps ?? r.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? 50))
@@ -1680,9 +1616,11 @@ export default function ReceiptInvestigation({
            ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
            : (siteCfg.agentFeeBps ?? siteCfg.creditAgentFeeBps ?? r.agentFeeBps ?? r.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? 150));
 
-     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
+     const stripeCardRatePct = isAch ? 0.6 : isCredit ? 3.5 : 2.25;
       
-     const displayPresentedRatePct = effectivePresentedFeeBps !== null
+     const displayPresentedRatePct = isAch
+       ? (platformBps + partnerBps + agentBps) / 100 + Number(siteCfg.processingFeePct || 0) + stripeCardRatePct
+       : effectivePresentedFeeBps !== null
        ? (effectivePresentedFeeBps + partnerBps) / 100
        : stripeCardRatePct;
 
@@ -1724,14 +1662,15 @@ export default function ReceiptInvestigation({
      const stripeFeeDeductionUsd = Math.max(0, Math.round((stripeProcessedUsd - onChainSettlementUsd) * 100) / 100);
 
      // Dollar amounts for each BPS split component of the customer total charge
-     const partnerUsd = Math.round((stripeProcessedUsd * (partnerBps / 10000)) * 100) / 100;
-     const platformUsd = Math.round((stripeProcessedUsd * (platformBps / 10000)) * 100) / 100;
-     const agentUsd = Math.round((stripeProcessedUsd * (agentBps / 10000)) * 100) / 100;
+     const allocationBaseUsd = isAch ? onChainSettlementUsd : stripeProcessedUsd;
+     const partnerUsd = Math.round((allocationBaseUsd * (partnerBps / 10000)) * 100) / 100;
+     const platformUsd = Math.round((allocationBaseUsd * (platformBps / 10000)) * 100) / 100;
+     const agentUsd = Math.round((allocationBaseUsd * (agentBps / 10000)) * 100) / 100;
 
      // Merchant Base Component is the scaled-down catalog base so all components sum to customer charge
      const merchantBaseComponentUsd = Math.max(0, Math.round((stripeProcessedUsd - partnerUsd - platformUsd - agentUsd - stripeFeeDeductionUsd) * 100) / 100);
 
-     const feeUsd = isFeeMinus 
+     const feeUsd = isAch ? +(partnerUsd + platformUsd + agentUsd).toFixed(2) : isFeeMinus
        ? Math.round((onChainSettlementUsd * (calculatedFeePct / 100)) * 100) / 100
        : Math.round((catalogItemsSubtotal * (calculatedFeePct / 100)) * 100) / 100;
 
@@ -1881,7 +1820,7 @@ export default function ReceiptInvestigation({
              </div>
 
              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Card/Onramp Fee</div>
+               <div className="text-[10px] text-muted-foreground uppercase font-bold">{isAch ? "Stripe ACH Fee" : "Stripe Card/Onramp Fee"}</div>
                <div className="text-base font-bold text-rose-400">-${stripeFeeDeductionUsd.toFixed(2)} USD</div>
                <div className="text-[10px] text-muted-foreground">{stripeCardRatePct.toFixed(2)}% Processing Fee</div>
              </div>
@@ -1895,7 +1834,7 @@ export default function ReceiptInvestigation({
              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
                <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Session & Card Config</div>
                <div className="text-xs text-white/90 truncate font-mono">{stripeSessionId}</div>
-               <div className="text-[10px] text-muted-foreground">Card: {isCredit ? "Credit SplitConfig" : "Debit SplitConfig"}</div>
+               <div className="text-[10px] text-muted-foreground">{isAch ? `ACH: ${recordedRoute.kind} split${recordedRoute.inherited ? " (shared Credit)" : ""}` : `Card: ${isCredit ? "Credit SplitConfig" : "Debit SplitConfig"}`}</div>
              </div>
            </div>
          </div>
@@ -1926,7 +1865,7 @@ export default function ReceiptInvestigation({
                <div className="text-lg font-extrabold text-emerald-400">${onChainSettlementUsd.toFixed(2)}</div>
              </div>
              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-               <div className="text-[10px] text-muted-foreground uppercase font-bold">Platform Fee ({calculatedFeePct.toFixed(2)}%)</div>
+               <div className="text-[10px] text-muted-foreground uppercase font-bold">{isAch ? `Split Allocation (${((partnerBps + platformBps + agentBps) / 100).toFixed(2)}%)` : `Platform Fee (${calculatedFeePct.toFixed(2)}%)`}</div>
                <div className="text-lg font-extrabold text-amber-400">-${feeUsd.toFixed(2)}</div>
              </div>
              <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/30 space-y-1">

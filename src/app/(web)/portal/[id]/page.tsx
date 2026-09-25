@@ -28,7 +28,7 @@ import { isValidIsoCountryCode, micaIdentifierLabel, normalizeMicaIdentifier, va
 import { isStripeEmbeddedCheckoutEnabled, isUnsupportedStripeCheckoutRegion } from "@/lib/stripe-checkout-eligibility";
 import { isStripeOnrampPreflightErrorCode } from "@/lib/stripe-onramp-preflight";
 import { resolvePortalCheckoutMode } from "@/lib/stripe-onramp-status";
-import { resolveFundingOnrampAmount, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
 import { resolveReceiptCustomerEmail } from "@/lib/receipt-customer-email";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
@@ -2007,7 +2007,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   const [detectedCardFunding, setDetectedCardFunding] = useState<"credit" | "debit" | "us_bank_account" | null>(null);
   const [detectedCardBrand, setDetectedCardBrand] = useState<string | null>(null);
   const [detectedCardLast4, setDetectedCardLast4] = useState<string | null>(null);
-  const [achSpeed, setAchSpeed] = useState<"standard" | "instant">("standard");
   const [showLimitWarning, setShowLimitWarning] = useState(false);
   const [limitWarningInfo, setLimitWarningInfo] = useState<{ limit: number; total: number; method: string } | null>(null);
   const [hasWarnedLimit, setHasWarnedLimit] = useState(false);
@@ -2828,14 +2827,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const stripeFeePct = useMemo(() => {
     if (detectedCardFunding === "us_bank_account") {
-      return achSpeed === "standard" ? 0.6 : 4.0;
+      return 0.6;
     }
     const isCredit = detectedCardFunding === "credit";
     return isCredit ? creditStripeFeePct : debitStripeFeePct;
-  }, [detectedCardFunding, achSpeed, debitStripeFeePct, creditStripeFeePct]);
+  }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
 
   const activeFeePct = useMemo(() => {
-    const hasPresentedBps = detectedCardFunding === "credit"
+    const hasPresentedBps = detectedCardFunding === "us_bank_account" ? false : detectedCardFunding === "credit"
       ? (creditPresentedFeeBps ?? presentedFeeBps) !== undefined
       : presentedFeeBps !== undefined;
     const stripePct = (isCryptoDirect || feeMinusEnabled || hasPresentedBps) ? 0 : stripeFeePct;
@@ -2843,8 +2842,11 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [isCryptoDirect, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps, detectedCardFunding]);
 
   const processingFeeUsd = useMemo(() => {
-    return +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * (activeFeePct / 100)).toFixed(2);
-  }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, activeFeePct]);
+    const baseUsd = itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd;
+    return isCryptoDirect && !feeMinusEnabled
+      ? calculateCryptoFeeUsd(baseUsd, activeFeePct)
+      : +(baseUsd * (activeFeePct / 100)).toFixed(2);
+  }, [isCryptoDirect, feeMinusEnabled, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, activeFeePct]);
 
   const totalUsd = useMemo(() => {
     if (!receipt) return 0;
@@ -2866,14 +2868,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     if (isCryptoDirect) return totalUsd;
     const isAch = detectedCardFunding === "us_bank_account";
     const isCredit = detectedCardFunding === "credit";
-    const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? creditStripeFeePct : debitStripeFeePct);
+    const rate = isAch ? 0.6 : (isCredit ? creditStripeFeePct : debitStripeFeePct);
     return +(totalUsd / (1 + rate / 100)).toFixed(2);
-  }, [receipt, totalUsd, isCryptoDirect, detectedCardFunding, achSpeed, creditStripeFeePct, debitStripeFeePct]);
+  }, [receipt, totalUsd, isCryptoDirect, detectedCardFunding, creditStripeFeePct, debitStripeFeePct]);
 
   const getAmountForFunding = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (!receipt) return 0;
     const stripePct = funding === "us_bank_account"
-      ? (achSpeed === "standard" ? 0.6 : 4.0)
+      ? 0.6
       : (funding === "credit" ? creditStripeFeePct : debitStripeFeePct);
 
     return resolveFundingOnrampAmount({
@@ -2882,7 +2884,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       stripeFeePct: stripePct, ...methodSplits, splitConfig, splitConfigCredit,
       presentedFeeBps, creditPresentedFeeBps, processingFeePct,
     });
-  }, [receipt, achSpeed, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, splitConfig, splitConfigCredit, methodSplits, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, presentedFeeBps, creditPresentedFeeBps]);
+  }, [receipt, creditStripeFeePct, debitStripeFeePct, feeMinusEnabled, totalUsd, splitConfig, splitConfigCredit, methodSplits, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, presentedFeeBps, creditPresentedFeeBps]);
 
   const stripeProcessingFeeUsd = useMemo(() => {
     return +(totalUsd - stripeTotalUsd).toFixed(2);
@@ -7292,7 +7294,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                         {!feeMinusEnabled && processingFeeUsd > 0 && (
                           <div className="flex items-center justify-between text-sm">
                             <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
-                              <span>Processing Fee ({activeFeePct.toFixed(2)}%)</span>
+                              <span>Processing Fee ({activeFeePct.toFixed(2)}%{isCryptoDirect && activeFeePct > 0 ? ", $0.01 minimum" : ""})</span>
                               {detectedCardFunding && (
                                 <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
                                   {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
@@ -8153,7 +8155,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                   {!feeMinusEnabled && processingFeeUsd > 0 && (
                     <div className="flex items-center justify-between text-sm">
                       <span className="opacity-80 flex items-center gap-1.5 flex-wrap">
-                        <span>Processing Fee ({activeFeePct.toFixed(2)}%)</span>
+                        <span>Processing Fee ({activeFeePct.toFixed(2)}%{isCryptoDirect && activeFeePct > 0 ? ", $0.01 minimum" : ""})</span>
                         {detectedCardFunding && (
                           <span className="inline-flex items-center gap-1 rounded bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-400 border border-emerald-500/30 uppercase tracking-wider animate-pulse">
                             {detectedCardBrand} {detectedCardFunding} {detectedCardLast4 ? `(*${detectedCardLast4})` : ''}
