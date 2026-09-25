@@ -26,6 +26,7 @@ function load(filename, mocks = {}, globals = {}) {
 const { parseCosmosSql } = load('src/lib/db/sql-parser.ts');
 function harness(siteConfig, options = {}) {
   const calls = [], events = [];
+  let providerReads = 0;
   let receipt = { id: 'receipt:R1', receiptId: 'R1', type: 'receipt', wallet: merchant,
     status: 'pending', statusHistory: [], totalUsd: 100.5, brandKey: 'partner-brand',
     lineItems: [{ label: 'Order', priceUsd: 100 }, { label: 'Processing Fee', priceUsd: 0.5 }],
@@ -65,14 +66,18 @@ function harness(siteConfig, options = {}) {
     '@/lib/stripe-kyc-tracking': { highestKycTier: (a, b) => a || b || null, normalizeKycTier: () => null },
     '@/lib/checkout-flow-tracking': { appendAccordionStepTransition: value => value, normalizeAccordionStepTransition: () => null },
     '@/lib/request-client-ip': { resolvePersistedClientIp: () => null },
+    '@/lib/thirdweb/receipt-verification': { verifyReportedThirdwebReceipt: async () => false },
     '@/lib/site-config': { getSiteConfigForWallet: async () => receipt.splitRoutingSnapshot },
     '@/lib/brand-config': { readBrandOverridesCached: async () => ({}) },
     '@/lib/shopify/sync-order': { checkAndSyncShopifyOrder: async value => value },
-    'thirdweb': { Bridge: { Webhook: { parse: async () => {
+    '@/lib/thirdweb/server': { chain: { id: 8453 }, getServerClient: () => ({}) },
+    '@/lib/thirdweb/request-budget': { claimChainRead: async () => !options.budgetDenied },
+    'thirdweb': { Bridge: { status: async () => { providerReads++; return data; }, Webhook: { parse: async () => {
       if (options.invalidSignature) throw new Error('invalid signature');
       return { version: 1, type: 'pay.onchain-transaction', data };
     } } } },
   };
+  if (options.automaticVerification) delete mocks['@/lib/thirdweb/receipt-verification'];
   const statusRoute = options.persistStatus ? load('src/app/api/receipts/status/route.ts', mocks) : null;
   mocks['@/app/api/receipts/status/route'] = { POST: async req => {
     const body = await req.json();
@@ -89,8 +94,8 @@ function harness(siteConfig, options = {}) {
       return new Response(JSON.stringify({ ok: true }), { status: 200 });
     },
   });
-  return { calls, events, get receipt() { return receipt; }, async report() {
-    return statusRoute.POST({ headers: new Headers(), json: async () => ({ receiptId: 'R1', wallet: merchant, status: 'paid', isCrypto: true, txHash }) });
+  return { calls, events, get providerReads() { return providerReads; }, get receipt() { return receipt; }, async report() {
+    return statusRoute.POST({ url: 'https://example.test/api/receipts/status', headers: new Headers(), json: async () => ({ receiptId: 'R1', wallet: merchant, status: 'paid', isCrypto: true, txHash }) });
   }, async post() {
     const response = await route.POST({ text: async () => '{}', headers: new Headers(), nextUrl: new URL('https://example.test/api/webhooks/thirdweb') });
     return { status: response.status, body: await response.json() };
@@ -178,4 +183,36 @@ test('Bridge bigint amounts remain serializable and unmapped events retain repla
   assert.equal((await unmapped.post()).body.message, 'receiver_unmapped');
   assert.equal(unmapped.events[0].verifiedWebhook.data.purchaseData.receiptId, 'R1');
   assert.equal(unmapped.events[0].receiptId, 'R1');
+});
+
+
+test('browser completion automatically verifies Thirdweb and persists paid without a webhook or admin replay', async () => {
+  const h = harness({ type: 'site_config', wallet: merchant }, { persistStatus: true, automaticVerification: true });
+  const response = await h.report();
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).authoritative, true);
+  assert.equal(h.providerReads, 1);
+  assert.equal(h.receipt.status, 'paid');
+  assert.equal(h.receipt.transactionHash, txHash);
+  assert.equal(h.receipt.totalUsd, 100.5);
+  assert.equal(h.receipt.statusHistory.length, 1);
+  assert.equal(h.events.length, 0, 'no signed webhook was needed for the provider status lookup');
+  await h.report();
+  assert.equal(h.receipt.statusHistory.length, 1, 'repeat reports are idempotent');
+});
+
+test('automatic verification rejects pending, wrong-receipt, wrong-receiver and wrong-chain provider evidence', async () => {
+  for (const data of [{ status: 'PENDING' }, { purchaseData: { receiptId: 'other' } }, { receiver: primary }, { destinationToken: { chainId: 1 } }]) {
+    const h = harness({ type: 'site_config', wallet: merchant }, { persistStatus: true, automaticVerification: true, data });
+    const response = await h.report();
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).authoritative, false);
+    assert.equal(h.receipt.status, 'pending');
+    assert.equal(h.receipt.transactionHash, undefined);
+    assert.equal(h.providerReads, 1);
+  }
+  const limited = harness({ type: 'site_config', wallet: merchant }, { persistStatus: true, automaticVerification: true, budgetDenied: true });
+  await limited.report();
+  assert.equal(limited.receipt.status, 'pending');
+  assert.equal(limited.providerReads, 0);
 });

@@ -7,9 +7,9 @@ const ts = require('typescript');
 const MERCHANT = '0x' + '1'.repeat(40);
 const SPLIT = '0x' + '2'.repeat(40);
 
-function harness({ age = 0, status = 'pending', missing = false, budgetError = false, blockError = false, events = [] } = {}) {
+function harness({ age = 0, status = 'pending', missing = false, budgetError = false, blockError = false, events = [], receipt = {}, config = {}, verified = false } = {}) {
   let now = 1800000000000;
-  let document = missing ? undefined : { id: 'receipt:one', createdAt: now - age, status };
+  let document = missing ? undefined : { id: 'receipt:one', createdAt: now - age, status, ...receipt };
   const budget = new Map();
   const scans = [], requests = [];
   const container = {
@@ -24,7 +24,9 @@ function harness({ age = 0, status = 'pending', missing = false, budgetError = f
   };
   const mocks = {
     'next/server': { NextResponse: { json: (value, init) => new Response(JSON.stringify(value), init) } },
-    '@/lib/site-config': { getSiteConfigForWallet: async () => ({ splitAddress: SPLIT }) },
+    '@/lib/site-config': { getSiteConfigForWallet: async () => ({ splitAddress: SPLIT, ...config }) },
+    '@/lib/thirdweb/receipt-webhook': { postVerifiedReceiptStatus: async (_origin, body) => { assert.equal(body.detectedCardFunding, 'crypto'); document.status = body.status; document.transactionHash = body.txHash; } },
+    '@/lib/thirdweb/receipt-verification': { verifyReportedThirdwebReceipt: async () => { if (verified) { document.status = 'paid'; document.transactionHash = 'provider-verified'; } return verified; } },
     '@/lib/cosmos': { getContainer: async () => container },
     'thirdweb/chains': { base: { id: 8453 } },
     thirdweb: { createThirdwebClient: () => ({}), getContract: value => value, prepareEvent: value => value,
@@ -39,7 +41,7 @@ function harness({ age = 0, status = 'pending', missing = false, budgetError = f
       require: name => {
         if (mocks[name]) return mocks[name];
         if (name === 'node:crypto') return require(name);
-        if (name === '@/lib/thirdweb/request-budget') return load(path.resolve(__dirname, '../../../../lib/thirdweb/request-budget.ts'));
+        if (name.startsWith('@/lib/')) return load(path.resolve(__dirname, '../../../../lib', name.slice(6) + '.ts'));
         throw new Error(name);
       },
       Date: class extends Date { static now() { return now; } },
@@ -124,4 +126,26 @@ test('a matching on-chain payment still marks and returns a paid receipt', async
   assert.equal(response.txHash, '0xconfirmed');
   assert.equal((await h.check()).paid, true);
   assert.equal(h.scans.length, 1);
+});
+
+
+test('fallback scan follows the pinned Crypto split and retains Credit fallback', async () => {
+  const dedicated = '0x' + '3'.repeat(40);
+  const routing = { splitAddress: SPLIT, splitAddressCrypto: dedicated, splitConfigCrypto: { platformBps: 50 }, splitOverrides: { crypto: true } };
+  for (const active of [true, false]) {
+    const h = harness({ receipt: { crypto: true, splitRoutingSnapshot: { ...routing, splitOverrides: { crypto: active } } }, config: { splitAddress: '0x' + '9'.repeat(40) } });
+    await h.check();
+    assert.equal(h.scans[0].events[0].filters.to, active ? dedicated : SPLIT);
+  }
+});
+
+test('saved browser hints are provider-verified during polls and never fall through to amount matching', async () => {
+  for (const verified of [true, false]) {
+    const h = harness({ verified, receipt: { thirdwebPaymentReport: { transactions: [{}] } } });
+    const result = await h.check();
+    assert.equal(result.paid, verified);
+    assert.equal(h.scans.length, 0);
+    if (verified) assert.equal(result.txHash, 'provider-verified');
+    else assert.equal(result.verificationPending, true);
+  }
 });

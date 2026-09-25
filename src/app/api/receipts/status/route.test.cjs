@@ -64,6 +64,7 @@ function harness(receiptOverrides = {}, { reserveBeforeFirstPatch = false, attac
     '@/lib/checkout-flow-tracking': { appendAccordionStepTransition: value => value, normalizeAccordionStepTransition: () => null },
     '@/lib/request-client-ip': { resolvePersistedClientIp: () => null },
     '@/lib/receipt-customer-email': customerEmail,
+    '@/lib/thirdweb/receipt-verification': { verifyReportedThirdwebReceipt: async () => false },
     '@/lib/thirdweb/receipt-recovery-hints': loadCustomerEmailModule('thirdweb/receipt-recovery-hints.ts'),
   };
 
@@ -88,6 +89,7 @@ function harness(receiptOverrides = {}, { reserveBeforeFirstPatch = false, attac
     get patchCalls() { return patchCalls; },
     async post(status, email, extra = {}) {
       const response = await module.exports.POST({
+        url: 'https://example.test/api/receipts/status',
         headers: new Headers(),
         json: async () => ({ receiptId: 'R1', wallet, status, ...(email ? { customerEmail: email } : {}), ...extra }),
       });

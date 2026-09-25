@@ -188,3 +188,19 @@ test("crypto fee-minus preserves the original customer total when allocation cha
   assert.equal(result.totalUsd, 110);
   assert.equal(recalculateReceiptForCardFunding(result, "crypto", { ...config, feeMinusEnabled: true }).totalUsd, 110);
 });
+
+
+test("crypto sends the full checkout total without deducting Stripe's processor fee", () => {
+  const values = { receipt: {}, totalUsd: 1.01, isCryptoDirect: true, detectedCardFunding: "debit", achSpeed: "standard", creditStripeFeePct: 3.5, debitStripeFeePct: 2.25 };
+  assert.equal(portalCalculation("stripeTotalUsd", values)(), 1.01);
+  assert.equal(portalCalculation("stripeProcessingFeeUsd", { totalUsd: 1.01, stripeTotalUsd: 1.01 })(), 0);
+  const page = fs.readFileSync(path.resolve(__dirname, "../app/(web)/portal/[id]/page.tsx"), "utf8");
+  const widgets = [...page.matchAll(/<CheckoutWidget[\s\S]*?purchaseData=/g)].map(match => match[0]);
+  assert.equal(widgets.length, 4);
+  for (const widget of widgets) {
+    assert.match(widget, /key=\{cryptoCheckoutKey\}/);
+    assert.match(widget, /seller=\{cryptoSeller\}/);
+    assert.match(widget, /feePayer="user"/);
+    assert.doesNotMatch(widget, /amount=\{[^\n]*stripe/i);
+  }
+});

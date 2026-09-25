@@ -2863,11 +2863,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
+    if (isCryptoDirect) return totalUsd;
     const isAch = detectedCardFunding === "us_bank_account";
     const isCredit = detectedCardFunding === "credit";
     const rate = isAch ? (achSpeed === "standard" ? 0.6 : 4.0) : (isCredit ? creditStripeFeePct : debitStripeFeePct);
     return +(totalUsd / (1 + rate / 100)).toFixed(2);
-  }, [receipt, totalUsd, detectedCardFunding, achSpeed, creditStripeFeePct, debitStripeFeePct]);
+  }, [receipt, totalUsd, isCryptoDirect, detectedCardFunding, achSpeed, creditStripeFeePct, debitStripeFeePct]);
 
   const getAmountForFunding = useCallback((funding: "credit" | "debit" | "us_bank_account" | null): number => {
     if (!receipt) return 0;
@@ -3091,7 +3092,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     getSiteConfigOnce(String(targetWallet).toLowerCase(), String(targetWallet))
       .then((j: SiteConfigResponse) => {
         if (cancelled) return;
-        const cfg = j?.config || {};
+        const cfg = { ...(j?.config || {}), ...((receipt as any)?.splitRoutingSnapshot || {}) };
 
         // Merge runtime tokens if present (preserves ETH, adds/updates others)
         if (cfg?.tokens && Array.isArray(cfg.tokens) && cfg.tokens.length > 0) {
@@ -3118,7 +3119,6 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           setProcessingFeePct(cfg.processingFeePct);
         }
 
-        if (cfg && (receipt as any)?.splitRoutingSnapshot) Object.assign(cfg, (receipt as any).splitRoutingSnapshot);
         setMethodSplits(settlementRoutingFields(cfg));
         if (cfg?.splitConfig) setSplitConfig(cfg.splitConfig);
         if (cfg?.splitConfigCredit) setSplitConfigCredit(cfg.splitConfigCredit);
@@ -3667,7 +3667,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     let timer: NodeJS.Timeout;
 
     const activeAmount = Number(widgetAmount) > 0 ? Number(widgetAmount) : Number(stripeWidgetAmount);
-    if (!receipt || paymentConfirmed || isSettled(receipt.status) || loadingReceipt || !merchantWallet || !receiptId || !token || isNaN(activeAmount) || activeAmount <= 0) return;
+    if (!receipt || (paymentConfirmed && !isCryptoDirect) || isSettled(receipt.status) || loadingReceipt || !merchantWallet || !receiptId || !token || isNaN(activeAmount) || activeAmount <= 0) return;
 
     const checkPayment = async () => {
       if (!active || isChecking || document.visibilityState === "hidden") return;
@@ -3731,6 +3731,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
           throw new Error(`Invalid JSON format: ${jsonErr.message}`);
         }
         if (data.ok && data.paid && active) {
+          setReceipt(previous => previous ? { ...previous, ...(data.receipt || {}), status: data.receipt?.status || "paid" } : previous);
           setPaymentConfirmed({
             txHash: data.txHash || "",
             amount: totalUsd, // Display USD amount 
@@ -3762,7 +3763,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
       clearTimeout(initialTimer);
       document.removeEventListener("visibilitychange", checkPayment);
     };
-  }, [receipt, paymentConfirmed, loadingReceipt, merchantWallet, receiptId, totalUsd, stripeWidgetAmount, widgetAmount, token]);
+  }, [receipt, paymentConfirmed, isCryptoDirect, loadingReceipt, merchantWallet, receiptId, totalUsd, stripeWidgetAmount, widgetAmount, token]);
 
   const amountReady = useMemo(() => {
     if (isFiatFlow && widgetFiatAmount) {
@@ -4630,6 +4631,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // We use a dedicated MutationObserver to dynamically replace it with "Price in USD"
   // and override Stripe-adjusted background amounts with presented user-facing totals.
   useEffect(() => {
+    if (isCryptoDirect) return;
     const escapeRegExp = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
     const applyLabelOverrides = () => {
@@ -4725,7 +4727,7 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return () => {
       try { mo.disconnect(); } catch { }
     };
-  }, [totalUsd, stripeTotalUsd, widgetAmount, stripeWidgetAmount, widgetFiatAmount, stripeWidgetFiatAmount]);
+  }, [isCryptoDirect, totalUsd, stripeTotalUsd, widgetAmount, stripeWidgetAmount, widgetFiatAmount, stripeWidgetFiatAmount]);
 
   // ── Touchpoint theme DOM mutator ──
   // Triggered AFTER applyThemeVars runs (via tpThemeApplied state).
@@ -4936,12 +4938,14 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   // ─── STRIPE HEADLESS INLINE UI ───
   // Do not mount the generic widget (and its token-price query) while the
   // checkout configuration resolves or the direct Stripe autostart is pending.
-  const deferThirdwebCheckout = !configLoaded || (
+  const deferThirdwebCheckout = !configLoaded || loadingReceipt || !receipt || (
     !isCryptoDirect && (
       stripeHeadless && stripeOnrampEnabled && !coinbaseOnrampEnabled
       && !transakOnrampEnabled && !rampnowOnrampEnabled && !userOptedOutOfStripeBypass
     )
   );
+  const cryptoSeller = resolveSettlementSplitAddress({ ...methodSplits, funding: "crypto", splitAddress: sellerAddress, splitAddressCredit: sellerAddressCredit, fallbackAddress: merchantWallet || recipient }) as `0x${string}`;
+  const cryptoCheckoutKey = [receiptId, chainId, token, tokenAddr, currency, totalUsd, cryptoSeller].join(":");
   const preparingCheckoutUI = <div role="status" className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">Preparing secure checkout…</div>;
   const showStripeHeadless = !isCryptoDirect && (isV2Active || headlessEmailPrompt || headlessActive || headlessInitiated);
   const stripeHeadlessUI = showStripeHeadless ? (
@@ -7673,15 +7677,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                         <div className="px-2 pb-2">
                                           {showStripeHeadless ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                             <CheckoutWidget
-                                              key={`${token}-${currency}`}
+                                              key={cryptoCheckoutKey}
                                               className="w-full"
                                               name={`Total (${currency})`}
                                               client={client}
                                               chain={chain || base}
                                               paymentMethods={["crypto"]}
+                                              feePayer="user"
                                               currency={widgetCurrency as any || (currency as any)}
                                               amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
-                                              seller={resolveSettlementSplitAddress({ ...methodSplits, funding: "crypto", splitAddress: sellerAddress, splitAddressCredit: sellerAddressCredit, fallbackAddress: merchantWallet || recipient }) as `0x${string}`}
+                                              seller={cryptoSeller}
                                               tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                               showThirdwebBranding={false}
                                               theme={widgetTheme}
@@ -7788,15 +7793,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                   <>
                                     {showStripeHeadless ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                       <CheckoutWidget
-                                        key={`noshp-${token}-${currency}`}
+                                        key={cryptoCheckoutKey}
                                         className="w-full"
                                         name={`Total (${currency})`}
                                         client={client}
                                         chain={chain || base}
                                         paymentMethods={["crypto"]}
+                                        feePayer="user"
                                         currency={widgetCurrency as any || (currency as any)}
                                         amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
-                                        seller={resolveSettlementSplitAddress({ ...methodSplits, funding: "crypto", splitAddress: sellerAddress, splitAddressCredit: sellerAddressCredit, fallbackAddress: merchantWallet || recipient }) as `0x${string}`}
+                                        seller={cryptoSeller}
                                         tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                         showThirdwebBranding={false}
                                         theme={widgetTheme}
@@ -8440,15 +8446,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                                     <div className="px-2 pb-2">
                                       {showStripeHeadless ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                         <CheckoutWidget
-                                          key={`ship-${token}-${currency}`}
+                                          key={cryptoCheckoutKey}
                                           className="w-full"
                                           name={`Total (${currency})`}
                                           client={client}
                                           chain={chain || base}
                                           paymentMethods={["crypto"]}
+                                          feePayer="user"
                                           currency={widgetCurrency as any || (currency as any)}
                                           amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
-                                          seller={resolveSettlementSplitAddress({ ...methodSplits, funding: "crypto", splitAddress: sellerAddress, splitAddressCredit: sellerAddressCredit, fallbackAddress: merchantWallet || recipient }) as `0x${string}`}
+                                          seller={cryptoSeller}
                                           tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                           showThirdwebBranding={false}
                                           theme={widgetTheme}
@@ -8546,15 +8553,16 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               <>
                                 {showStripeHeadless ? stripeHeadlessUI : deferThirdwebCheckout ? preparingCheckoutUI : (
                                   <CheckoutWidget
-                                    key={`noshp-${token}-${currency}`}
+                                    key={cryptoCheckoutKey}
                                     className="w-full"
                                     name={`Total (${currency})`}
                                     client={client}
                                     chain={chain || base}
                                     paymentMethods={["crypto"]}
+                                    feePayer="user"
                                     currency={widgetCurrency as any || (currency as any)}
                                     amount={(isFiatFlow && widgetFiatAmount) ? (widgetFiatAmount as any) : widgetAmount}
-                                    seller={resolveSettlementSplitAddress({ ...methodSplits, funding: "crypto", splitAddress: sellerAddress, splitAddressCredit: sellerAddressCredit, fallbackAddress: merchantWallet || recipient }) as `0x${string}`}
+                                    seller={cryptoSeller}
                                     tokenAddress={token === "ETH" ? undefined : (tokenAddr as any)}
                                     showThirdwebBranding={false}
                                     theme={widgetTheme}

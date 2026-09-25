@@ -438,6 +438,13 @@ export async function POST(req: NextRequest) {
                 ...(typeof paymentId === "string" ? { paymentId: paymentId.slice(0, 200) } : {}),
               },
             }] as any);
+            const { resource: reportedReceipt } = await container.item(id, wallet).read<any>();
+            const { verifyReportedThirdwebReceipt } = await import("@/lib/thirdweb/receipt-verification");
+            if (await verifyReportedThirdwebReceipt(container, reportedReceipt, new URL(req.url).origin)) {
+              return NextResponse.json({ ok: true, receiptId, status: "paid", authoritative: true }, {
+                headers: { "x-correlation-id": correlationId },
+              });
+            }
           }
         }
 

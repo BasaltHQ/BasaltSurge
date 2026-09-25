@@ -220,3 +220,22 @@ test("native response amounts follow USD edits while retaining the original valu
   assert.equal(fields.pricing.originalTotal, 100);
   assert.equal(formatReceiptAmount(receipt, receipt.totalUsd), "€110.00");
 });
+
+
+test("crypto terminal receipt uses the dedicated half-percent split instead of legacy five-percent fees", async () => {
+  const h = harness();
+  Object.assign(h.config, { processingFeePct: 0, presentedFeeBps: 450,
+    splitConfig: { platformBps: 0, partnerBps: 50, agents: [] },
+    splitAddressCrypto: `0x${"5".repeat(40)}`, splitConfigCrypto: { platformBps: 50, partnerBps: 0, agents: [] }, splitOverrides: { crypto: true } });
+  const created = await h.call("receipts/terminal", { amountUsd: 1, crypto: true });
+  assert.equal(created.status, 200, JSON.stringify(created.data));
+  assert.equal(created.data.receipt.totalUsd, 1.01);
+  assert.equal(created.data.receipt.lineItems.find(row => row.label === "Processing Fee").priceUsd, 0.01);
+  const doc = [...h.docs.values()].find(row => row.type === "receipt");
+  assert.equal(doc.detectedCardFunding, "crypto");
+  assert.equal(doc.splitRoutingSnapshot.splitConfigCrypto.platformBps, 50);
+  const { recalculateReceiptForCardFunding } = h.load("lib/receipts.ts");
+  assert.equal(recalculateReceiptForCardFunding(doc, "crypto", h.config).totalUsd, 1.01);
+  const card = await h.call("receipts/terminal", { amountUsd: 1 });
+  assert.equal(card.data.receipt.totalUsd, 1.05, "existing card creation policy is preserved");
+});
