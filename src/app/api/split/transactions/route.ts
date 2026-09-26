@@ -1,3 +1,4 @@
+import { discoverSplitContracts } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { debug } from "@/lib/logger";
@@ -40,6 +41,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const splitAddress = url.searchParams.get("splitAddress");
   const merchantWallet = url.searchParams.get("merchantWallet");
+  const requestedBrand = String(url.searchParams.get("brandKey") || "").trim().toLowerCase();
   const limit = Math.min(1000, Math.max(1, Number(url.searchParams.get("limit") || 50)));
   const forceLive = url.searchParams.get("live") === "true";
   const qPartnerWallet = (url.searchParams.get("partnerWallet") || "").toLowerCase();
@@ -95,12 +97,13 @@ export async function GET(req: NextRequest) {
       const resolvedAgentWallets = new Set<string>();
       try {
         const { resources: allSiteConfigs } = await container.items.query({
-          query: `SELECT * FROM c WHERE c.type = 'site_config' AND c.wallet = @w`,
-          parameters: [{ name: "@w", value: merchantAddrLower }],
+          query: `SELECT * FROM c WHERE c.type = 'site_config' AND c.wallet = @w${requestedBrand ? " AND (LOWER(c.brandKey)=@brand OR c.id=@brandDoc)" : ""}`,
+          parameters: [{ name: "@w", value: merchantAddrLower }, ...(requestedBrand ? [{ name: "@brand", value: requestedBrand }, { name: "@brandDoc", value: requestedBrand === "portalpay" ? "site:config" : `site:config:${requestedBrand}` }] : [])],
         }).fetchAll();
 
         for (const doc of (allSiteConfigs || [])) {
           const candidates = [
+            ...discoverSplitContracts(doc).map(split => split.address),
             doc?.splitAddress,
             doc?.split?.address,
             doc?.config?.split?.address,
@@ -128,6 +131,8 @@ export async function GET(req: NextRequest) {
           const agentConfigs = [
             doc?.splitConfig?.agents,
             doc?.splitConfigCredit?.agents,
+            doc?.splitConfigAch?.agents,
+            doc?.splitConfigCrypto?.agents,
           ];
           for (const agentsList of agentConfigs) {
             if (Array.isArray(agentsList)) {
@@ -151,7 +156,18 @@ export async function GET(req: NextRequest) {
         const { resource } = await container.item(indexId, indexId).read();
         if (resource && Array.isArray(resource.transactions)) {
           persistedResource = resource;
-          persistedTxs = resource.transactions;
+          persistedTxs = requestedBrand ? resource.transactions.filter((tx: any) => discoveredSplits.has(String(tx.splitAddress || "").toLowerCase())) : resource.transactions;
+          if (requestedBrand) {
+            persistedResource = { ...resource };
+            for (const [group, field] of Object.entries({ payments: "cumulativePayments", merchantReleases: "cumulativeMerchantReleases", partnerReleases: "cumulativePartnerReleases", agentReleases: "cumulativeAgentReleases", platformReleases: "cumulativePlatformReleases" })) {
+              const totals: Record<string, number> = {};
+              for (const [address, values] of Object.entries(resource.cumulativePerSplit || {})) {
+                if (!discoveredSplits.has(address.toLowerCase())) continue;
+                for (const [token, amount] of Object.entries((values as any)[group] || {})) totals[token] = (totals[token] || 0) + Number(amount || 0);
+              }
+              persistedResource[field] = totals;
+            }
+          }
           for (const tx of persistedTxs) {
             const sa = String(tx.splitAddress || "").toLowerCase();
             if (sa && /^0x[a-f0-9]{40}$/i.test(sa)) {

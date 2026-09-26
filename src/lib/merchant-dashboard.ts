@@ -32,7 +32,7 @@ export function indexBelongsToMerchantSplits(index: Record<string, any>, allowed
     addresses.push(value.toLowerCase());
     return true;
   };
-  for (const field of ["splitAddress", "splitAddressCredit"]) {
+  for (const field of ["splitAddress", "splitAddressCredit", "splitAddressAch", "splitAddressCrypto"]) {
     if (index[field] && !add(index[field])) return false;
   }
   if (index.splitAddresses != null) {

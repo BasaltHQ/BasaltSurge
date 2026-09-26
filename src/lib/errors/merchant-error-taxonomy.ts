@@ -23,6 +23,14 @@ export interface MerchantErrorDefinition {
 }
 
 export const MERCHANT_ERROR_REGISTRY: Record<string, MerchantErrorDefinition> = {
+  PORTAL_PAY_TRANSACTION_BLOCKED: {
+    code: "PORTAL_PAY_TRANSACTION_BLOCKED",
+    legacyCode: "crypto_onramp_transaction_blocked",
+    category: "compliance",
+    description: "Stripe blocked this transaction. The provider has not disclosed a more specific reason.",
+    customerMessage: "This purchase cannot be completed. Please contact support.",
+    suggestedAction: "Do not retry this transaction. Contact support with the receipt and Stripe request references.",
+  },
   // ─── 1. CARD & PAYMENT DECLINES ───
   PORTAL_PAY_INSUFFICIENT_FUNDS: {
     code: "PORTAL_PAY_INSUFFICIENT_FUNDS",
@@ -308,6 +316,7 @@ export function resolveMerchantErrorInfo(rawError: any): MerchantErrorDefinition
   ).toLowerCase().trim();
 
   // 1. Direct code lookup in registry
+  if (errorStr === "transaction_blocked") return MERCHANT_ERROR_REGISTRY.PORTAL_PAY_TRANSACTION_BLOCKED;
   for (const def of Object.values(MERCHANT_ERROR_REGISTRY)) {
     if (def.code.toLowerCase() === errorStr) return def;
     if (def.legacyCode && def.legacyCode.toLowerCase() === errorStr) return def;

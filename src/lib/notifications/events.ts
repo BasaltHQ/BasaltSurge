@@ -29,13 +29,15 @@ export async function notifyPinChanged(member: any, merchantWallet: string, bran
   });
 }
 
-export async function notifySplitDeployed(config: any, previous: any, isCredit: boolean, brandKey: string) {
-  const address = isCredit ? config.splitAddressCredit : config.splitAddress;
-  const oldAddress = isCredit ? previous?.splitAddressCredit : previous?.splitAddress;
+export async function notifySplitDeployed(config: any, previous: any, isCredit: boolean | "credit" | "debit" | "ach" | "crypto", brandKey: string) {
+  const kind = typeof isCredit === "boolean" ? (isCredit ? "debit" : "credit") : isCredit;
+  const field = kind === "ach" ? "splitAddressAch" : kind === "crypto" ? "splitAddressCrypto" : kind === "debit" ? "splitAddressCredit" : "splitAddress";
+  const address = config[field];
+  const oldAddress = previous?.[field];
   if (!address || String(address).toLowerCase() === String(oldAddress || "").toLowerCase()) return;
   await enqueueNotification({ level: "partner", brandKey, event: "split_deployed", eventId: `${config.wallet}:${String(address).toLowerCase()}`,
     data: { title: "Split Contract Created", message: "A merchant payment splitter has been deployed or bound successfully.", details: [
-      { label: "Merchant", value: config.wallet }, { label: "Split address", value: address, isCode: true }, { label: "Funding", value: isCredit ? "Credit" : "Debit" },
+      { label: "Merchant", value: config.wallet }, { label: "Split address", value: address, isCode: true }, { label: "Funding", value: kind === "ach" ? "ACH" : kind[0].toUpperCase() + kind.slice(1) },
     ] },
   });
 }

@@ -1,7 +1,8 @@
+import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
 // Shared helpers for constructing receipt endpoints and fetch options
 // Ensures TEST receipts include merchant context so branding/themes load consistently.
 
-import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
+import { resolveSettlementSplitConfig, receiptRoutingFields, settlementRoutingFields } from "@/lib/payment-split-routing";
 
 export function isValidHexAddress(addr: string): boolean {
   try {
@@ -68,30 +69,40 @@ export function resolveFeeMinusBaseCents(receipt: any): number {
 
 export function recalculateReceiptForCardFunding(
   receipt: any,
-  detectedCardFunding: "credit" | "debit" | "us_bank_account",
+  detectedCardFunding: "credit" | "debit" | "us_bank_account" | "crypto",
   siteConfig: any,
   brandConfigDoc?: any
 ): any {
   if (!receipt || !siteConfig) return receipt;
 
+  // Pin the fee quote and destinations together before a payment can be submitted.
+  const routing = receipt.splitRoutingSnapshot || { ...settlementRoutingFields(siteConfig), ...settlementRoutingFields(brandConfigDoc), ...settlementRoutingFields(receipt) };
+  if (routing.splitAddress || routing.splitAddressCredit) receipt = { ...receipt, splitRoutingSnapshot: routing };
+  siteConfig = { ...siteConfig, ...routing };
+  brandConfigDoc = { ...brandConfigDoc, ...routing };
   const isFeeMinus = !!siteConfig.feeMinusEnabled;
   const isCredit = detectedCardFunding === "credit";
 
   let basePlatformFeePct = 0.5; // fallback
-  const splitCfg = resolveSettlementSplitConfig({
+  const splitCfg = resolveSettlementSplitConfig<any>({
+    ...receiptRoutingFields(receipt, siteConfig),
     funding: detectedCardFunding,
-    splitConfig: brandConfigDoc?.splitConfig || siteConfig.splitConfig,
-    splitConfigCredit: brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit,
+    splitConfig: receipt.splitRoutingSnapshot?.splitConfig || brandConfigDoc?.splitConfig || siteConfig.splitConfig,
+    splitConfigCredit: receipt.splitRoutingSnapshot?.splitConfigCredit || brandConfigDoc?.splitConfigCredit || siteConfig.splitConfigCredit,
   });
 
   // Resolve basePresentedBps to determine the presented fee component
-  const basePresentedBps = isCredit
+  const basePresentedBps = detectedCardFunding === "crypto" || detectedCardFunding === "us_bank_account" ? undefined : isCredit
     ? (brandConfigDoc?.creditPresentedFeeBps ?? siteConfig.creditPresentedFeeBps ?? brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps)
     : (brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps);
 
   const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
 
-  if (basePresentedBps !== undefined) {
+  if (detectedCardFunding === "crypto" || detectedCardFunding === "us_bank_account") {
+    basePlatformFeePct = resolveFundingPlatformFeePct(detectedCardFunding, {
+      ...receiptRoutingFields(receipt, siteConfig), splitConfig: splitCfg,
+    });
+  } else if (basePresentedBps !== undefined) {
     basePlatformFeePct = (basePresentedBps + partnerBps) / 100;
   } else if (splitCfg && typeof splitCfg === "object") {
     const platformBps = typeof splitCfg.platformBps === "number" ? splitCfg.platformBps : 0;
@@ -201,7 +212,9 @@ export function recalculateReceiptForCardFunding(
     const originalTaxCents = scaledTaxCents;
     const tipCents = toCents(receipt.tipAmount || 0);
     const baseWithoutFeeCents = originalSubtotalCents + originalTaxCents + tipCents;
-    const finalFeeCents = Math.round(baseWithoutFeeCents * feePct);
+    const finalFeeCents = detectedCardFunding === "crypto"
+      ? toCents(calculateCryptoFeeUsd(fromCents(baseWithoutFeeCents), totalFeePct))
+      : Math.round(baseWithoutFeeCents * feePct);
 
     const finalLineItems = [
       ...baseItems,

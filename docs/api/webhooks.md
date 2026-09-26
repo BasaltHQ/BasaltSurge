@@ -51,6 +51,7 @@ Content-Type: application/json
 X-PortalPay-Signature: sha256=<hmac_hex>
 X-PortalPay-Event: receipt.status_updated
 X-PortalPay-Delivery: <uuid>
+X-PortalPay-Idempotency-Key: <stable_notification_key>
 X-PortalPay-Timestamp: <unix_ms>
 User-Agent: PortalPay-Webhook/1.0
 ```
@@ -60,9 +61,10 @@ User-Agent: PortalPay-Webhook/1.0
 ```json
 {
   "event": "receipt.status_updated",
+  "idempotencyKey": "receipt-status:order_abc:paid:0xabc123...",
   "receiptId": "order_abc",
   "status": "paid",
-  "previousStatus": "checkout_initialized",
+  "previousStatus": "pending",
   "transactionHash": "0xabc123...",
   "buyerWallet": "0x1234...abcd",
   "merchantWallet": "0x5678...efgh",
@@ -109,6 +111,7 @@ User-Agent: PortalPay-Webhook/1.0
 | Field | Type | Description |
 |-------|------|-------------|
 | `event` | string | Webhook event name (`receipt.status_updated`) |
+| `idempotencyKey` | string | Stable notification key, also supplied in `X-PortalPay-Idempotency-Key`. Treat it as opaque and use it to deduplicate deliveries. |
 | `receiptId` | string | Unique receipt ID |
 | `status` | string | Current payment status (`paid`, `failed`, etc.) |
 | `previousStatus` | string | Status prior to this update |
@@ -116,6 +119,8 @@ User-Agent: PortalPay-Webhook/1.0
 | `failureCategory` | string \| null | High-level failure category (`card_decline`, `compliance`, `limits`, `blockchain`, `session`, `system`) |
 | `failureReason` | string \| null | Human-readable explanation of why the payment failed |
 | `failureAction` | string \| null | Recommended remediation advice for the merchant |
+| `providerErrorCode` | string \| null | Original structured Stripe error code from a signed event or server observation, when available; distinct from the branded `failureCode` |
+| `providerRequestId` | string \| null | Stripe `req_...` reference from the server response or a diagnostic tied to the same session, when available |
 | `transactionHash` | string \| null | On-chain transaction hash (when completed) |
 | `buyerWallet` | string \| null | Buyer's wallet address |
 | `merchantWallet` | string | Merchant recipient wallet address |
@@ -130,19 +135,46 @@ User-Agent: PortalPay-Webhook/1.0
 
 ### Status Values
 
-The `status` field will contain one of the following values:
+The `status` field describes the persisted, canonical receipt state. Common values are:
 
 | Status | Description |
 |--------|-------------|
-| `link_opened` | Buyer opened the payment portal |
-| `buyer_logged_in` | Buyer connected their wallet |
-| `checkout_initialized` | Buyer started the checkout flow |
-| `checkout_success` | Payment submitted through the widget |
-| `paid` | Payment confirmed on-chain |
+| `pending` | No authoritative payment completion or terminal failure has been recorded |
+| `paid` | Payment has been accepted or confirmed by the server; for embedded onramp this does not alone prove the downstream on-chain transfer is complete |
+| `paid - ach pending` | ACH payment accepted by Stripe; funds/settlement are still pending |
+| `ach_pending` | Legacy alias for accepted ACH awaiting settlement |
 | `reconciled` | Funds verified and split distribution executed |
-| `failed` | Payment failed or declined (see `failureCode` and `failureReason`) |
+| `failed` | Server-verified payment failure (see failure and provider fields) |
+| `rejected` / `abandoned` | Legacy or other authoritative failure states; do not infer these from browser activity |
 | `refund_requested` | Refund has been requested |
 | `refunded` | Refund has been processed |
+
+Browser reports such as `link_opened`, `checkout_initialized`, `onramp_*`, and `error` are checkout telemetry. They do not by themselves change the canonical payment status or send an authoritative failure webhook. `checkout_success` is normalized to `paid` only through the server's verified status path. Closing a payment form is not proof of a failed or unpaid order.
+
+For Stripe failures, signed rejection events, the background poller, and scheduled reconciliation persist the failure and queue the merchant notification together. A stale failure cannot replace an accepted/paid receipt or a receipt associated with a different payment attempt. Failure fields and provider references are `null` on successful and other nonfailure payloads, even when the receipt retains older diagnostics internally. `GET /api/receipts/status` uses the same failure-field projection.
+
+### Blocked transaction example
+
+```json
+{
+  "event": "receipt.status_updated",
+  "receiptId": "order_abc",
+  "status": "failed",
+  "previousStatus": "pending",
+  "failureCode": "PORTAL_PAY_TRANSACTION_BLOCKED",
+  "failureCategory": "compliance",
+  "failureReason": "This transaction has been blocked.",
+  "failureAction": "This purchase cannot continue. Contact support; do not submit another payment.",
+  "providerErrorCode": "crypto_onramp_transaction_blocked",
+  "providerRequestId": "req_Example123",
+  "merchantWallet": "0x5678...efgh",
+  "stripeSessionId": "cos_example",
+  "totalUsd": 61.94,
+  "timestamp": 1713200000000
+}
+```
+
+This code does not establish fraud, sanctions, or a specific account restriction. Do not automatically retry it or turn it into a request for more KYC. Stripe documents it as non-retryable; contact support with the receipt, session, and request references. Missing provider details remain `null`; do not infer a cause from that absence. See [Stripe's error reference](https://docs.stripe.com/crypto/onramp/embedded-components-error-codes) and [merchant failure codes](../errors.md#payment--checkout-failure-codes-portal_).
 
 ---
 
@@ -154,14 +186,18 @@ Every webhook is signed using HMAC-SHA256. The signing secret is **your existing
 
 ```javascript
 import crypto from 'crypto';
+import express from 'express';
+
+const app = express();
 
 function verifyWebhookSignature(body, signature, secret) {
+  if (typeof signature !== 'string' || !/^sha256=[a-f0-9]{64}$/i.test(signature)) return false;
   const expected = crypto
     .createHmac('sha256', secret)
     .update(body)
     .digest('hex');
   
-  const received = signature.replace('sha256=', '');
+  const received = signature.slice('sha256='.length);
   
   return crypto.timingSafeEqual(
     Buffer.from(expected, 'hex'),
@@ -169,19 +205,21 @@ function verifyWebhookSignature(body, signature, secret) {
   );
 }
 
-// Express.js handler
-app.post('/api/portalpay-webhook', (req, res) => {
+// Register this route BEFORE a global express.json() middleware.
+// Signature verification requires the exact received bytes.
+app.post('/api/portalpay-webhook', express.raw({ type: 'application/json' }), (req, res) => {
   const signature = req.headers['x-portalpay-signature'];
-  const rawBody = JSON.stringify(req.body);
+  const rawBody = req.body;
   
   // Use your same API key for verification
   if (!verifyWebhookSignature(rawBody, signature, process.env.PORTALPAY_API_KEY)) {
     return res.status(401).json({ error: 'Invalid signature' });
   }
   
-  const { event, receiptId, status, transactionHash } = req.body;
+  const { event, receiptId, status, transactionHash, idempotencyKey } = JSON.parse(rawBody.toString('utf8'));
   
-  // Process the event (ensure idempotency!)
+  // Persist/check idempotencyKey with your order update in one DB transaction.
+  // A delivery ID identifies a delivery cycle, not all later retries.
   console.log(`Receipt ${receiptId} is now ${status}`);
   
   // Example: fulfill order when payment is confirmed
@@ -234,9 +272,11 @@ def webhook():
 - **Timeout**: 5 seconds per attempt
 - **Retries**: 1 automatic retry after 5 seconds if the first attempt fails
 - **Retry conditions**: Non-2xx response, network error, or timeout
-- **Idempotency**: Use the `X-PortalPay-Delivery` header as a unique delivery ID to deduplicate events
+- **Idempotency**: Persist `X-PortalPay-Idempotency-Key` (or the body `idempotencyKey`) with your order update. The key is stable across retries of the same receipt/status/transaction notification. `X-PortalPay-Delivery` identifies a delivery cycle and can change when a worker retries it later.
 
-If both attempts fail, the event is logged but not retried further.
+If both attempts fail, the receipt retains a pending delivery marker. The scheduled reconciliation job can retry it later when that job is running for the receipt's brand. This is a notification of current receipt state, not an immutable event stream: if the receipt has advanced, the retry sends its current status rather than replaying an obsolete failure. Intermediate transitions can be coalesced. Delivery timing and ordering are not guaranteed; reconcile delayed/conflicting notifications against `GET /api/receipts/status` and never reverse a confirmed payment merely because an older failure arrives.
+
+Partner brands receive `X-{Brand}-*` headers and the corresponding branded user agent. `X-PortalPay-*` compatibility aliases remain available. Verify the signature over the raw body, process idempotently, and return a `2xx` response promptly.
 
 ---
 

@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { getSiteConfigForWallet } from "@/lib/site-config"; // If needed for fresh fees
 import { getBrandKey } from "@/config/brands";
-import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
-import { resolveFeeMinusBaseCents } from "@/lib/receipts";
+import { resolveSettlementSplitConfig, receiptRoutingFields } from "@/lib/payment-split-routing";
+import { recalculateReceiptForCardFunding, resolveFeeMinusBaseCents } from "@/lib/receipts";
 import { assertStripeReceiptUnpaid, stripeReceiptWriteCondition } from "@/lib/stripe-receipt-session";
 
 function toCents(n: number) { return Math.round(Math.max(0, Number(n || 0)) * 100); }
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         const cfg = await getSiteConfigForWallet(wallet, effectiveBrandKey).catch(() => null as any);
         const isFeeMinus = !!cfg?.feeMinusEnabled;
-        const activeFunding = receipt.detectedCardFunding || (receipt.isCreditCard === true ? "credit" : "debit");
+        const activeFunding = receipt.crypto === true ? "crypto" : receipt.detectedCardFunding || (receipt.isCreditCard === true ? "credit" : "debit");
 
         let feePct = 0.005; // 0.5% default fallback
         try {
@@ -56,16 +56,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 try {
                     const docId = `site:config:${effectiveBrandKey}`;
                     const spec = {
-                        query: "SELECT * FROM c WHERE c.id = @docId",
-                        parameters: [{ name: "@docId", value: docId }]
+                        query: "SELECT * FROM c WHERE c.id = @docId AND c.wallet = @wallet",
+                        parameters: [{ name: "@docId", value: docId }, { name: "@wallet", value: wallet }]
                     };
                     const { resources: cfgResources } = await container.items.query(spec).fetchAll();
                     const cfgResource = Array.isArray(cfgResources) && cfgResources[0] ? cfgResources[0] : null;
-                    const splitCfg = resolveSettlementSplitConfig({
+                    const splitCfg = resolveSettlementSplitConfig<any>({
                         funding: activeFunding,
                         isCreditCard: receipt.isCreditCard === true,
                         splitConfig: cfgResource?.splitConfig,
                         splitConfigCredit: cfgResource?.splitConfigCredit,
+                        ...receiptRoutingFields(receipt, cfg),
                     });
                     if (splitCfg && typeof splitCfg === "object") {
                         const partnerBps = typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
@@ -88,11 +89,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                     const basePresentedBps = isCredit
                         ? ((cfg as any)?.creditPresentedFeeBps ?? (cfg as any)?.presentedFeeBps)
                         : ((cfg as any)?.presentedFeeBps);
-                    const splitCfg = resolveSettlementSplitConfig({
+                    const splitCfg = resolveSettlementSplitConfig<any>({
                         funding: activeFunding,
                         isCreditCard: receipt.isCreditCard === true,
                         splitConfig: (cfg as any)?.splitConfig,
                         splitConfigCredit: (cfg as any)?.splitConfigCredit,
+                        ...receiptRoutingFields(receipt, cfg),
                     });
                     const partnerBps = splitCfg && typeof splitCfg.partnerBps === "number" ? splitCfg.partnerBps : 0;
 
@@ -195,7 +197,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
                 ? (cfg?.creditPresentedFeeBps ?? cfg?.presentedFeeBps)
                 : (cfg?.presentedFeeBps);
 
-            const splitCfg = resolveSettlementSplitConfig({
+            const splitCfg = resolveSettlementSplitConfig<any>({
+                        ...receiptRoutingFields(receipt, cfg),
                 funding: activeFunding,
                 isCreditCard: receipt.isCreditCard === true,
                 splitConfig: cfg?.splitConfig,
@@ -225,13 +228,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             finalTotalCents = subtotalCents + feeCents;
         }
 
-        const updatedReceipt = {
+        let updatedReceipt = {
             ...receipt,
             tipAmount: tipAmount,
             totalUsd: fromCents(finalTotalCents),
             lineItems: finalLineItems,
             lastUpdatedAt: Date.now()
         };
+
+        if (activeFunding === "crypto" || activeFunding === "us_bank_account") {
+            updatedReceipt = recalculateReceiptForCardFunding({ ...receipt, tipAmount, lastUpdatedAt: Date.now() }, activeFunding, cfg || {});
+        }
 
         // Never replay a pending snapshot over a payment accepted during calculation.
         await container.item(receipt.id, receipt.wallet).patch(

@@ -25,6 +25,7 @@ function load(relative, mocks = {}, globals = {}) {
     module, exports: module.exports, URL, Headers, Request, Response,
     console: { log() {}, warn() {}, error() {} }, crypto: require("node:crypto").webcrypto,
     require(name) {
+      if (name === "@/lib/payment-split-routing") return load("lib/payment-split-routing.ts");
       assert.ok(Object.hasOwn(mocks, name), `Unexpected dependency: ${name}`);
       return mocks[name];
     }, ...globals,
@@ -314,7 +315,7 @@ test("normal Reserve GET retains existing split resolution and history repair be
   assert.equal(response.status, 200);
   assert.equal(h.writes.length, 1);
   assert.ok(h.network.includes("legacy_config_resolver"));
-  assert.equal((await response.json()).degraded, undefined);
+  assert.equal((await response.json()).degraded, false);
 });
 
 test("CSRF errors stay forbidden rather than being retried under a second permission", async () => {

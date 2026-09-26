@@ -1,3 +1,5 @@
+import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { settlementRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { getSiteConfigForWallet } from "@/lib/site-config";
@@ -303,7 +305,9 @@ export async function POST(req: NextRequest) {
       } catch { }
     }
 
-    if (presentedFeeBps !== undefined) {
+    if (isCryptoOnly) {
+      basePlatformFeePct = resolveFundingPlatformFeePct("crypto", { ...settlementRoutingFields(cfg), splitConfig: splitCfg });
+    } else if (presentedFeeBps !== undefined) {
       const partnerBps = typeof splitCfg?.partnerBps === "number" ? splitCfg.partnerBps : 0;
       basePlatformFeePct = (presentedFeeBps + partnerBps) / 100;
       console.log("[Terminal Receipt] Using presentedFeeBps fee:", { presentedFeeBps, partnerBps, basePlatformFeePct });
@@ -330,7 +334,9 @@ export async function POST(req: NextRequest) {
     const baseWithoutFeeCents = baseCents + taxCents;
     const totalFeePct = Math.max(0, basePlatformFeePct + processingFeePct);
     const feePctFraction = totalFeePct / 100;
-    const processingFeeCents = Math.round(baseWithoutFeeCents * feePctFraction);
+    const processingFeeCents = isCryptoOnly
+      ? toCents(calculateCryptoFeeUsd(fromCents(baseWithoutFeeCents), totalFeePct))
+      : Math.round(baseWithoutFeeCents * feePctFraction);
 
     const isFeeMinus = !!cfg?.feeMinusEnabled;
     let lineItems: ReceiptLineItem[];
@@ -399,7 +405,7 @@ export async function POST(req: NextRequest) {
       tipAmount,
       // Brand isolation
       brandKey,
-      ...(isCryptoOnly ? { crypto: true } : {}),
+      ...(isCryptoOnly ? { crypto: true, detectedCardFunding: "crypto", splitRoutingSnapshot: settlementRoutingFields(cfg) } : {}),
       statusHistory: [{ status: "generated", ts }],
       lastUpdatedAt: ts,
     };

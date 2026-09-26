@@ -62,6 +62,13 @@ function harness(options = {}) {
   const env = {};
   Object.defineProperty(env, "BRAND_KEY", { get: () => state.brand });
   const dependencies = {
+    "@/lib/reporting/analytics-fee-summary": { loadAnalyticsFeeSummary: async (scope, partnerScope) => {
+      if (partnerScope) {
+        assert.equal(partnerScope.brandKey, state.brand);
+        assert.equal(scope.brandKey, state.brand);
+      }
+      return { status: "available", platformFee: 12.34, partnerFee: 56.78, unifiedFeeEnabled: false };
+    } },
     "next/server": { NextResponse: { json: (body, init) => ({ body: normalize(body), status: init?.status || 200, headers: new Headers(init?.headers) }) } },
     "@/lib/auth": { requireThirdwebAuth: async () => { if (!state.session) throw new Error("unauthorized"); return { wallet: state.session }; } },
     "@/lib/env": { getEnv: () => ({ ADMIN_WALLETS: [], ...options.env }) },
@@ -130,6 +137,21 @@ function harness(options = {}) {
 }
 
 const receipt = (id, fields = {}) => ({ type: "receipt", _id: id, id, receiptId: id, brandKey: "alpha", wallet: merchant, status: "paid", totalUsd: 100, createdAt: "2026-09-06T12:00:00Z", ...fields });
+
+for (const backend of ["mongo", "cosmos"]) test(`${backend}: crypto-only receipts retain Crypto attribution in partner and platform analytics`, async () => {
+  const split = '0x' + '4'.repeat(40);
+  const row = receipt('crypto-minimum', { crypto: true, totalUsd: 0.51,
+    splitRoutingSnapshot: { splitAddress: merchant, splitAddressCrypto: split, splitConfigCrypto: { platformBps: 50 }, splitOverrides: { crypto: true } } });
+  const h = harness({ backend, rows: [row], documents: { 'global/admin_roles': { admins: [{ wallet: actor, role: 'platform_admin' }] } } });
+  for (const call of [h.call, h.platform]) {
+    const result = await call({ paymentMethod: 'crypto', splitKind: 'crypto' });
+    assert.equal(result.status, 200, result.body.error);
+    assert.equal(result.body.stats.splitBreakdown.crypto.gmv, 0.51);
+    assert.equal(result.body.recentReceipts[0].settlementSplitAddress, split);
+    assert.equal(result.body.recentReceipts[0].settlementSplitKind, 'crypto');
+    assert.equal(result.body.recentReceipts[0].cardFunding, 'crypto');
+  }
+});
 
 test("verified partner access rejects spoofed wallets, unrelated admin roles, and unavailable permissions", async () => {
   const unauthenticated = harness({ session: null });

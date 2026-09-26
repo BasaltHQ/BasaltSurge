@@ -152,9 +152,10 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // PARTNER ADMIN BYPASS: If they have a valid admin/owner/dev/support role on the
-      // partner container, they are authorized admins and should bypass the merchant sign-up gate.
-      if (shopStatus === "none" && !blocked) {
+      // Admin assignments grant console access independently of merchant onboarding.
+      // Always resolve the current brand's role, including for pending/rejected
+      // applicants and existing merchants. Explicit blocks still take precedence.
+      if (!blocked) {
         const { resolveAdminRole } = await import("@/lib/authz-server");
         const role = await resolveAdminRole(wallet, brandKey);
         if (role && (role.startsWith("partner_") || role.startsWith("platform_"))) {

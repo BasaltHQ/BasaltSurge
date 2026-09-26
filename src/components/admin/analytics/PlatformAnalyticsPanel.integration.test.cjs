@@ -112,6 +112,9 @@ test('partner view links keep a separate namespace, lock brand, and reject globa
   assert.equal(serialized.get('ppa_receiptTab'), 'overview');
   assert.equal(serialized.get('pa_brand'), 'foreign', 'Platform view state is kept independent');
   assert.deepEqual(serialized.getAll('ppa_reason'), ['declined', 'timeout']);
+  mixed.set('ppa_receiptTab', 'fees');
+  assert.equal(parsePartnerAnalyticsViewState(mixed, 'brand-a').receiptTab, 'overview');
+  assert.equal(writePartnerAnalyticsViewState(mixed, { ...partner, receiptTab: 'fees' }, 'brand-a').get('ppa_receiptTab'), 'overview');
 });
 
 test('partner workspace loads and exports only its brand with merchant metrics and read-only scoped investigations', async () => {
@@ -136,6 +139,7 @@ test('partner workspace loads and exports only its brand with merchant metrics a
   const requests = [];
   const exportStart = exported.length;
   let responseBrand = 'brand-a';
+  let reportFees = { status: 'available', platformFee: 123.45, partnerFee: 67.89, unifiedFeeEnabled: false };
   global.fetch = async (input, options) => {
     const url = new URL(String(input), 'https://partner.example.invalid');
     requests.push({ url, options });
@@ -148,6 +152,7 @@ test('partner workspace loads and exports only its brand with merchant metrics a
     const offset = Number(url.searchParams.get('offset') || 0);
     return { ok: true, json: async () => ({
       ...aggregates, ok: true, merchantStats, recentReceipts: [rows[offset]],
+      reportFees,
       pagination: { totalMatchingCount: rows.length, hasMore: offset === 0, snapshotEnd: '2026-09-07T00:00:00.000Z', continuationToken: offset === 0 ? 'partner-page-two' : undefined },
       metadata: { generatedAt: '2026-09-07T00:00:00.000Z', accessScope: { type: 'partner', brandKey: responseBrand, attribution: 'explicit-brand-only' }, query: { start: null, end: '2026-09-07T00:00:00.000Z' } },
     }) };
@@ -165,6 +170,11 @@ test('partner workspace loads and exports only its brand with merchant metrics a
     assert.equal(window.location.searchParams.get('ppa_brand'), 'brand-a');
     assert.equal(window.location.searchParams.get('pa_brand'), 'foreign');
     assert.match(text(tree), /Partner Analytics/);
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Overview').props.onClick();
+    tree = await runner.settle(Partner);
+    assert.match(text(tree), /Platform fees · Reports\$123\.45/);
+    assert.match(text(tree), /Partner fees: \$67\.89/);
+    assert.doesNotMatch(text(tree), /Platform fees · recorded \+ modeled/);
     assert.match(text(tree), /Only records explicitly attributed to this brand/);
     assert.match(text(tree), /Merchant Performance/);
     assert.match(text(tree), /Merchant 1/);
@@ -202,6 +212,18 @@ test('partner workspace loads and exports only its brand with merchant metrics a
     assert.match(output.args[3], /Brand scope: brand-a/);
     assert.match(output.args[3], /Only explicitly attributed brand records/);
     assert.deepEqual(output.args[5], { brandName: 'Brand A', brandKey: 'brand-a' });
+
+    reportFees = { status: 'available', platformFee: 191.34, partnerFee: 0, unifiedFeeEnabled: true };
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Refresh').props.onClick();
+    tree = await runner.settle(Partner);
+    assert.match(text(tree), /Fees · Reports\$191\.34/);
+    assert.doesNotMatch(text(tree), /Partner fees:/);
+
+    reportFees = { status: 'unavailable', platformFee: null, partnerFee: null, unifiedFeeEnabled: false };
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Refresh').props.onClick();
+    tree = await runner.settle(Partner);
+    assert.match(text(tree), /Platform fees · ReportsUnavailable/);
+    assert.doesNotMatch(text(tree), /\$191\.34/);
 
     responseBrand = 'foreign';
     walk(tree).find(node => node.type === 'button' && text(node) === 'Refresh').props.onClick();
@@ -251,6 +273,7 @@ test('shared URL query flows through live panel filters, bounded batches, and co
     const offset = Number(url.searchParams.get('offset') || 0);
     return { ok: true, json: async () => ({
       ...aggregates, ok: true, recentReceipts: [rows[responseMode === 'duplicate' ? 0 : offset]],
+      reportFees: { status: 'available', platformFee: 321.98, partnerFee: null, unifiedFeeEnabled: false },
       failureReasons: getAnalyticsFailureReportData(rows).reasonCounts,
       failureHeatmap: buildAnalyticsFailureHeatmap(rows),
       pagination: { totalMatchingCount: rows.length + (responseMode === 'drift' && offset > 0 ? 1 : 0), hasMore: offset === 0, snapshotEnd, continuationToken: offset === 0 ? 'next-page' : undefined },
@@ -271,6 +294,9 @@ test('shared URL query flows through live panel filters, bounded batches, and co
     assert.deepEqual(initial.getAll('failureReason'), ['Card declined']);
     assert.equal(requests[1].searchParams.get('snapshotEnd'), snapshotEnd);
     assert.equal(requests[1].searchParams.get('continuationToken'), 'next-page');
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Overview').props.onClick();
+    tree = await runner.settle(Panel);
+    assert.match(text(tree), /Platform fees · Reports\$321\.98/);
 
     const brandFilter = walk(tree).find(node => node.type === 'select' && text(node).includes('All Brands'));
     assert.ok(brandFilter);
@@ -350,11 +376,16 @@ test('a shared receipt link selects its later ledger page and restores the reque
     email: 'customer@example.invalid', stripeSessionId: `session-link-${index}`,
   }));
   const aggregates = aggregateAnalyticsReceipts(rows, 'America/Los_Angeles');
-  global.fetch = async input => {
+  const replayCalls = [];
+  let replayResponse;
+  let analyticsReads = 0;
+  global.fetch = async (input, options) => {
     const url = new URL(String(input), 'https://analytics.example.invalid');
+    if (url.pathname === '/api/platform/thirdweb-replay') { replayCalls.push(JSON.parse(options.body)); return replayResponse || new Response(JSON.stringify({ ok: true, message: 'Thirdweb payment verified and receipt marked paid.' })); }
     if (url.pathname === '/api/platform/safe-value') return { ok: true, json: async () => ({ balanceHistory: [], tokenPrices: {}, metadata: {} }) };
     if (url.pathname === '/api/platform/git-commits') return { ok: true, json: async () => ({ ok: true, commits: [] }) };
     assert.equal(url.pathname, '/api/platform/analytics');
+    analyticsReads++;
     return { ok: true, json: async () => ({ ...aggregates, ok: true, recentReceipts: rows, pagination: { totalMatchingCount: rows.length, hasMore: false, snapshotEnd: '2026-09-07T00:00:00Z' } }) };
   };
   const Panel = require('../../../app/(web)/admin/panels/PlatformAnalyticsPanel.tsx').default;
@@ -368,6 +399,35 @@ test('a shared receipt link selects its later ledger page and restores the reque
     assert.ok(investigation, 'The linked receipt is expanded on its actual visible ledger page');
     assert.equal(investigation.props.activeTab, 'fees');
     assert.doesNotMatch(text(tree), /linked receipt is not present/);
+    const beforeReplay = analyticsReads;
+    const selected = { ...investigation.props.receipt, wallet: '0x' + '1'.repeat(40) };
+    await investigation.props.handleThirdwebReplay(selected, '0x' + 'a'.repeat(64), 42161);
+    const updated = await runner.settle(Panel);
+    assert.deepEqual(replayCalls, [{ receiptId: selected.receiptId, wallet: selected.wallet, brandKey: selected.brandKey, transactionHash: '0x' + 'a'.repeat(64), chainId: 42161 }]);
+    assert.ok(analyticsReads > beforeReplay, 'successful replay refreshes analytics');
+    const refreshed = walk(updated).find(node => node.props?.receipt?.receiptId === selected.receiptId);
+    assert.equal(refreshed.props.actionLoading['thirdweb-' + selected.receiptId], false);
+    assert.match(refreshed.props.actionFeedback[selected.receiptId], /receipt marked paid/);
+    const readsBeforeFailure = analyticsReads;
+    for (const status of [502, 504, 200]) {
+      replayResponse = new Response('<!DOCTYPE html><html>Cloudflare Bad gateway</html>', { status, headers: { 'content-type': 'text/html', 'cf-ray': 'ray-test' } });
+      await refreshed.props.handleThirdwebReplay(selected);
+      const failedTree = await runner.settle(Panel);
+      const failed = walk(failedTree).find(node => node.props?.receipt?.receiptId === selected.receiptId);
+      const feedback = failed.props.actionFeedback[selected.receiptId];
+      assert.match(feedback, new RegExp(`HTTP ${status}`));
+      assert.match(feedback, /Refresh the receipt/);
+      assert.match(feedback, /ray-test/);
+      assert.doesNotMatch(feedback, /<!DOCTYPE|<html|Unexpected token|marked paid/);
+      assert.equal(failed.props.actionLoading['thirdweb-' + selected.receiptId], false);
+      assert.equal(analyticsReads, readsBeforeFailure, 'an uncertain response is not reported as a successful replay');
+    }
+    replayResponse = new Response(JSON.stringify({ ok: false, error: 'Thirdweb identifies another receipt.' }), { status: 409 });
+    await refreshed.props.handleThirdwebReplay(selected);
+    const rejectedTree = await runner.settle(Panel);
+    const rejected = walk(rejectedTree).find(node => node.props?.receipt?.receiptId === selected.receiptId);
+    assert.equal(rejected.props.actionFeedback[selected.receiptId], 'Thirdweb identifies another receipt.');
+
   } finally {
     runner.dispose();
     delete global.fetch; delete global.window; delete global.localStorage; delete global.document;

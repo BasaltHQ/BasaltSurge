@@ -24,7 +24,7 @@ import { getAllComparisons } from "@/lib/landing-pages/comparisons";
 import { getAllLocations } from "@/lib/landing-pages/locations";
 import { useThirdwebClient } from "@/hooks/useThirdwebClient";
 import landingNavStyles from "./landing/landing-navbar.module.css";
-import { ACCESS_STATUS_ERROR, fetchMerchantAccessStatus } from "@/lib/merchant-access-status";
+import { ACCESS_STATUS_ERROR, fetchMerchantAccessStatus, requiresMerchantApproval } from "@/lib/merchant-access-status";
 
 type SeoPageCategory = 'industries' | 'comparisons' | 'locations';
 
@@ -90,10 +90,8 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
     const wallets = useMemo(() => {
         const accessMode = (brand as any)?.accessMode || "open";
         const isPrivate = accessMode === "request";
-        const isPlatformContainer = container.containerType === "platform";
-        const shouldUsePrivateWallets = isPrivate && !isPlatformContainer;
-        return shouldUsePrivateWallets ? getPrivateLoginWallets(chain) : getWallets(chain);
-    }, [brand, container.containerType]);
+        return isPrivate ? getPrivateLoginWallets(chain) : getWallets(chain);
+    }, [brand]);
 
     const [scrolled, setScrolled] = useState(false);
     const [time, setTime] = useState('');
@@ -328,11 +326,8 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                 const domContainerType = typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-pp-container-type') || '').toLowerCase() : '';
                 const ct = (container?.containerType || "").toLowerCase();
                 const isPartner = domContainerType === "partner" || ct === "partner";
-                const isRegistrationRegime = process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
-
-                // Access Control Gating — Approval is only mandatory on partner containers for now
-                // The platform container uses the registration regime only if the env var is set.
-                const isApproved = !me?.blocked && ((!isPartner && !isRegistrationRegime) || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin || !!me?.isTeamMember);
+                const approvalRequired = requiresMerchantApproval(isPartner, brand.accessMode);
+                const isApproved = !me?.blocked && (!approvalRequired || String(me?.shopStatus || "").toLowerCase() === "approved" || isPlatformAdmin || !!me?.isTeamMember);
                 const blocked = !isApproved;
 
                 if (me?.authed && !blocked && me?.wallet && String(me.wallet).toLowerCase() === w) {
@@ -436,7 +431,16 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
             if (promptTimer) clearTimeout(promptTimer);
             checkingAuth.current = false;
         };
-    }, [account?.address, activeWallet?.id, brand?.key, container.containerType, showSignupWizard, authCheckTrigger, pathname]);
+    }, [account?.address, activeWallet?.id, brand?.key, brand.accessMode, container.containerType, showSignupWizard, authCheckTrigger, pathname]);
+
+    // Resume explicit Admin navigation after an existing session, automatic
+    // login, or the sign-in modal completes the access check.
+    useEffect(() => {
+        if (authed && account?.address && pendingAdminNav) {
+            setPendingAdminNav(false);
+            router.push("/admin");
+        }
+    }, [authed, account?.address, pendingAdminNav, router]);
 
     // Broadcast login/logout so ThemeLoader can immediately apply merchant-scoped theme
     useEffect(() => {
@@ -474,7 +478,9 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
         const base: NavItem[] = [];
         if (authed && account?.address) base.push({ href: "/profile", label: tNavbar("profile"), authOnly: true });
         if (authed && account?.address) base.push({ href: "/shop", label: tNavbar("shop"), authOnly: true });
-        if (authed && account?.address) base.push({ href: "/admin", label: tNavbar("admin"), authOnly: true });
+        // Keep sign-in reachable if the wallet connected but the app session
+        // has not completed (for example, after dismissing the sign-in modal).
+        if (account?.address) base.push({ href: "/admin", label: tNavbar("admin"), authOnly: true });
         return base;
     }, [authed, account?.address, tNavbar]);
 
@@ -951,10 +957,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                                             if (it.href === "/admin" && !authed) {
                                                 e.preventDefault();
                                                 setPendingAdminNav(true);
-                                                const walletId = activeWallet?.id;
-                                                const isEmbeddedWallet = walletId === "inApp" || walletId === "embedded";
-                                                setIsSocialLogin(isEmbeddedWallet);
-                                                setShowAuthModal(true);
+                                                setAuthCheckTrigger(c => c + 1);
                                             }
                                         } catch { }
                                     }}
@@ -1278,10 +1281,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                                                 e.preventDefault();
                                                 setMobileOpen(false);
                                                 setPendingAdminNav(true);
-                                                const walletId = activeWallet?.id;
-                                                const isEmbeddedWallet = walletId === "inApp" || walletId === "embedded";
-                                                setIsSocialLogin(isEmbeddedWallet);
-                                                setShowAuthModal(true);
+                                                setAuthCheckTrigger(c => c + 1);
                                             } else {
                                                 setMobileOpen(false);
                                             }
@@ -1391,7 +1391,10 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
             <AuthModal
                 isOpen={showAuthModal}
                 isSocialLogin={isSocialLogin}
-                onClose={() => setShowAuthModal(false)}
+                onClose={() => {
+                    setShowAuthModal(false);
+                    setPendingAdminNav(false);
+                }}
                 onSuccess={() => {
                     setShowAuthModal(false);
                     setAuthed(true);
@@ -1405,12 +1408,6 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                             }).catch(() => { });
                         } catch { }
                     }
-                    try {
-                        if (pendingAdminNav) {
-                            setPendingAdminNav(false);
-                            router.push("/admin");
-                        }
-                    } catch { }
                 }}
                 onError={(error) => console.error('[Auth] Failed:', error)}
             />
@@ -1435,6 +1432,7 @@ export function Navbar({ variant = "default" }: { variant?: "default" | "landing
                 }}
                 onClose={() => {
                     setShowAccessPending(false);
+                    setPendingAdminNav(false);
                     if (activeWallet) {
                         disconnect(activeWallet);
                     }

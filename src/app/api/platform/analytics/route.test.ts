@@ -51,6 +51,7 @@ function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?
     "@/lib/platform-analytics-aggregation": aggregation,
     "@/lib/platform-analytics-fees": fees,
     "@/lib/platform-analytics-failures": failures,
+    "@/lib/reporting/analytics-fee-summary": { loadAnalyticsFeeSummary: async () => ({ status: "available", platformFee: 123.45, partnerFee: null, unifiedFeeEnabled: false }) },
     // Verified session authorization is exercised by partner analytics access tests.
     "@/lib/partner-analytics-access": { requirePlatformAnalyticsAccess: async () => ({ actorWallet: "platform", role: "platform_admin" }) },
   };

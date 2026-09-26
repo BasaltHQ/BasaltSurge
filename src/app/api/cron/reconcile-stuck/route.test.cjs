@@ -44,6 +44,7 @@ function createHarness({ receipts = [], sessions = {}, balance = 100, balanceErr
   const documents = new Map(receipts.map(value => [value.id, structuredClone(value)]));
   const requests = [];
   const transfers = [];
+  const webhooks = [];
   const queries = [];
   const jsonResponse = (value, status = 200) => new Response(JSON.stringify(value), { status });
   const container = {
@@ -79,7 +80,7 @@ function createHarness({ receipts = [], sessions = {}, balance = 100, balanceErr
     "@/lib/env": { isPartnerContext: () => Boolean(partner) },
     "@/lib/brand-config": { readBrandOverridesCached: async () => null },
     "@/lib/receipts": { enrichReceiptFromStripeData: () => {} },
-    "@/lib/webhook-dispatch": { dispatchReceiptStatusWebhookBestEffort: async () => ({ ok: true }) },
+    "@/lib/webhook-dispatch": { dispatchReceiptStatusWebhookBestEffort: async (...args) => { webhooks.push(args); return { ok: true }; } },
     "thirdweb": { createThirdwebClient: () => ({}), getContract: () => ({}), readContract: async () => {
       if (balanceError) throw new Error("RPC unavailable");
       return BigInt(balance * 1_000_000);
@@ -114,7 +115,7 @@ function createHarness({ receipts = [], sessions = {}, balance = 100, balanceErr
         const id = String(url).split("/").pop();
         requests.push(id);
         assert.ok(sessions[id], `Unexpected HTTP request ${url}`);
-        return jsonResponse(sessions[id]);
+        return jsonResponse({ id, ...sessions[id] });
       },
       URL, Buffer, Response, AbortSignal,
       process: { env: { CRON_SECRET: "mock_cron", STRIPE_API_KEY: "sk_test_mock", BRAND_KEY: partner, CONTAINER_TYPE: partner ? "partner" : "platform" } },
@@ -124,7 +125,7 @@ function createHarness({ receipts = [], sessions = {}, balance = 100, balanceErr
   }
   const route = load(path.join(__dirname, "route.ts"));
   return {
-    documents, requests, transfers, queries,
+    documents, requests, transfers, queries, webhooks,
     async post(id = "") {
       const response = await route.POST(new Request(`https://example.test/api/cron/reconcile-stuck${id ? `?receiptId=${id}` : ""}`, { method: "POST", headers: { "x-cron-secret": "mock_cron" } }));
       const data = await response.json();
@@ -204,6 +205,35 @@ test("a terminal Stripe failure is reconciled without a destination amount", asy
   assert.equal(result.failed, 1);
   assert.equal(harness.documents.get("receipt:rejected").status, "failed");
   assert.equal(harness.transfers.length, 0);
+});
+
+test('scheduled rejection reconciliation queues the same merchant failure contract', async () => {
+  const h = createHarness({ receipts: [receipt('blocked', { webhookUrl: 'https://merchant.example/webhook' })],
+    sessions: { cos_blocked: { status: 'rejected', metadata: { receiptId: 'blocked' },
+      transaction_details: { last_error: { code: 'crypto_onramp_transaction_blocked', message: 'Blocked' } } } } });
+  await h.post('blocked');
+  const stored = h.documents.get('receipt:blocked');
+  assert.equal(stored.status, 'failed');
+  assert.equal(stored.reconciledFailed, true);
+  assert.equal(stored.stripeFailure.providerErrorCode, 'crypto_onramp_transaction_blocked');
+  assert.equal(stored.webhookLastDeliveryOk, false);
+  assert.equal(h.webhooks.length, 1);
+  assert.equal(h.webhooks[0][2], 'failed');
+  assert.equal(h.transfers.length, 0);
+});
+
+test("notification retry uses the current paid status and hash over a stale failed marker", async () => {
+  const h = createHarness({ receipts: [receipt("retry", {
+    status: "paid", transactionHash: HASH, reconciledFailed: true,
+    webhookUrl: "https://merchant.example/webhook", webhookLastDeliveryOk: false,
+    webhookLastStatus: "failed", webhookLastPreviousStatus: "pending",
+    webhookLastTransactionHash: "obsolete",
+  })] });
+  await h.post();
+  assert.equal(h.webhooks.length, 1);
+  assert.equal(h.webhooks[0][2], "paid");
+  assert.equal(h.webhooks[0][4].transactionHash, HASH);
+  assert.equal(h.transfers.length, 0);
 });
 
 test("ACH sweeper cooldown is independent and targeted reconciliation bypasses it", async () => {

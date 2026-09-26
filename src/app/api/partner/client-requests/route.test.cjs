@@ -28,6 +28,7 @@ function harness(overrides, envDual, existingConfig = false) {
         item: () => ({ replace: async doc => { writes.push(doc); } }),
     };
     const mocks = {
+        "@/lib/payment-split-routing": require("../../../../lib/payment-split-routing.ts"),
         "next/server": { NextResponse: Response },
         "node:crypto": require("node:crypto"),
         "@/lib/encryption": {},

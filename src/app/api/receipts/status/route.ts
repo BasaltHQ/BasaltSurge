@@ -1,3 +1,5 @@
+import { thirdwebRecoveryTransactions } from "@/lib/thirdweb/receipt-recovery-hints";
+import { receiptWebhookFailure } from "@/lib/receipt-webhook-failure";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth, assertOwnershipOrAdmin } from "@/lib/auth";
@@ -80,10 +82,7 @@ export async function GET(req: NextRequest) {
           transactionHash: typeof resource.transactionHash === "string" ? resource.transactionHash : null,
           currency: resource.expectedToken || null,
           amount: typeof resource.totalUsd === "number" ? resource.totalUsd : null,
-          ...(resource.failureCode ? { failureCode: resource.failureCode } : {}),
-          ...(resource.failureReason ? { failureReason: resource.failureReason } : {}),
-          ...(resource.failureCategory ? { failureCategory: resource.failureCategory } : {}),
-          ...(resource.failureAction ? { failureAction: resource.failureAction } : {}),
+          ...receiptWebhookFailure(resource, String(resource.status || "generated")),
         };
         return NextResponse.json(payload, { headers: { "x-correlation-id": correlationId } });
       }
@@ -101,10 +100,7 @@ export async function GET(req: NextRequest) {
           transactionHash: typeof found.transactionHash === "string" ? found.transactionHash : null,
           currency: found.expectedToken || null,
           amount: typeof found.totalUsd === "number" ? found.totalUsd : null,
-          ...(found.failureCode ? { failureCode: found.failureCode } : {}),
-          ...(found.failureReason ? { failureReason: found.failureReason } : {}),
-          ...(found.failureCategory ? { failureCategory: found.failureCategory } : {}),
-          ...(found.failureAction ? { failureAction: found.failureAction } : {}),
+          ...receiptWebhookFailure(found, String(found.status || "generated")),
         };
         return NextResponse.json(payload, { headers: { "x-correlation-id": correlationId } });
       }
@@ -430,6 +426,28 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        if (!isTrustedInternal && isAuthoritativeStatus && isCryptoPayment && !stripeSessionId) {
+          const recoveryTransactions = thirdwebRecoveryTransactions(body, Number(process.env.CHAIN_ID || process.env.NEXT_PUBLIC_CHAIN_ID || 8453));
+          if (recoveryTransactions.length) {
+            // Keep browser evidence separate from canonical settlement fields.
+            // Replay must independently verify these hints with Thirdweb.
+            await container.item(id, wallet).patch([{
+              op: "set", path: "/thirdwebPaymentReport", value: {
+                source: "browser", verified: false, reportedAt: ts,
+                transactions: recoveryTransactions,
+                ...(typeof paymentId === "string" ? { paymentId: paymentId.slice(0, 200) } : {}),
+              },
+            }] as any);
+            const { resource: reportedReceipt } = await container.item(id, wallet).read<any>();
+            const { verifyReportedThirdwebReceipt } = await import("@/lib/thirdweb/receipt-verification");
+            if (await verifyReportedThirdwebReceipt(container, reportedReceipt, new URL(req.url).origin)) {
+              return NextResponse.json({ ok: true, receiptId, status: "paid", authoritative: true }, {
+                headers: { "x-correlation-id": correlationId },
+              });
+            }
+          }
+        }
+
         try {
           await auditEvent(req, {
             who: isTrustedInternal ? "system" : "anonymous",
@@ -468,6 +486,9 @@ export async function POST(req: NextRequest) {
         resource = null;
       }
 
+      // A platform-admin replay can target a partner receipt. Keep its stored
+      // brand instead of replacing it with the container's brand.
+      if (resource?.brandKey) brandKey = resource.brandKey;
       const currentStatus = String(resource?.status || "").toLowerCase();
       const ipAddress = !isTrustedInternal
         ? resolvePersistedClientIp(resource?.ipAddress, req.headers, requestIpAddress)
@@ -557,6 +578,7 @@ export async function POST(req: NextRequest) {
           ...(thirdwebMetadata ? { thirdwebMetadata } : {}),
           // Persist smart contract split addresses and configs
           ...(resource?.splitAddress ? { splitAddress: resource.splitAddress } : {}),
+          splitRoutingSnapshot: resource?.splitRoutingSnapshot,
           ...(resource?.splitAddressCredit ? { splitAddressCredit: resource.splitAddressCredit } : {}),
           ...(resource?.splitConfig ? { splitConfig: resource.splitConfig } : {}),
           ...(resource?.splitConfigCredit ? { splitConfigCredit: resource.splitConfigCredit } : {}),

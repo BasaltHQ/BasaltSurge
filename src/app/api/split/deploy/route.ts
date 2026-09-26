@@ -7,6 +7,8 @@ import { requireCsrf } from "@/lib/security";
 import { getBrandKey, applyBrandDefaults } from "@/config/brands";
 import { isPartnerContext, getSanitizedSplitBps, isDualSplitEnabled, getSanitizedCreditSplitBps, getEnv } from "@/lib/env";
 import { getPlatformAdminWallets, resolveAdminRole } from "@/lib/authz-server";
+import { parseSplitKind, SPLIT_FIELDS, settlementRoutingFields } from "@/lib/payment-split-routing";
+import { updateSplitDeployment } from "@/lib/split-deployment";
 
 /**
  * Per-merchant Split configuration API.
@@ -157,6 +159,8 @@ function jsonResponse(body: any, init?: any, req?: NextRequest): NextResponse {
 }
 
 export async function GET(req: NextRequest) {
+  try { const params = new URL(req.url).searchParams; if (params.has("splitKind")) parseSplitKind(params.get("splitKind"), params.get("isCredit")); }
+  catch (error: any) { return jsonResponse({ error: error.message }, { status: 400 }); }
   try {
     let caller: any;
     try {
@@ -295,6 +299,14 @@ export async function GET(req: NextRequest) {
     // PRIMARY: Use getSiteConfigForWallet
     try {
       const cfg = await getSiteConfigForWallet(wallet, docBrandKey);
+      if (url.searchParams.has("splitKind") || url.searchParams.get("all") === "true") {
+        const kind = parseSplitKind(url.searchParams.get("splitKind"), url.searchParams.get("isCredit"));
+        const canonical = (await c.item(`site:config:${resolvedBrand}`, wallet).read<any>().catch(() => ({ resource: undefined }))).resource;
+        const config = { ...cfg, ...canonical };
+        const fields = settlementRoutingFields(config);
+        const f = SPLIT_FIELDS[kind];
+        return jsonResponse({ splitKind: kind, split: fields[f.contract] || { address: fields[f.address], recipients: [] }, config: { ...fields, splitDrafts: config.splitDrafts || {}, splitDeployments: config.splitDeployments || {}, splitHistory: config.splitHistory || [], splitRevision: Number(config.splitRevision || 0), splitSyncPending: config.splitSyncPending === true }, brandKey: resolvedBrand });
+      }
       const isCreditQuery = url.searchParams.get("isCredit") === "true";
       const isDual = (typeof (cfg as any)?.dualSplitEnabled === "boolean" ? (cfg as any).dualSplitEnabled : isDualSplitEnabled()) || isCreditQuery;
 
@@ -501,6 +513,7 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
     // Admin-only write via JWT; allow APIM/JWT as secondary auth; fallback to x-wallet when splitAddress provided
     let caller: any;
+    let verifiedCaller = true;
     try {
       caller = await requireThirdwebAuth(req);
     } catch {
@@ -509,6 +522,7 @@ export async function POST(req: NextRequest) {
       } catch {
         // Fallback: use x-wallet header when present and valid to permit idempotent address binding from deployment pipeline
         caller = { wallet: String(req.headers.get("x-wallet") || "") };
+        verifiedCaller = false;
         const w = String(caller.wallet || "").toLowerCase();
         if (!isHexAddress(w)) {
           return jsonResponse({ error: "forbidden" }, { status: 403 });
@@ -627,6 +641,45 @@ export async function POST(req: NextRequest) {
     }
 
     const wallet = (isHexAddress(walletHeader) ? walletHeader : callerWallet).toLowerCase() as `0x${string}`;
+
+    if (body.splitKind !== undefined) {
+      if (!verifiedCaller) return jsonResponse({ error: "authentication_required" }, { status: 401 });
+      requireCsrf(req);
+      const authenticatedRole = await resolveAdminRole(callerWallet, brandKey);
+      const actualPlatformAdmin = platformAdminWallets.includes(callerWallet) || !!authenticatedRole?.startsWith("platform_");
+      const actualPartnerAdmin = callerWallet === String(brand?.partnerWallet || "").toLowerCase();
+      if (!actualPlatformAdmin && !actualPartnerAdmin && !authenticatedRole) return jsonResponse({ error: "admin_required" }, { status: 403 });
+      let kind;
+      try { kind = parseSplitKind(body.splitKind, body.isCredit); }
+      catch (error: any) { return jsonResponse({ error: error.message }, { status: 400 }); }
+      const platformRecipient = !["portalpay", "basaltsurge"].includes(brandKey)
+        ? "0xacdaa0314000a1d10f3e9ef1b88e986a72aa3f6e"
+        : String(process.env.NEXT_PUBLIC_RECIPIENT_ADDRESS || process.env.NEXT_PUBLIC_PLATFORM_WALLET || "0xacdaa0314000a1d10f3e9ef1b88e986a72aa3f6e").toLowerCase();
+      try {
+        const policyBrand: any = { ...brand,
+          platformFeeBps: brand?.platformFeeBps ?? getEnv().PLATFORM_BPS ?? 125,
+          creditPlatformFeeBps: brand?.creditPlatformFeeBps ?? getSanitizedCreditSplitBps()?.platform ?? 150,
+          agents: [...(brand?.agents || [])],
+        };
+        const agentWallet = brand?.primaryAgentWallet || process.env.NEXT_PUBLIC_AGENT_WALLET || process.env.AGENT_WALLET || "";
+        const debitAgentBps = brand?.agentFeeBps ?? Number(process.env.NEXT_PUBLIC_AGENT_SPLIT_BPS || process.env.AGENT_SPLIT_BPS || 0);
+        const agentBps = kind === "debit" ? debitAgentBps : (brand?.creditAgentFeeBps ?? Number(process.env.NEXT_PUBLIC_CREDIT_SPLIT_AGENT_BPS || process.env.CREDIT_SPLIT_AGENT_BPS || debitAgentBps));
+        if (agentWallet && agentBps > 0) policyBrand.agents.push({ wallet: agentWallet, bps: agentBps });
+        for (const value of [process.env.NEXT_PUBLIC_AGENT_WALLETS_JSON, process.env.AGENT_WALLETS_JSON]) {
+          try { for (const agent of JSON.parse((value || "[]").trim().replace(/^"|"$/g, ""))) {
+            if (!policyBrand.agents.some((a: any) => a.wallet?.toLowerCase() === agent.wallet?.toLowerCase())) policyBrand.agents.push(agent);
+          } } catch { }
+        }
+        const result = await updateSplitDeployment({ container: await getContainer(undefined, undefined, { profile: "critical" }), docId: `site:config:${brandKey}`, wallet, brandKey, body, kind, platformWallet: platformRecipient, brand: policyBrand, platformAdmin: actualPlatformAdmin, initialConfig: await getSiteConfigForWallet(wallet, brandKey) });
+        if (body.action === "activate") {
+          try { const { notifySplitDeployed } = await import("@/lib/notifications/events"); await notifySplitDeployed(result.config, null, kind, brandKey); }
+          catch (error) { console.error("[split/deploy] Activation succeeded; notification failed", error); }
+        }
+        return jsonResponse(result);
+      } catch (error: any) {
+        return jsonResponse({ error: error.message || "deployment_failed" }, { status: error.status || (error.code === 412 ? 409 : 400) });
+      }
+    }
 
     // CSRF for UI writes (allow x-wallet + provided splitAddress to bind without CSRF for partner deploy flow)
     try {

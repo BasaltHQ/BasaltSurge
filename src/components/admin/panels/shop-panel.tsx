@@ -12,6 +12,7 @@ import ImageUploadField from "@/components/forms/ImageUploadField";
 import ShopWizard from "@/components/shop/ShopWizard";
 import ShopClient from "@/app/(web)/shop/[slug]/ShopClient";
 import { useBrand } from "@/contexts/BrandContext";
+import { requiresMerchantApproval } from "@/lib/merchant-access-status";
 import AdvancedShopTab from "@/components/admin/AdvancedShopTab";
 import ShopDiscoveryEditor from "@/components/shop/ShopDiscoveryEditor";
 import { PortalThemePlayground } from "@/components/admin/portal-theme";
@@ -478,9 +479,9 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
         const domContainerType = typeof document !== 'undefined' ? (document.documentElement.getAttribute('data-pp-container-type') || '').toLowerCase() : '';
         const containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase();
         const isPartner = domContainerType === "partner" || containerType === "partner";
-        const isRegistrationRegime = process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
+        const approvalRequired = requiresMerchantApproval(isPartner, brand.accessMode);
         
-        const isApproved = (!isPartner && !isRegistrationRegime) || status === "approved" || me?.isPlatformAdmin || !!me?.isTeamMember;
+        const isApproved = !approvalRequired || status === "approved" || me?.isPlatformAdmin || !!me?.isTeamMember;
 
         if (!isApproved) {
           router.replace("/apply");
@@ -543,7 +544,7 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
 
   useEffect(() => {
     loadExisting();
-  }, [account?.address]);
+  }, [account?.address, brand.accessMode]);
 
   useEffect(() => {
     const handleLoggedIn = () => {
@@ -553,7 +554,7 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
     return () => {
       window.removeEventListener("pp:auth:logged_in", handleLoggedIn);
     };
-  }, []);
+  }, [brand.accessMode]);
 
   useEffect(() => {
     try {

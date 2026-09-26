@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
 import { getPlatformAnalyticsFeeData } from "@/lib/platform-analytics-fees";
+import { loadAnalyticsFeeSummary } from "@/lib/reporting/analytics-fee-summary";
 import { resolveAnalyticsKyc } from "@/lib/platform-analytics-metrics";
 import { aggregateAnalyticsReceipts } from "@/lib/platform-analytics-aggregation";
 import { requirePlatformAnalyticsAccess, partnerAnalyticsMongoBrandFilter, partnerAnalyticsRecordMatchesBrand, partnerAnalyticsSqlBrandScope } from "@/lib/partner-analytics-access";
@@ -10,7 +11,7 @@ import {
   ANALYTICS_DEFINITION_VERSION, analyticsPageSize, resolveAnalyticsQuery, resolveAnalyticsBrand,
   analyticsReceiptInRange, matchesAnalyticsQueryDimensions, analyticsSortReceipts,
   analyticsStorageKey, pageAnalyticsReceipts,
-  buildAnalyticsFacets,
+  buildAnalyticsFacets, analyticsFunding, analyticsSplitRoute,
 } from "@/lib/platform-analytics-query";
 
 // Full identity, KYC and failure evidence must be present in every metric path.
@@ -30,7 +31,7 @@ const RECEIPT_PROJECTION = Object.fromEntries([
   "parentUrl", "merchantName", "shopName", "ipAddress", "buyerWallet", "stripeSessionId",
   "sessionId", "stripePaidSessionId", "stripePaymentAttemptSessionId",
   "paymentId", "thirdwebMetadata.paymentId", "transactionHash", "txHash", "leg2TxHash",
-  "leg1TxHash", "onrampTxHash",
+  "leg1TxHash", "onrampTxHash", "crypto", "isCrypto", "paymentMethod", "splitRoutingSnapshot", "settlementSplitAddress", "settlementSplitKind", "settlementSplitVersion", "splitAddressUsed",
 ].map(field => [field, 1]));
 
 type CachedPopulation = { rows: any[]; facets: ReturnType<typeof buildAnalyticsFacets>; generatedAt: string; expiresAt: number };
@@ -324,7 +325,13 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         leg1TxHash: r.leg1TxHash || null,
         leg2TxHash: r.leg2TxHash || null,
         onrampTxHash: r.onrampTxHash || null,
-        cardFunding: r.detectedCardFunding || r.cardFunding || r.funding || (r.isCreditCard === true ? "credit" : null),
+        cardFunding: analyticsFunding(r) === "bank" ? "us_bank_account" : analyticsFunding(r),
+        splitRoutingSnapshot: r.splitRoutingSnapshot || null,
+        settlementSplitAddress: analyticsSplitRoute(r).address,
+        settlementSplitKind: analyticsSplitRoute(r).kind,
+        settlementSplitVersion: analyticsSplitRoute(r).version,
+        splitRouteInherited: analyticsSplitRoute(r).inherited,
+        splitRouteSource: analyticsSplitRoute(r).source,
         failureReason: r.failureReason || null,
         diagnosticFailureReason: getFailureReason(r, rLogs),
         failureReasons: extractAnalyticsFailureReasons(r),
@@ -392,7 +399,7 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         originAmount: r.originAmount || r.thirdwebMetadata?.originAmount || null,
         destinationAmount: r.destinationAmount || r.thirdwebMetadata?.destinationAmount || null,
         quoteSummary: r.quoteSummary || r.thirdwebMetadata?.quoteSummary || null,
-        isCrypto: r.isCrypto || r.detectedCardFunding === "crypto" || r.cardFunding === "crypto" || !!r.transactionHash || false
+        isCrypto: analyticsFunding(r) === "crypto"
       };
     });
 
@@ -416,6 +423,7 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
 
     return analyticsJson({
       ok: true,
+      reportFees: includeAggregates ? await loadAnalyticsFeeSummary(scope, partnerScope) : null,
       stats: aggregates.stats,
       failureReasons: failureAnalytics.reasonCounts,
       failureHeatmap: failureAnalytics,

@@ -3,15 +3,20 @@
 import React, { useEffect, useState } from "react";
 import { Sliders, CheckCircle2, AlertCircle, RefreshCw, GitMerge, CreditCard, Wallet, Percent, ShieldCheck, DollarSign } from "lucide-react";
 import { useActiveAccount } from "thirdweb/react";
+import { useRouter } from "next/navigation";
+import { requiresMerchantApproval } from "@/lib/merchant-access-status";
 
 export default function PlatformSettingsPanel() {
   const account = useActiveAccount();
+  const router = useRouter();
   const [loading, setLoading] = useState(true);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
 
   const [config, setConfig] = useState({
+    accessMode: "open" as "open" | "request",
     v2CheckoutEnabled: false,
     stripeOnrampV2Enabled: false,
     feeMinusEnabled: false,
@@ -36,9 +41,13 @@ export default function PlatformSettingsPanel() {
         setError("");
         const res = await fetch("/api/platform/brands/basaltsurge/config", { cache: "no-store" });
         const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data?.brand || data?.error || data?.degraded) {
+          throw new Error(data?.error || "Failed to load platform settings");
+        }
         if (!cancelled && data) {
           const b = data.brand || {};
           setConfig({
+            accessMode: requiresMerchantApproval(false, b.accessMode) ? "request" : "open",
             v2CheckoutEnabled: Boolean(b.v2CheckoutEnabled ?? b.stripeOnrampV2Enabled ?? false),
             stripeOnrampV2Enabled: Boolean(b.stripeOnrampV2Enabled ?? b.v2CheckoutEnabled ?? false),
             feeMinusEnabled: Boolean(b.feeMinusEnabled ?? false),
@@ -54,6 +63,7 @@ export default function PlatformSettingsPanel() {
             presentedFeeBps: typeof b.presentedFeeBps === "number" ? b.presentedFeeBps : undefined,
             creditPresentedFeeBps: typeof b.creditPresentedFeeBps === "number" ? b.creditPresentedFeeBps : undefined,
           });
+          setSettingsLoaded(true);
         }
       } catch (err: any) {
         if (!cancelled) {
@@ -70,12 +80,14 @@ export default function PlatformSettingsPanel() {
   }, []);
 
   const handleSave = async () => {
+    if (!settingsLoaded) return;
     try {
       setSaving(true);
       setError("");
       setInfo("");
 
       const payload: any = {
+        accessMode: config.accessMode,
         v2CheckoutEnabled: Boolean(config.v2CheckoutEnabled),
         stripeOnrampV2Enabled: Boolean(config.v2CheckoutEnabled),
         feeMinusEnabled: Boolean(config.feeMinusEnabled),
@@ -104,10 +116,11 @@ export default function PlatformSettingsPanel() {
       });
 
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) {
+      if (!res.ok || data?.error || data?.degraded) {
         setError(data?.error || "Failed to save platform settings");
       } else {
         setInfo("Platform settings saved successfully");
+        router.refresh();
         setTimeout(() => setInfo(""), 4000);
       }
     } catch (err: any) {
@@ -150,7 +163,7 @@ export default function PlatformSettingsPanel() {
         </div>
         <button
           onClick={handleSave}
-          disabled={saving}
+          disabled={saving || !settingsLoaded}
           className="px-5 py-2.5 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-black font-semibold text-xs transition-all shadow-lg hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
         >
           {saving ? "Saving…" : "Save Changes"}
@@ -177,6 +190,39 @@ export default function PlatformSettingsPanel() {
           <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Feature Switches</h4>
         </div>
         <div className="p-5 space-y-4 divide-y divide-white/5">
+          <div className="flex items-center justify-between pt-4 first:pt-0">
+            <div className="pr-4">
+              <div className="text-sm font-medium text-white flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                <span id="platform-closed-container-label">Closed Container Mode</span>
+              </div>
+              <p id="platform-closed-container-description" className="text-xs text-muted-foreground mt-0.5">
+                Require approval to access the platform container. New clients connect with email or phone and complete the client application.
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={config.accessMode === "request"}
+              aria-labelledby="platform-closed-container-label"
+              aria-describedby="platform-closed-container-description"
+              disabled={saving}
+              onClick={() => setConfig((prev) => ({
+                ...prev,
+                accessMode: prev.accessMode === "request" ? "open" : "request",
+              }))}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 disabled:opacity-50 ${
+                config.accessMode === "request" ? "bg-emerald-500" : "bg-zinc-700"
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                  config.accessMode === "request" ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
+
           {/* Dual Split Configuration Switch */}
           <div className="flex items-center justify-between pt-4 first:pt-0">
             <div className="pr-4">

@@ -1,3 +1,4 @@
+import { pinReceiptSplitRouting } from "@/lib/receipt-split-snapshot";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { attachCreatedStripeSession, readStripeReceiptForPayment, assertStripeReceiptCanCreateSession } from "@/lib/stripe-receipt-session";
@@ -31,7 +32,9 @@ export async function POST(req: NextRequest) {
     const merchantWallet = String(body.merchantWallet || "").trim();
     if (receiptId) {
       const container = await getContainer(undefined, undefined, { profile: "critical" });
-      await assertStripeReceiptCanCreateSession(container, await readStripeReceiptForPayment(container, receiptId, merchantWallet));
+      const receipt = await readStripeReceiptForPayment(container, receiptId, merchantWallet);
+      await assertStripeReceiptCanCreateSession(container, receipt);
+      await pinReceiptSplitRouting(container, receipt);
     }
     const destinationCurrency = String(body.destinationCurrency || "usdc").trim().toLowerCase();
     const redirectUrl = String(body.redirectUrl || "").trim() || undefined;

@@ -25,7 +25,7 @@ export async function getPlatformAdminWallets(): Promise<string[]> {
     // Merge with DB-backed admin_roles document
     try {
         const { getContainer } = await import('@/lib/cosmos');
-        const c = await getContainer(undefined, 'payportal_events');
+        const c = await getContainer(undefined, 'payportal_events', { profile: 'critical' });
         const { resource } = await c.item('admin_roles', 'global').read<any>();
         if (resource && Array.isArray(resource.admins)) {
             resource.admins.forEach((a: any) => {
@@ -60,8 +60,8 @@ export async function resolveAdminRole(wallet?: string, contextBrandKey?: string
     // 2. DB Checks (Global + Partner)
     try {
         const { getContainer } = await import('@/lib/cosmos');
-        const c = await getContainer();
-        const cGlobal = await getContainer(undefined, 'payportal_events');
+        const c = await getContainer(undefined, undefined, { profile: 'critical' });
+        const cGlobal = await getContainer(undefined, 'payportal_events', { profile: 'critical' });
 
         // Check Global Partition
         try {

@@ -51,3 +51,39 @@ test("Stripe session funding is authoritative for recovery routing", () => {
   assert.equal(resolveStripeOnrampFunding({ paymentMethod: "us_bank_account" }, "debit"), "us_bank_account");
   assert.equal(resolveStripeOnrampFunding({ payment_details: { card: { funding: "prepaid" } } }, "credit", true), "debit");
 });
+
+test("optional ACH and crypto select matching active addresses and allocations independently", () => {
+  const ach = "0x4444444444444444444444444444444444444444";
+  const crypto = "0x5555555555555555555555555555555555555555";
+  const creditConfig = { platformBps: 150 };
+  const debitConfig = { platformBps: 125 };
+  const achConfig = { platformBps: 80 };
+  const cryptoConfig = { platformBps: 60 };
+  for (const achEnabled of [false, true]) for (const cryptoEnabled of [false, true]) {
+    const fields = { splitAddress: primary, splitAddressCredit: debit, splitAddressAch: ach, splitAddressCrypto: crypto, splitConfig: creditConfig, splitConfigCredit: debitConfig, splitConfigAch: achConfig, splitConfigCrypto: cryptoConfig, splitOverrides: { ach: achEnabled, crypto: cryptoEnabled } };
+    for (const [funding, address, allocation] of [["credit", primary, creditConfig], ["debit", debit, debitConfig], ["us_bank_account", achEnabled ? ach : primary, achEnabled ? achConfig : creditConfig], ["crypto", cryptoEnabled ? crypto : primary, cryptoEnabled ? cryptoConfig : creditConfig]] as const) {
+      assert.equal(resolveSettlementSplitAddress({ ...fields, funding }), address);
+      assert.equal(resolveSettlementSplitConfig({ ...fields, funding }), allocation);
+    }
+  }
+});
+
+test("drafts, malformed addresses, and inactive optional routes use Credit", () => {
+  for (const funding of ["crypto", "us_bank_account"]) {
+    const fields = { splitAddress: primary, splitAddressCredit: debit, splitConfig: { platformBps: 150 }, splitConfigCredit: { platformBps: 125 }, splitConfigAch: { platformBps: 10 }, splitConfigCrypto: { platformBps: 20 }, splitOverrides: { ach: true, crypto: true }, splitAddressAch: "bad", splitAddressCrypto: "0x0000000000000000000000000000000000000000" };
+    assert.equal(resolveSettlementSplitAddress({ ...fields, funding }), primary);
+    assert.equal(resolveSettlementSplitConfig({ ...fields, funding }), fields.splitConfig);
+  }
+  assert.equal(resolveStripeOnrampFunding({ payment_details: { card: { funding: "credit" } } }, "crypto"), "credit");
+});
+
+test("contract inventory retains disabled contracts and deduplicates inherited addresses", () => {
+  const { discoverSplitContracts, receiptRoutingFields, parseSplitKind } = require("./payment-split-routing.ts") as typeof import("./payment-split-routing");
+  const inventory = discoverSplitContracts({ splitAddress: primary, splitAddressCredit: debit, splitAddressAch: primary, splitAddressCrypto: merchant, splitOverrides: { crypto: false }, splitHistory: [{ address: primary }, { address: merchant, splitKind: "crypto" }] });
+  assert.equal(inventory.length, 3);
+  assert.equal(inventory.find(s => s.address === merchant)?.active, false);
+  assert.equal(receiptRoutingFields({ splitRoutingSnapshot: { splitAddress: primary } }, { splitAddress: merchant }).splitAddress, primary);
+  assert.equal(parseSplitKind(undefined, true), "debit");
+  assert.equal(parseSplitKind("ach"), "ach");
+  assert.throws(() => parseSplitKind("ach", true));
+});

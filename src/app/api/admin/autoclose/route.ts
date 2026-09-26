@@ -1,3 +1,5 @@
+import { discoverSplitContracts } from "@/lib/payment-split-routing";
+import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireThirdwebAuth } from "@/lib/auth";
@@ -57,7 +59,7 @@ export async function GET(req: NextRequest) {
       // Query site configs to find splits for these brands
       const siteConfigContainer = await getContainer(undefined, undefined, { profile: "critical" });
       const querySpec = {
-        query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.splitHistory FROM c WHERE c.type = 'site_config' OR c.type = 'wallet_config' OR c.type = 'client_request'",
+        query: "SELECT c.id, c.brandKey, c.config, c.wallet, c.splitAddress, c.splitAddressCredit, c.splitAddressAch, c.splitAddressCrypto, c.splitAch, c.splitCrypto, c.splitOverrides, c.split, c.splitCredit, c.splitHistory FROM c WHERE c.type = 'site_config' OR c.type = 'wallet_config' OR c.type = 'client_request'",
       };
       const { resources: allSiteConfigs } = await siteConfigContainer.items.query(querySpec).fetchAll();
 
@@ -79,6 +81,7 @@ export async function GET(req: NextRequest) {
           };
           addMapping(doc?.splitAddress);
           addMapping(doc?.splitAddressCredit);
+          for (const split of discoverSplitContracts(doc)) addMapping(split.address);
           addMapping(doc?.split?.address);
           addMapping(doc?.splitCredit?.address);
           addMapping(doc?.config?.split?.address);
@@ -417,9 +420,11 @@ export async function POST(req: NextRequest) {
         const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
         let splitAddress = receipt.splitAddress;
         let splitAddressCredit = receipt.splitAddressCredit;
+      let optionalRouting = receiptRoutingFields(receipt);
         if (siteConfig) {
           splitAddress = siteConfig.splitAddress || siteConfig.split?.address || splitAddress;
           splitAddressCredit = siteConfig.splitAddressCredit || siteConfig.splitCredit?.address || splitAddressCredit;
+          optionalRouting = receiptRoutingFields(receipt, siteConfig);
         }
         if (!splitAddress) {
           splitAddress = merchantWallet;
@@ -429,6 +434,7 @@ export async function POST(req: NextRequest) {
           funding: cardFunding,
           splitAddress,
           splitAddressCredit,
+          ...optionalRouting,
           fallbackAddress: merchantWallet,
         });
         if (!/^0x[a-f0-9]{40}$/i.test(targetSplitAddress)) {

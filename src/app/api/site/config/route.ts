@@ -1,3 +1,4 @@
+import { settlementRoutingFields } from "@/lib/payment-split-routing";
 // Forced hot-reload trigger for Next.js Turbopack
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
@@ -1006,6 +1007,7 @@ function normalizeSiteConfig(raw?: any, targetWallet?: string) {
     config.storeCurrency = "USD";
   }
 
+  Object.assign(config, settlementRoutingFields(config));
   // Split config normalization
   const isHex = (s: any) => /^0x[a-fA-F0-9]{40}$/.test(String(s || "").trim());
   if (!isHex(config.splitAddress)) {

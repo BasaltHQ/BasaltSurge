@@ -6,6 +6,9 @@ export interface AnalyticsViewState {
   workspace: AnalyticsWorkspace;
   brand: string;
   status: string;
+  paymentMethod?: string;
+  splitKind?: string;
+  splitContract?: string;
   kyc: string;
   range: string;
   from: string;
@@ -35,6 +38,9 @@ export function parseAnalyticsViewState(params: URLSearchParams): AnalyticsViewS
     workspace: choice(params.get("pa_view"), ["overview", "conversion", "failures", "transactions", "treasury", "audit"], "overview"),
     brand: params.get("pa_brand") || "all",
     status: params.get("pa_status") || "all",
+    paymentMethod: choice(params.get("pa_paymentMethod"), ["all", "credit", "debit", "bank", "crypto", "unknown"], "all"),
+    splitKind: choice(params.get("pa_splitKind"), ["all", "credit", "debit", "ach", "crypto", "unknown"], "all"),
+    splitContract: /^0x[a-f0-9]{40}$/i.test(params.get("pa_splitContract") || "") ? params.get("pa_splitContract")!.toLowerCase() : "",
     kyc: choice(params.get("pa_kyc"), ["all", "L0", "L1", "L2", "Unknown"], "all"),
     range: choice(params.get("pa_range"), ["all", "today", "yesterday", "weekly", "monthly", "custom"], "today"),
     from: date(params.get("pa_from")),
@@ -59,6 +65,7 @@ export function writeAnalyticsViewState(params: URLSearchParams, state: Analytic
   Array.from(result.keys()).filter(key => key.startsWith("pa_")).forEach(key => result.delete(key));
   result.set("tab", "platformAnalytics");
   const fields: Record<string, string | number> = {
+    paymentMethod: state.paymentMethod || "all", splitKind: state.splitKind || "all", splitContract: state.splitContract || "",
     view: state.workspace, brand: state.brand, status: state.status, kyc: state.kyc,
     range: state.range, from: state.from, to: state.to, week: state.week, month: state.month,
     search: state.search, searchMode: state.searchMode, basis: state.basis, tz: state.timezone,

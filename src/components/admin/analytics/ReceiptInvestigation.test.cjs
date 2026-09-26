@@ -42,6 +42,26 @@ const defaultProps = {
 };
 const render = (props = {}) => renderToStaticMarkup(React.createElement(ReceiptInvestigation, { ...defaultProps, ...props }));
 
+test('platform and partner overview and crypto tabs show the pinned Crypto split, not current Credit', () => {
+  const credit = '0x' + '1'.repeat(40);
+  const crypto = '0x' + '2'.repeat(40);
+  const current = '0x' + '3'.repeat(40);
+  const cryptoReceipt = { ...receipt, status: 'paid', stripeSessionId: null, cardFunding: 'crypto', splitAddress: credit,
+    splitRoutingSnapshot: { splitAddress: credit, splitAddressCrypto: crypto, splitConfigCrypto: { platformBps: 50 }, splitOverrides: { crypto: true } } };
+  for (const readOnly of [false, true]) for (const status of ['paid', 'generated']) for (const activeTab of ['overview', 'crypto']) {
+    const html = render({ readOnly, activeTab, receipt: { ...cryptoReceipt, status }, siteConfig: { splitAddress: current } });
+    assert.match(html, new RegExp(crypto));
+    assert.match(html, /Crypto Split/);
+    assert.doesNotMatch(html, new RegExp(`${credit}|${current}`));
+  }
+  const shared = render({ receipt: { ...cryptoReceipt, splitRoutingSnapshot: { splitAddress: credit } } });
+  assert.match(shared, new RegExp(credit));
+  assert.match(shared, /Credit Split.*shared Credit/);
+  const missing = render({ receipt: { ...cryptoReceipt, splitRoutingSnapshot: null }, siteConfig: { splitAddress: current } });
+  assert.match(missing, /Historical destination unavailable/);
+  assert.doesNotMatch(missing, new RegExp(`${credit}|${current}`));
+});
+
 test('every regular investigation section renders evidence or actions in the shared body', () => {
   const expected = {
     overview: /Card declined/,
@@ -59,6 +79,24 @@ test('every regular investigation section renders evidence or actions in the sha
   }
   const actions = render({ activeTab: 'reconcile' });
   assert.match(actions, /Check Live Stripe Telemetry/);
+});
+
+test('ACH analytics separates the 0.6 percent Stripe deduction from the routed split allocation', () => {
+  for (const feeMinusEnabled of [false, true]) {
+    const totalUsd = feeMinusEnabled ? 100 : 101.1;
+    const onchain = +(totalUsd / 1.006).toFixed(2);
+    const splitFee = +(onchain * 0.005).toFixed(2);
+    const html = render({ activeTab: 'fees', receipt: { ...receipt, cardFunding: 'us_bank_account', status: 'paid', totalUsd,
+      customerSessions: [], lineItems: [{ label: 'Order', priceUsd: 100 }],
+      splitRoutingSnapshot: { feeMinusEnabled, processingFeePct: 0, presentedFeeBps: 400,
+        splitAddressAch: '0x' + '4'.repeat(40), splitConfigAch: { platformBps: 50, partnerBps: 0, agents: [] }, splitOverrides: { ach: true } } } });
+    assert.match(html, /Stripe ACH Fee/);
+    assert.match(html, /0\.60% Processing Fee/);
+    assert.match(html, /Presented Rate: 1\.10%/);
+    assert.match(html, /Split Allocation \(0\.50%\)/);
+    assert.match(html, new RegExp(`Net Settlement: \\$${(onchain - splitFee).toFixed(2)}`));
+    assert.doesNotMatch(html, /2\.25% Processing Fee|3\.50% Processing Fee/);
+  }
 });
 
 test('crypto investigation retains routing, transaction, participants, and raw payload sections', () => {
@@ -97,7 +135,8 @@ test('partner read-only investigations retain evidence and omit mutation and liv
   assert.match(customerEvidence, /test@example.invalid/);
   assert.doesNotMatch(customerEvidence, /Enrich &amp; Sync Limits/);
   const fees = render({ readOnly: true, activeTab: 'fees' });
-  assert.match(fees, /Fee Breakdown|Split Components|Net Payout|Charge Components/);
+  assert.match(fees, /Card declined/, 'A stale fees link resolves to the evidence overview');
+  assert.doesNotMatch(fees, /Fee &amp; Split Breakdown|Fee Breakdown|Split Components|Net Payout|Charge Components/);
   const missingLogs = render({ readOnly: true, activeTab: 'logs', expandedLogs: { [receipt.receiptId]: [] } });
   assert.match(missingLogs, /No client logs with verified brand and receipt attribution are available/);
   assert.doesNotMatch(missingLogs, /No client logs were recorded/);
@@ -118,4 +157,16 @@ test('explorer links require a recorded supported chain and keep receipt evidenc
   assert.doesNotMatch(unknown, /href="https:\/\/(basescan|solscan)/);
   const ethereum = render({ activeTab: 'crypto', receipt: { ...receipt, isCrypto: true, transactionHash: '0xabc', destinationChainId: 1 } });
   assert.match(ethereum, /href="https:\/\/etherscan.io\/tx\/0xabc"/);
+});
+
+test('Thirdweb replay is available in platform actions with recovery fields and loading feedback', () => {
+  const props = { activeTab: 'reconcile', receipt: { ...receipt, wallet: '0x' + '1'.repeat(40) }, handleThirdwebReplay: noOp };
+  const html = render(props);
+  assert.match(html, /Replay Thirdweb Webhook/);
+  assert.match(html, /Thirdweb origin transaction hash/);
+  assert.match(html, /Thirdweb origin chain ID/);
+  assert.match(html, /does not charge the customer again/);
+  const loading = render({ ...props, actionLoading: { ['thirdweb-' + receipt.receiptId]: true } });
+  assert.match(loading, /Replaying Thirdweb payment/);
+  assert.doesNotMatch(render({ ...props, readOnly: true }), /Replay Thirdweb Webhook/);
 });

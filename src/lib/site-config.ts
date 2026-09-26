@@ -1,3 +1,4 @@
+import { settlementRoutingFields } from "@/lib/payment-split-routing";
 import { getContainer } from "@/lib/cosmos";
 import { getBrandKey } from "@/config/brands";
 import { isPartnerContext } from "@/lib/env";
@@ -205,6 +206,7 @@ function normalize(raw?: any, targetWallet?: string): SiteConfig {
     base.basePlatformFeePct = typeof raw?.basePlatformFeePct === "number" ? raw.basePlatformFeePct : 0.5;
   }
 
+  Object.assign(base, settlementRoutingFields(base));
   return base as SiteConfig;
 }
 

@@ -1,3 +1,5 @@
+import { recordStripeReceiptFailure } from "@/lib/stripe-receipt-failure";
+import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { recoverStripeReceiptSession, retrieveStripeReceiptSession, persistStripeReceiptUpdate } from "@/lib/stripe-receipt-session";
@@ -356,12 +358,12 @@ export async function POST(req: NextRequest) {
         };
         const { resources: webhookRetries } = await container.items.query(retryQuery).fetchAll();
         for (const retryReceipt of webhookRetries || []) {
-          const retryStatus = String(retryReceipt.webhookLastStatus || retryReceipt.status || "").trim();
+          const retryStatus = String(retryReceipt.status || retryReceipt.webhookLastStatus || "").trim();
           if (!retryStatus) continue;
 
           const previousStatus = String(retryReceipt.webhookLastPreviousStatus || retryReceipt.status || "pending");
           const delivery = await dispatchReceiptStatusWebhookBestEffort(container, retryReceipt, retryStatus, previousStatus, {
-            transactionHash: retryReceipt.webhookLastTransactionHash || retryReceipt.transactionHash,
+            transactionHash: retryReceipt.transactionHash || retryReceipt.webhookLastTransactionHash,
             merchantWallet: retryReceipt.wallet || retryReceipt.merchantWallet,
             stripeSessionId: retryReceipt.stripeSessionId,
             brandKey: retryReceipt.brandKey,
@@ -414,9 +416,11 @@ export async function POST(req: NextRequest) {
       const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
       let splitAddress = receipt.splitAddress;
       let splitAddressCredit = receipt.splitAddressCredit;
+      let optionalRouting = receiptRoutingFields(receipt);
       if (siteConfig) {
         splitAddress = siteConfig.splitAddress || siteConfig.split?.address || splitAddress;
         splitAddressCredit = siteConfig.splitAddressCredit || siteConfig.splitCredit?.address || splitAddressCredit;
+          optionalRouting = receiptRoutingFields(receipt, siteConfig);
       }
       if (!splitAddress) {
         splitAddress = merchantWallet;
@@ -641,13 +645,14 @@ export async function POST(req: NextRequest) {
             }
             console.warn(`[cron/reconcile-stuck] Definitively failing receipt ${receiptId}. Stripe status: ${stripeStatus}`);
 
-            receipt.status = "failed";
-            receipt.reconciledFailed = true;
-            receipt.statusHistory = Array.isArray(receipt.statusHistory)
-              ? [...receipt.statusHistory, { status: "failed", ts: Date.now() }]
-              : [{ status: "failed", ts: Date.now() }];
-
-            await persistStripeReceiptUpdate(container, receipt);
+            const persisted = await recordStripeReceiptFailure(container, receipt, {
+              ...onrampData, requestId: stripeRes.headers.get("request-id") || undefined,
+            }, { reconciled: true });
+            if (persisted.skipped) {
+              skipped++;
+              continue;
+            }
+            Object.assign(receipt, persisted.resource);
 
             // Send failure email
             try {
@@ -802,6 +807,7 @@ export async function POST(req: NextRequest) {
           funding: cardFunding,
           splitAddress,
           splitAddressCredit,
+          ...optionalRouting,
           fallbackAddress: merchantWallet,
         });
 
@@ -1449,6 +1455,7 @@ export async function POST(req: NextRequest) {
                 funding: recoveredFunding,
                 splitAddress: matchedReceipt.splitAddress,
                 splitAddressCredit: matchedReceipt.splitAddressCredit,
+                ...receiptRoutingFields(matchedReceipt),
               });
               const receiptAmount = Number(matchedReceipt.settlementAmount || matchedReceipt.onrampAmount || matchedReceipt.totalUsd || 0);
               if (!/^0x[a-f0-9]{40}$/i.test(targetSplit) || receiptAmount <= 0 || Number(uBalance) / 1_000_000 < receiptAmount * 0.95) {

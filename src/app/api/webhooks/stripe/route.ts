@@ -1,3 +1,5 @@
+import { recordStripeReceiptFailure } from "@/lib/stripe-receipt-failure";
+import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { recoverStripeReceiptSession, stripeReceiptWriteCondition } from "@/lib/stripe-receipt-session";
@@ -182,7 +184,7 @@ async function resolveMerchantContext(
   if (mw && /^0x[a-f0-9]{40}$/.test(mw)) {
     try {
       const spec = {
-        query: `SELECT c.wallet, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.config FROM c WHERE c.type='site_config' AND LOWER(c.wallet)=@addr`,
+        query: `SELECT c.wallet, c.splitAddress, c.splitAddressCredit, c.splitAddressAch, c.splitAddressCrypto, c.splitConfigAch, c.splitConfigCrypto, c.splitOverrides, c.split, c.splitCredit, c.config FROM c WHERE c.type='site_config' AND LOWER(c.wallet)=@addr`,
         parameters: [{ name: '@addr', value: mw }]
       };
       const { resources } = await container.items.query(spec).fetchAll();
@@ -206,6 +208,7 @@ async function resolveMerchantContext(
           funding: fundingType,
           splitAddress: splitAddressResolved,
           splitAddressCredit: splitAddressCreditResolved,
+          ...receiptRoutingFields(foundReceipt, match),
           fallbackAddress: mw,
         });
 
@@ -231,6 +234,7 @@ async function resolveMerchantContext(
       funding: fundingType,
       splitAddress: splitAddressPrimary,
       splitAddressCredit,
+      ...receiptRoutingFields(foundReceipt),
       fallbackAddress: mw,
     });
     return {
@@ -671,45 +675,8 @@ export async function POST(req: NextRequest) {
               continue;
             }
             if (!isProtectedPaymentStatus(r.status)) {
-              const previousStatus = String(r.status || "pending");
-              r.status = "failed";
-              r.stripeSessionStatus = "rejected";
-              r.statusHistory = Array.isArray(r.statusHistory)
-                ? [...r.statusHistory, { status: "failed", ts: Date.now() }]
-                : [{ status: "failed", ts: Date.now() }];
-              r.lastUpdatedAt = Date.now();
-              if (r.webhookUrl) {
-                r.webhookLastStatus = "failed";
-                r.webhookLastPreviousStatus = previousStatus;
-                r.webhookLastDeliveryOk = false;
-                r.webhookLastAttemptAt = Date.now();
-              }
-              const persisted = await patchReceiptFields(
-                container,
-                r.id,
-                r.wallet,
-                {
-                  status: "failed",
-                  stripeSessionStatus: "rejected",
-                  statusHistory: r.statusHistory,
-                  lastUpdatedAt: r.lastUpdatedAt,
-                  webhookLastStatus: r.webhookLastStatus,
-                  webhookLastPreviousStatus: r.webhookLastPreviousStatus,
-                  webhookLastDeliveryOk: r.webhookLastDeliveryOk,
-                  webhookLastAttemptAt: r.webhookLastAttemptAt,
-                },
-                (current) => !isProtectedPaymentStatus(current.status)
-              );
-              if (persisted.skipped) {
-                console.log(`[STRIPE WEBHOOK] Receipt ${r.id} became paid while processing rejection; preserved paid status.`);
-                continue;
-              }
-              const persistedReceipt = persisted.resource || r;
-              void dispatchReceiptStatusWebhookBestEffort(container, persistedReceipt, "failed", previousStatus, {
-                merchantWallet: r.wallet || merchantWallet,
-                stripeSessionId: sessionId,
-                brandKey: r.brandKey || brandKey,
-              });
+              const persisted = await recordStripeReceiptFailure(container, r, session);
+              if (persisted.skipped) continue;
               console.log(`[STRIPE WEBHOOK] Updated receipt ${r.id} to failed due to Stripe rejection`);
             }
           }

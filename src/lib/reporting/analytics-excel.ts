@@ -197,12 +197,13 @@ function brandRows(brands: AnalyticsBrandStat[]): unknown[][] {
 
 function fundingRows(stats: AnalyticsReportStat | null): unknown[][] {
   const methods = stats?.cardTypes || { credit: 0, debit: 0, bank: 0, unknown: 0 };
-  const total = methods.credit + methods.debit + methods.bank + methods.unknown;
+  const total = methods.credit + methods.debit + methods.bank + (methods.crypto || 0) + methods.unknown;
   return [
     ["Credit card", methods.credit, total ? methods.credit / total : 0],
     ["Debit card", methods.debit, total ? methods.debit / total : 0],
     ["US bank account / ACH", methods.bank, total ? methods.bank / total : 0],
-    ["Crypto / unclassified", methods.unknown, total ? methods.unknown / total : 0]
+    ["Direct Crypto", methods.crypto || 0, total ? (methods.crypto || 0) / total : 0],
+    ["Unknown", methods.unknown, total ? methods.unknown / total : 0]
   ];
 }
 
@@ -250,7 +251,11 @@ function receiptRows(receipts: AnalyticsReceiptItem[], timeZone: string): unknow
       Number(receipt.totalUsd || 0),
       !isAnalyticsPaidReceipt(receipt) || receipt.platformFeeSource === "unavailable" ? null : Number(receipt.platformFee || 0),
       isAnalyticsPaidReceipt(receipt) ? (receipt.platformFeeSource || "legacy_unspecified") : "not_applicable_unsettled",
-      receipt.cardFunding || "unclassified",
+      receipt.cardFunding || "unknown",
+      receipt.settlementSplitKind || "unknown",
+      receipt.settlementSplitAddress || "",
+      receipt.settlementSplitVersion || "",
+      receipt.splitRouteInherited ? "Shared Credit" : "Dedicated or unknown",
       receipt.kycInitialVerifiedLevel || receipt.kycInitialLevel || "Unknown",
       receipt.kycRequiredLevel || "None",
       receipt.kycCompletedLevel || "None",
@@ -299,6 +304,7 @@ const TRANSACTION_COLUMNS: SheetColumn[] = [
   { label: "Buyer Wallet", width: 44 }, { label: "Customer Email", width: 32 }, { label: "Status", width: 20 },
   { label: "Amount USD", width: 15, format: "$#,##0.00" }, { label: "Platform Fee USD", width: 23, format: "$#,##0.00" },
   { label: "Fee Evidence", width: 20 }, { label: "Funding", width: 18 },
+  { label: "Receiving Split", width: 18 }, { label: "Split Contract", width: 48 }, { label: "Split Version", width: 16 }, { label: "Routing", width: 22 },
   { label: "Initial Verified KYC", width: 19 }, { label: "Required KYC", width: 15 },
   { label: "Completed During Payment", width: 24 }, { label: "Final Verified KYC", width: 19 },
   { label: "Final KYC Status", width: 18 }, { label: "EU Compliance", width: 36 },

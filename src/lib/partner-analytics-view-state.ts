@@ -14,7 +14,7 @@ export function parsePartnerAnalyticsViewState(params: URLSearchParams, brandKey
     ...state,
     brand: brandKey,
     workspace: state.workspace === "treasury" || state.workspace === "audit" ? "overview" : state.workspace,
-    receiptTab: state.receiptTab === "reconcile" ? "overview" : state.receiptTab,
+    receiptTab: state.receiptTab === "reconcile" || state.receiptTab === "fees" ? "overview" : state.receiptTab,
   };
 }
 
@@ -26,7 +26,7 @@ export function writePartnerAnalyticsViewState(params: URLSearchParams, state: A
     ...state,
     brand: brandKey,
     workspace: state.workspace === "treasury" || state.workspace === "audit" ? scoped.workspace : state.workspace,
-    receiptTab: state.receiptTab === "reconcile" ? "overview" : state.receiptTab,
+    receiptTab: state.receiptTab === "reconcile" || state.receiptTab === "fees" ? "overview" : state.receiptTab,
   });
   serialized.forEach((value, key) => {
     if (key.startsWith("pa_")) result.append(`ppa_${key.slice(3)}`, value);

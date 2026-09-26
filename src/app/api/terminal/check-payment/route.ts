@@ -1,3 +1,4 @@
+import { receiptRoutingFields, resolveSettlementSplitAddress } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { getContract, getContractEvents, prepareEvent, createThirdwebClient } from "thirdweb";
@@ -21,13 +22,14 @@ function getThirdwebClient() {
 export const dynamic = 'force-dynamic';
 
 async function handleCheckPayment(params: {
+    origin: string;
     wallet?: string;
     receiptId?: string;
     since?: any;
     amount?: any;
     currency?: string;
 }) {
-    const { wallet, receiptId, since, amount, currency } = params;
+    const { wallet, receiptId, since, amount, currency, origin } = params;
 
     if (!wallet || !receiptId || !since) {
         return NextResponse.json({ error: "Missing required params (wallet, receiptId, since)" }, { status: 400 });
@@ -44,7 +46,7 @@ async function handleCheckPayment(params: {
     const normalizedWallet = String(wallet).toLowerCase();
 
     // 1. Fast path: Check DB Status first (avoid slow blockchain scans if already paid)
-    const container = await getContainer();
+    const container = await getContainer(undefined, undefined, { profile: "critical" });
     const { resource: receiptDoc } = await container.item(`receipt:${receiptId}`, normalizedWallet).read<any>();
 
     // Unknown receipt IDs must never trigger paid upstream queries.
@@ -58,6 +60,17 @@ async function handleCheckPayment(params: {
             const hasTx = receiptDoc.txHash || receiptDoc.transactionHash || receiptDoc.stripeSessionId;
             return NextResponse.json({ ok: true, paid: true, txHash: hasTx, receipt: receiptDoc });
         }
+    }
+
+    if (receiptDoc.thirdwebPaymentReport?.transactions?.length) {
+        const { verifyReportedThirdwebReceipt } = await import("@/lib/thirdweb/receipt-verification");
+        if (await verifyReportedThirdwebReceipt(container, receiptDoc, origin)) {
+            const { resource: verified } = await container.item(`receipt:${receiptId}`, normalizedWallet).read<any>();
+            return NextResponse.json({ ok: true, paid: true, txHash: verified?.transactionHash, receipt: verified });
+        }
+        // Explicit provider evidence must not fall through to an amount-only
+        // scan and accidentally select a different customer's transfer.
+        return NextResponse.json({ ok: true, paid: false, verificationPending: true });
     }
 
     // If we don't have amount or currency, we cannot perform the blockchain check, but we can return paid: false safely
@@ -77,8 +90,11 @@ async function handleCheckPayment(params: {
     }
 
     // 2. Get Split Address
-    const cfg = await getSiteConfigForWallet(normalizedWallet).catch(() => null);
-    let splitAddress = (cfg as any)?.splitAddress || (cfg as any)?.split?.address;
+    const cfg = await getSiteConfigForWallet(normalizedWallet, receiptDoc.brandKey).catch(() => null);
+    const splitAddress = resolveSettlementSplitAddress({
+        ...receiptRoutingFields(receiptDoc, cfg),
+        funding: receiptDoc.crypto ? "crypto" : (receiptDoc.detectedCardFunding || "crypto"),
+    });
 
     if (!splitAddress || !/^0x[a-f0-9]{40}$/i.test(splitAddress)) {
         return NextResponse.json({ ok: false, error: "no_split_config" });
@@ -260,37 +276,16 @@ async function handleCheckPayment(params: {
         console.error("Chain check failed", e);
     }
 
-    // Check DB Status regardless of chain scan (to catch widget success)
-    if (receiptDoc) {
-        const isPaid = receiptDoc.status === "paid" || receiptDoc.status === "checkout_success";
-        const hasTx = receiptDoc.txHash || receiptDoc.transactionHash || foundTx;
-
-        // If already paid/success, return immediately
-        if (isPaid) {
-            // Optimization: If foundTx matches and status is only checkout_success, we could upgrade to "paid".
-            if (foundTx && receiptDoc.status !== "paid") {
-                receiptDoc.status = "paid";
-                receiptDoc.txHash = foundTx;
-                receiptDoc.paidAt = Date.now();
-                receiptDoc.lastUpdatedAt = Date.now();
-                receiptDoc.paymentMethod = "crypto_verified_poll";
-                await container.item(`receipt:${receiptId}`, normalizedWallet).replace(receiptDoc);
-                return NextResponse.json({ ok: true, paid: true, txHash: foundTx, receipt: receiptDoc });
-            }
-            return NextResponse.json({ ok: true, paid: true, txHash: hasTx, receipt: receiptDoc });
-        }
-
-        // Not paid yet in DB. If we found a tx on chain, update it.
-        if (foundTx) {
-            receiptDoc.status = "paid";
-            receiptDoc.txHash = foundTx;
-            receiptDoc.paidAt = Date.now();
-            receiptDoc.lastUpdatedAt = Date.now();
-            receiptDoc.paymentMethod = "crypto_fallback_poll";
-
-            await container.item(`receipt:${receiptId}`, normalizedWallet).replace(receiptDoc);
-            return NextResponse.json({ ok: true, paid: true, txHash: foundTx, receipt: receiptDoc });
-        }
+    if (foundTx) {
+        // Use canonical status handling for fee recalculation, status history,
+        // and merchant webhooks instead of replacing the stale receipt snapshot.
+        const { postVerifiedReceiptStatus } = await import("@/lib/thirdweb/receipt-webhook");
+        await postVerifiedReceiptStatus(origin, {
+            receiptId, wallet: normalizedWallet, status: "paid", txHash: foundTx,
+            detectedCardFunding: "crypto", isCrypto: true,
+        });
+        const { resource: verified } = await container.item(`receipt:${receiptId}`, normalizedWallet).read<any>();
+        return NextResponse.json({ ok: true, paid: true, txHash: foundTx, receipt: verified });
     }
 
     return NextResponse.json({ ok: true, paid: false });
@@ -301,7 +296,7 @@ export async function POST(req: NextRequest) {
         const body = await req.json().catch(() => ({}));
         const { wallet, receiptId, since, amount, currency } = body;
 
-        return await handleCheckPayment({ wallet, receiptId, since, amount, currency });
+        return await handleCheckPayment({ wallet, receiptId, since, amount, currency, origin: new URL(req.url).origin });
     } catch (e: any) {
         console.error("Check-payment global error:", e);
         return NextResponse.json({ error: e.message || "failed" }, { status: 500 });
@@ -328,7 +323,8 @@ export async function GET(req: NextRequest) {
             receiptId,
             since: parsedSince,
             amount: amount ? Number(amount) : undefined,
-            currency
+            currency,
+            origin: url.origin,
         });
     } catch (e: any) {
         console.error("Check-payment GET global error:", e);

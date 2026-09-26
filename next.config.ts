@@ -48,6 +48,7 @@ const nextConfig = {
   // dynamically imported with webpackIgnore/turbopackIgnore and not traced.
   outputFileTracingIncludes: {
     '/**': ['./src/lib/db/**/*'],
+    '/api/admin/shopify/apps/*': ['./public/js/shopify-cart-hijack.js', './public/css/shopify-cart-payment.css'],
   },
 
   // Ignore TypeScript errors during production builds (e.g., in Docker)

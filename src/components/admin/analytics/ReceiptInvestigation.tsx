@@ -1,6 +1,8 @@
 "use client";
+import { analyticsFunding, analyticsSplitRoute } from "@/lib/platform-analytics-query";
+import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState } from "react";
 import {
   LineChart,
   Search,
@@ -139,6 +141,10 @@ export interface ReceiptInvestigationReceipt {
   creditPresentedFeeBps?: number | null;
   splitConfig?: any;
   splitConfigCredit?: any;
+  splitRoutingSnapshot?: any;
+  settlementSplitAddress?: string;
+  settlementSplitKind?: string;
+  settlementSplitVersion?: number | null;
   merchantConfig?: any;
   brandConfig?: any;
   partnerBps?: number;
@@ -203,6 +209,7 @@ export interface ReceiptInvestigationProps {
   actionFeedback: Record<string, string>;
   handleTargetedReconcile: (receiptId: string) => void | Promise<void>;
   handleStripeTelemetryCheck: (receiptId: string, sessionId: string | null) => void | Promise<void>;
+  handleThirdwebReplay?: (receipt: ReceiptInvestigationReceipt, transactionHash?: string, chainId?: number) => void | Promise<void>;
 }
 
 function ExplorerLink({ href, children, className, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
@@ -232,58 +239,23 @@ export default function ReceiptInvestigation({
   fetchReceiptLogs, expandedLogs, loadingLogs, logErrors = NO_LOG_ERRORS, logNotes = NO_LOG_ERRORS,
   refreshingLimits, refreshLimitsStatus, enrichCustomerLimits, copySuccess,
   handleCopy, actionLoading, actionFeedback, handleTargetedReconcile,
-  handleStripeTelemetryCheck, readOnly = false,
+  handleStripeTelemetryCheck, handleThirdwebReplay, readOnly = false,
 }: ReceiptInvestigationProps) {
-  const siteCfg = siteConfig || r.merchantConfig || r.brandConfig || {};
+  const [replayHash, setReplayHash] = useState("");
+  const [replayChainId, setReplayChainId] = useState(String(r.originChainId || 8453));
+  useEffect(() => { setReplayHash(""); setReplayChainId(String(r.originChainId || 8453)); }, [r.receiptId, r.wallet, r.originChainId]);
   const isSettled = isAnalyticsPaidReceipt(r);
   const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || "").toLowerCase().trim();
   const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
-  const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
+  const isCrypto = analyticsFunding(r) === "crypto";
   const isDirectCrypto = isCoinbase || isCrypto;
 
-  const isDebit = !isDirectCrypto && rawFunding === "debit";
-  const actualSplitAddress = isDebit
-  ? (
-  siteCfg.splitAddressCredit ||
-  r.splitAddressCredit ||
-  siteCfg.splitConfigCredit?.contractAddress ||
-  siteCfg.splitConfigCredit?.address ||
-  r.splitConfigCredit?.contractAddress ||
-  r.splitConfigCredit?.address ||
-  r.merchantConfig?.splitAddressCredit ||
-  r.merchantConfig?.splitConfigCredit?.contractAddress ||
-  r.brandConfig?.splitAddressCredit ||
-  siteCfg.splitAddress ||
-  r.splitAddress ||
-  siteCfg.splitConfig?.contractAddress ||
-  siteCfg.splitConfig?.address ||
-  r.splitConfig?.contractAddress ||
-  r.splitConfig?.address ||
-  r.merchantConfig?.splitAddress ||
-  r.brandConfig?.splitAddress
-  )
-  : (
-  siteCfg.splitAddress ||
-  r.splitAddress ||
-  siteCfg.splitConfig?.contractAddress ||
-  siteCfg.splitConfig?.address ||
-  r.splitConfig?.contractAddress ||
-  r.splitConfig?.address ||
-  r.merchantConfig?.splitAddress ||
-  r.merchantConfig?.splitConfig?.contractAddress ||
-  r.brandConfig?.splitAddress ||
-  siteCfg.splitAddressCredit ||
-  r.splitAddressCredit ||
-  siteCfg.splitConfigCredit?.contractAddress ||
-  siteCfg.splitConfigCredit?.address ||
-  r.splitConfigCredit?.contractAddress ||
-  r.splitConfigCredit?.address ||
-  r.merchantConfig?.splitAddressCredit ||
-  r.brandConfig?.splitAddressCredit
-  );
-  const splitBadgeLabel = isDebit ? "Debit Split" : "Credit/Crypto/ACH Split";
+  const recordedRoute = analyticsSplitRoute(r);
+  const actualSplitAddress = recordedRoute.address;
+  const isDebit = recordedRoute.kind === "debit";
+  const splitBadgeLabel = ({ credit: "Credit Split", debit: "Debit Split", ach: "ACH Split", crypto: "Crypto Split" } as Record<string, string>)[recordedRoute.kind] || "Recorded Split";
 
-  const isReceiptCrypto = r.isCrypto || r.cardFunding === "crypto" || !!r.thirdwebMetadata || !!r.paymentId || (Array.isArray(r.transactions) && r.transactions.length > 0);
+  const isReceiptCrypto = analyticsFunding(r) === "crypto" || !!r.thirdwebMetadata || !!r.paymentId;
   const investigationTabs = [
   { id: "overview", label: "Overview", icon: Sliders },
   ...(isReceiptCrypto ? [{ id: "crypto", label: "Crypto Details", icon: Coins, isCryptoTab: true }] : []),
@@ -291,8 +263,10 @@ export default function ReceiptInvestigation({
   { id: "origin", label: "Initialization & Origin", icon: Chrome },
   { id: "logs", label: "Client Logs", icon: Activity },
   { id: "customers", label: "Customer Metadata", icon: Users },
-  { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
-  ...(!readOnly ? [{ id: "reconcile", label: "Reconcile & Actions", icon: Wrench }] : [])
+  ...(!readOnly ? [
+    { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
+    { id: "reconcile", label: "Reconcile & Actions", icon: Wrench },
+  ] : [])
   ];
 
 
@@ -647,7 +621,7 @@ export default function ReceiptInvestigation({
           <div className="bg-white/[0.03] border border-white/10 rounded-2xl p-4 space-y-1.5">
             <div className="text-white/40 text-[9px] uppercase font-bold tracking-wider flex items-center gap-1.5">
               <Building2 className="w-3 h-3 text-emerald-400" />
-              <span>Merchant / Split Receiver Wallet</span>
+              <span>Merchant / Split Receiver Wallet{actualSplitAddress ? ` (${splitBadgeLabel}${recordedRoute.inherited ? ", shared Credit" : ""})` : ""}</span>
             </div>
             <div className="flex items-center justify-between gap-2">
               <span className="font-mono text-emerald-400 text-xs truncate max-w-[280px]" title={receiverWallet}>
@@ -1256,18 +1230,18 @@ export default function ReceiptInvestigation({
         {/* Intended / Actual Split Address */}
         <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2">
-            {isSettled ? "Settled Split Address" : "Intended Split Addresses"}
+            {isSettled ? "Settled Split Address" : "Intended Split Address"}
           </div>
-          {isSettled ? (
+          {(
             <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
               <span className={`font-bold border px-2 py-0.5 rounded-full text-[10px] uppercase ${
                 isDebit
                   ? "text-purple-400 bg-purple-500/15 border-purple-500/30"
                   : "text-emerald-400 bg-emerald-500/15 border-emerald-500/30"
               }`}>
-                {splitBadgeLabel}
+                {splitBadgeLabel}{recordedRoute.inherited ? " (shared Credit)" : ""}
               </span>
-              <span className="truncate max-w-full">{actualSplitAddress || "N/A"}</span>
+              <span className="truncate max-w-full">{actualSplitAddress || "Historical destination unavailable"}</span>
               {actualSplitAddress && (
                 <button
                   onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
@@ -1277,35 +1251,6 @@ export default function ReceiptInvestigation({
                 </button>
               )}
               {copySuccess[`split-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-            </div>
-          ) : (
-            <div className="space-y-2">
-              <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
-                <span className="text-muted-foreground w-28 font-medium">Standard Split:</span>
-                <span className="truncate max-w-full">{r.splitAddress || "N/A"}</span>
-                {r.splitAddress && (
-                  <button
-                    onClick={() => handleCopy(r.splitAddress!, `split-std-${r.receiptId}`)}
-                    className="text-muted-foreground hover:text-white transition-colors"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                )}
-                {copySuccess[`split-std-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-              </div>
-              {r.splitAddressCredit && r.splitAddressCredit !== r.splitAddress && (
-                <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
-                  <span className="text-muted-foreground w-28 font-medium">Credit Split:</span>
-                  <span className="truncate max-w-full">{r.splitAddressCredit}</span>
-                  <button
-                    onClick={() => handleCopy(r.splitAddressCredit!, `split-cred-${r.receiptId}`)}
-                    className="text-muted-foreground hover:text-white transition-colors"
-                  >
-                    <Copy className="w-3.5 h-3.5" />
-                  </button>
-                  {copySuccess[`split-cred-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -1623,13 +1568,15 @@ export default function ReceiptInvestigation({
    )}
 
    {/* Tab 6: Fee & Split Breakdown */}
-   {rowActiveTab === "fees" && (() => {     const siteCfg = siteConfig || r.merchantConfig || r.brandConfig || {};
+   {rowActiveTab === "fees" && (() => {
+     const siteCfg = r.splitRoutingSnapshot ? { ...r, ...r.splitRoutingSnapshot } : (r.merchantConfig || r.brandConfig || {});
      const firstSession = Array.isArray(r.customerSessions) ? r.customerSessions[0] : null;
      const rawFunding = String(r.detectedCardFunding || r.cardFunding || r.funding || firstSession?.cardFunding || firstSession?.funding || firstSession?.detectedCardFunding || "").toLowerCase().trim();
 
       const isCoinbase = rawFunding === "coinbase" || rawFunding.includes("coinbase");
-      const isCrypto = rawFunding === "crypto" || rawFunding === "usdc" || rawFunding === "web3" || rawFunding === "direct_crypto" || (!!r.transactionHash && (!r.stripeSessionId || r.stripeSessionId === "N/A"));
+      const isCrypto = analyticsFunding(r) === "crypto";
       const isDirectCrypto = isCoinbase || isCrypto;
+      const isAch = analyticsFunding(r) === "bank";
 
       const isCredit = !isDirectCrypto && (rawFunding === "credit" || r.isCreditCard === true || (rawFunding !== "debit" && rawFunding !== "us_bank_account" && rawFunding !== "ach"));
       const fundingType = isCoinbase ? "COINBASE ONRAMP" : (isCrypto ? "CRYPTO ONRAMP" : (rawFunding || (isCredit ? "credit" : "debit")).toUpperCase());
@@ -1638,7 +1585,7 @@ export default function ReceiptInvestigation({
        ? !!siteCfg.feeMinusEnabled
        : (r.feeMinusEnabled !== undefined ? !!r.feeMinusEnabled : (r.merchantConfig?.feeMinusEnabled !== undefined ? !!r.merchantConfig.feeMinusEnabled : true));
      
-     const rawPresentedBps = isCredit
+     const rawPresentedBps = isAch ? undefined : isCredit
        ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? r.merchantConfig?.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps)
        : (siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps);
 
@@ -1651,9 +1598,7 @@ export default function ReceiptInvestigation({
 
      const basePresentedBps = effectivePresentedFeeBps !== null ? effectivePresentedFeeBps : (hasPresentedBps ? rawPresentedBps : null);
 
-     const splitCfg = isCredit
-       ? (siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig || siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit)
-       : (siteCfg.splitConfigCredit || r.splitConfigCredit || r.merchantConfig?.splitConfigCredit || siteCfg.splitConfig || r.splitConfig || r.merchantConfig?.splitConfig);
+     const splitCfg = resolveSettlementSplitConfig<any>({ ...siteCfg, splitConfig: siteCfg.splitConfig || r.splitConfig, splitConfigCredit: siteCfg.splitConfigCredit || r.splitConfigCredit, funding: analyticsFunding(r) === "bank" ? "us_bank_account" : analyticsFunding(r) });
 
      const partnerBps = isCredit
        ? (splitCfg?.partnerBps ?? siteCfg.creditPartnerFeeBps ?? siteCfg.partnerFeeBps ?? r.creditPartnerFeeBps ?? r.partnerFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? r.merchantConfig?.partnerFeeBps ?? 0)
@@ -1663,7 +1608,9 @@ export default function ReceiptInvestigation({
        ? (splitCfg?.platformBps ?? siteCfg.creditPlatformFeeBps ?? siteCfg.platformFeeBps ?? r.creditPlatformFeeBps ?? r.platformFeeBps ?? r.merchantConfig?.creditPlatformFeeBps ?? r.merchantConfig?.platformFeeBps ?? 50)
        : (splitCfg?.platformBps ?? siteCfg.platformFeeBps ?? siteCfg.creditPlatformFeeBps ?? r.platformFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.platformFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 75);
 
-     const agentBps = isCredit
+     const agentBps = isAch && splitCfg
+       ? (Array.isArray(splitCfg.agents) ? splitCfg.agents : []).reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
+       : isCredit
        ? (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
            ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
            : (siteCfg.creditAgentFeeBps ?? siteCfg.agentFeeBps ?? r.creditAgentFeeBps ?? r.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? 50))
@@ -1671,9 +1618,11 @@ export default function ReceiptInvestigation({
            ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
            : (siteCfg.agentFeeBps ?? siteCfg.creditAgentFeeBps ?? r.agentFeeBps ?? r.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? 150));
 
-     const stripeCardRatePct = isCredit ? 3.5 : 2.25;
+     const stripeCardRatePct = isAch ? 0.6 : isCredit ? 3.5 : 2.25;
       
-     const displayPresentedRatePct = effectivePresentedFeeBps !== null
+     const displayPresentedRatePct = isAch
+       ? (platformBps + partnerBps + agentBps) / 100 + Number(siteCfg.processingFeePct || 0) + stripeCardRatePct
+       : effectivePresentedFeeBps !== null
        ? (effectivePresentedFeeBps + partnerBps) / 100
        : stripeCardRatePct;
 
@@ -1715,59 +1664,22 @@ export default function ReceiptInvestigation({
      const stripeFeeDeductionUsd = Math.max(0, Math.round((stripeProcessedUsd - onChainSettlementUsd) * 100) / 100);
 
      // Dollar amounts for each BPS split component of the customer total charge
-     const partnerUsd = Math.round((stripeProcessedUsd * (partnerBps / 10000)) * 100) / 100;
-     const platformUsd = Math.round((stripeProcessedUsd * (platformBps / 10000)) * 100) / 100;
-     const agentUsd = Math.round((stripeProcessedUsd * (agentBps / 10000)) * 100) / 100;
+     const allocationBaseUsd = isAch ? onChainSettlementUsd : stripeProcessedUsd;
+     const partnerUsd = Math.round((allocationBaseUsd * (partnerBps / 10000)) * 100) / 100;
+     const platformUsd = Math.round((allocationBaseUsd * (platformBps / 10000)) * 100) / 100;
+     const agentUsd = Math.round((allocationBaseUsd * (agentBps / 10000)) * 100) / 100;
 
      // Merchant Base Component is the scaled-down catalog base so all components sum to customer charge
      const merchantBaseComponentUsd = Math.max(0, Math.round((stripeProcessedUsd - partnerUsd - platformUsd - agentUsd - stripeFeeDeductionUsd) * 100) / 100);
 
-     const feeUsd = isFeeMinus 
+     const feeUsd = isAch ? +(partnerUsd + platformUsd + agentUsd).toFixed(2) : isFeeMinus
        ? Math.round((onChainSettlementUsd * (calculatedFeePct / 100)) * 100) / 100
        : Math.round((catalogItemsSubtotal * (calculatedFeePct / 100)) * 100) / 100;
 
      const netPayoutUsd = Math.round((onChainSettlementUsd - feeUsd) * 100) / 100;
      
-     const activeSplitAddress = isCredit
-        ? (
-            siteCfg.splitAddress ||
-            r.splitAddress ||
-            siteCfg.splitConfig?.contractAddress ||
-            siteCfg.splitConfig?.address ||
-            r.splitConfig?.contractAddress ||
-            r.splitConfig?.address ||
-            r.merchantConfig?.splitAddress ||
-            r.merchantConfig?.splitConfig?.contractAddress ||
-            r.brandConfig?.splitAddress ||
-            siteCfg.splitAddressCredit ||
-            r.splitAddressCredit ||
-            siteCfg.splitConfigCredit?.contractAddress ||
-            siteCfg.splitConfigCredit?.address ||
-            r.splitConfigCredit?.contractAddress ||
-            r.splitConfigCredit?.address ||
-            r.merchantConfig?.splitAddressCredit ||
-            r.brandConfig?.splitAddressCredit
-          )
-        : (
-            siteCfg.splitAddressCredit ||
-            r.splitAddressCredit ||
-            siteCfg.splitConfigCredit?.contractAddress ||
-            siteCfg.splitConfigCredit?.address ||
-            r.splitConfigCredit?.contractAddress ||
-            r.splitConfigCredit?.address ||
-            r.merchantConfig?.splitAddressCredit ||
-            r.merchantConfig?.splitConfigCredit?.contractAddress ||
-            r.brandConfig?.splitAddressCredit ||
-            siteCfg.splitAddress ||
-            r.splitAddress ||
-            siteCfg.splitConfig?.contractAddress ||
-            siteCfg.splitConfig?.address ||
-            r.splitConfig?.contractAddress ||
-            r.splitConfig?.address ||
-            r.merchantConfig?.splitAddress ||
-            r.brandConfig?.splitAddress
-          );
-     
+     const recordedRoute = analyticsSplitRoute(r);
+     const activeSplitAddress = recordedRoute.address;
      const stripeSessionId = r.stripeSessionId || (Array.isArray(r.customerSessions) && r.customerSessions[0]?.stripeSessionId) || "N/A";
 
      const hasDualFeeConfig = r.creditPresentedFeeBps !== undefined || r.splitConfigCredit !== undefined;
@@ -1776,6 +1688,11 @@ export default function ReceiptInvestigation({
      return (
        <div className="space-y-4 animate-in fade-in duration-200 mt-1 font-mono text-xs">
          
+         <div className="rounded-xl border border-white/10 p-4 space-y-2">
+           <strong>Payment: {analyticsFunding(r) === "bank" ? "ACH" : analyticsFunding(r)} ? {recordedRoute.kind} split {recordedRoute.inherited ? "(shared Credit)" : ""}</strong>
+           <p className="break-all">{recordedRoute.address || "Historical destination unavailable"} ? Version {recordedRoute.version || "unknown"}</p>
+           <p>Attribution: {recordedRoute.source}. Recorded allocations are separate from modeled platform revenue.</p>
+         </div>
          {/* Merchant Configuration Badges Header */}
          <div className="bg-black/40 p-4 rounded-2xl border border-white/10 space-y-2">
            <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider flex items-center justify-between">
@@ -1905,7 +1822,7 @@ export default function ReceiptInvestigation({
              </div>
 
              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-               <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Card/Onramp Fee</div>
+               <div className="text-[10px] text-muted-foreground uppercase font-bold">{isAch ? "Stripe ACH Fee" : "Stripe Card/Onramp Fee"}</div>
                <div className="text-base font-bold text-rose-400">-${stripeFeeDeductionUsd.toFixed(2)} USD</div>
                <div className="text-[10px] text-muted-foreground">{stripeCardRatePct.toFixed(2)}% Processing Fee</div>
              </div>
@@ -1919,7 +1836,7 @@ export default function ReceiptInvestigation({
              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
                <div className="text-[10px] text-muted-foreground uppercase font-bold">Stripe Session & Card Config</div>
                <div className="text-xs text-white/90 truncate font-mono">{stripeSessionId}</div>
-               <div className="text-[10px] text-muted-foreground">Card: {isCredit ? "Credit SplitConfig" : "Debit SplitConfig"}</div>
+               <div className="text-[10px] text-muted-foreground">{isAch ? `ACH: ${recordedRoute.kind} split${recordedRoute.inherited ? " (shared Credit)" : ""}` : `Card: ${isCredit ? "Credit SplitConfig" : "Debit SplitConfig"}`}</div>
              </div>
            </div>
          </div>
@@ -1950,7 +1867,7 @@ export default function ReceiptInvestigation({
                <div className="text-lg font-extrabold text-emerald-400">${onChainSettlementUsd.toFixed(2)}</div>
              </div>
              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-               <div className="text-[10px] text-muted-foreground uppercase font-bold">Platform Fee ({calculatedFeePct.toFixed(2)}%)</div>
+               <div className="text-[10px] text-muted-foreground uppercase font-bold">{isAch ? `Split Allocation (${((partnerBps + platformBps + agentBps) / 100).toFixed(2)}%)` : `Platform Fee (${calculatedFeePct.toFixed(2)}%)`}</div>
                <div className="text-lg font-extrabold text-amber-400">-${feeUsd.toFixed(2)}</div>
              </div>
              <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/30 space-y-1">
@@ -2053,6 +1970,39 @@ export default function ReceiptInvestigation({
                <span>{actionLoading[`stripe-${r.receiptId}`] ? "Querying Stripe API..." : "Check Live Stripe Telemetry"}</span>
              </button>
            </div>
+           {handleThirdwebReplay && (
+             <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4 space-y-3.5 flex flex-col justify-between hover:border-purple-500/30 transition-all">
+               <div>
+                 <div className="flex items-center gap-2 text-xs font-bold text-white mb-1.5">
+                   <div className="w-6 h-6 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center">
+                     <RotateCcw className="w-3.5 h-3.5 text-purple-400" />
+                   </div>
+                   <span>Thirdweb Crypto Payment</span>
+                 </div>
+                 <p className="text-[11.5px] text-muted-foreground leading-relaxed">
+                   Replay a verified Thirdweb payment event to update this receipt and refresh its split transactions. This does not charge the customer again.
+                 </p>
+               </div>
+               <details className="text-xs text-muted-foreground">
+                 <summary className="cursor-pointer">Recover using an origin transaction hash</summary>
+                 <div className="mt-3 space-y-2">
+                   <label className="block">Origin transaction hash
+                     <input aria-label="Thirdweb origin transaction hash" value={replayHash} onChange={event => setReplayHash(event.target.value)} placeholder="0x?" disabled={actionLoading[`thirdweb-${r.receiptId}`]} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-xs text-white" />
+                   </label>
+                   <label className="block">Origin chain ID
+                     <input aria-label="Thirdweb origin chain ID" type="number" min="1" step="1" value={replayChainId} onChange={event => setReplayChainId(event.target.value)} disabled={actionLoading[`thirdweb-${r.receiptId}`]} className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 p-2 font-mono text-xs text-white" />
+                   </label>
+                   <p>Use this when the original event was not saved. Thirdweb must confirm the payment and its receipt metadata.</p>
+                 </div>
+               </details>
+               <button type="button" onClick={() => handleThirdwebReplay(r, replayHash.trim() || undefined, replayHash.trim() ? Number(replayChainId) : undefined)}
+                 disabled={!r.wallet || actionLoading[`thirdweb-${r.receiptId}`] || (!!replayHash.trim() && (!/^0x[a-f0-9]{64}$/i.test(replayHash.trim()) || !Number.isSafeInteger(Number(replayChainId)) || Number(replayChainId) <= 0))}
+                 className="w-full py-2.5 px-4 rounded-xl text-xs font-bold transition-all bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 flex items-center justify-center gap-2 disabled:opacity-50 active:scale-95 shadow-md">
+                 <RotateCcw className={`w-3.5 h-3.5 ${actionLoading[`thirdweb-${r.receiptId}`] ? "animate-spin" : ""}`} />
+                 <span>{actionLoading[`thirdweb-${r.receiptId}`] ? "Replaying Thirdweb payment?" : "Replay Thirdweb Webhook"}</span>
+               </button>
+             </div>
+           )}
          </div>
 
          {/* Action Telemetry Output Console */}

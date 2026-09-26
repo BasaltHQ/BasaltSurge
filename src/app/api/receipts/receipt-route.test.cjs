@@ -37,7 +37,23 @@ test('receipt reload returns the canonical Step 1 customerEmail', async () => {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, {
     module, exports: module.exports,
-    require: name => mocks[name] || require(name),
+    require: name => {
+      if (mocks[name]) return mocks[name];
+      if (name.startsWith('@/lib/')) {
+        const helper = { exports: {} };
+        const code = ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../../../lib', name.slice('@/lib/'.length) + '.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+        const load = id => {
+          if (mocks[id]) return mocks[id];
+          const child = { exports: {} };
+          const helperPath = id.startsWith('@/lib/') ? id.slice('@/lib/'.length) : id;
+          vm.runInNewContext(ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../../../lib', helperPath + '.ts'), 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText, { module: child, exports: child.exports, require: load });
+          return child.exports;
+        };
+        vm.runInNewContext(code, { module: helper, exports: helper.exports, require: load });
+        return helper.exports;
+      }
+      return require(name);
+    },
     process: { env: {} }, Response, Headers, URL, crypto: require('node:crypto'),
     console: { log() {}, warn() {}, error() {} },
   }, { filename });

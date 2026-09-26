@@ -1,5 +1,12 @@
 export const ACCESS_STATUS_ERROR = "We couldn't verify your existing access. Please try again. You don't need to submit another application.";
 
+/** Saved platform access settings take precedence over the legacy deployment flag. */
+export function requiresMerchantApproval(isPartner: boolean, accessMode?: string): boolean {
+  if (isPartner || accessMode === "request") return true;
+  if (accessMode === "open") return false;
+  return process.env.NEXT_PUBLIC_PLATFORM_REGISTRATION_REGIME === "true";
+}
+
 export type MerchantAccessStatus = {
   wallet: string;
   authed: boolean;

@@ -1,26 +1,30 @@
 "use client";
+import { useBrand } from "@/contexts/BrandContext";
 
 import React, { useEffect, useState } from "react";
 import { useActiveAccount } from "thirdweb/react";
 
 interface TransactionsViewerProps {
   splitAddressFilter?: string;
+  splitAddressesFilter?: string[];
   merchantWallet?: string;
   hideFilterBar?: boolean;
 }
 
-export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMerchantWallet, hideFilterBar = false }: TransactionsViewerProps = {}) {
+export function TransactionsViewer({ splitAddressesFilter, splitAddressFilter, merchantWallet: propMerchantWallet, hideFilterBar = false }: TransactionsViewerProps = {}) {
   const account = useActiveAccount();
+  const brand = useBrand();
   const [transactions, setTransactions] = useState<any[]>([]);
-  const [cumulative, setCumulative] = useState<{ payments: Record<string, number>; merchantReleases: Record<string, number>; platformReleases: Record<string, number> }>({ 
-    payments: {}, 
-    merchantReleases: {}, 
-    platformReleases: {} 
+  const [cumulative, setCumulative] = useState<{ payments: Record<string, number>; merchantReleases: Record<string, number>; platformReleases: Record<string, number> }>({
+    payments: {},
+    merchantReleases: {},
+    platformReleases: {}
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [splitAddress, setSplitAddress] = useState<string>("");
   const [splitAddressCredit, setSplitAddressCredit] = useState<string>("");
+  const [splitRecords, setSplitRecords] = useState<any[]>([]);
   const [splitHistory, setSplitHistory] = useState<any[]>([]);
   const [selectedSplitFilter, setSelectedSplitFilter] = useState<string>("all");
 
@@ -28,16 +32,16 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
     try {
       setLoading(true);
       setError("");
-      
+
       const merchantWallet = propMerchantWallet || account?.address || "";
       if (!merchantWallet || !/^0x[a-f0-9]{40}$/i.test(merchantWallet)) {
         setError("Merchant wallet not configured");
         setTransactions([]);
         return;
       }
-      
+
       // First get the split address
-      const balRes = await fetch("/api/reserve/balances", {
+      const balRes = await fetch(`/api/reserve/balances?brandKey=${encodeURIComponent(brand?.key || "")}`, {
         headers: { "x-wallet": merchantWallet },
         cache: "no-store",
       });
@@ -45,17 +49,18 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
       const splitAddr = typeof balData?.splitAddressUsed === "string" ? balData.splitAddressUsed : "";
       const splitAddrCredit = typeof balData?.splitAddressCreditUsed === "string" ? balData.splitAddressCreditUsed : "";
       const history = Array.isArray(balData?.splitHistory) ? balData.splitHistory : [];
-      
+
       setSplitAddress(splitAddr);
       setSplitAddressCredit(splitAddrCredit);
       setSplitHistory(history);
-      
+      setSplitRecords(balData.splitRecords || []);
+
       const r = await fetch(
-        `/api/split/transactions?merchantWallet=${encodeURIComponent(merchantWallet)}&limit=500`, 
+        `/api/split/transactions?merchantWallet=${encodeURIComponent(merchantWallet)}&limit=500&brandKey=${encodeURIComponent(brand?.key || "")}`,
         { cache: "no-store" }
       );
       const j = await r.json().catch(() => ({}));
-      
+
       if (!r.ok || j?.error) {
         setError(j?.error || "Failed to load transactions");
         setTransactions([]);
@@ -79,17 +84,18 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
     if (activeWallet) {
       fetchTransactions();
     }
-  }, [account?.address, propMerchantWallet]);
+  }, [account?.address, propMerchantWallet, brand?.key]);
 
   const filteredTransactions = React.useMemo(() => {
     return transactions.filter((tx) => {
+      if (splitAddressesFilter) return splitAddressesFilter.includes(String(tx.splitAddress || "").toLowerCase());
       if (splitAddressFilter) {
         return String(tx.splitAddress || "").toLowerCase() === splitAddressFilter.toLowerCase();
       }
       if (selectedSplitFilter === "all") return true;
       return String(tx.splitAddress || "").toLowerCase() === selectedSplitFilter.toLowerCase();
     });
-  }, [transactions, selectedSplitFilter, splitAddressFilter]);
+  }, [transactions, selectedSplitFilter, splitAddressFilter, splitAddressesFilter]);
 
   const computedCumulative = React.useMemo(() => {
     const payments: Record<string, number> = {};
@@ -104,7 +110,7 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
       } else if (tx.type === "release") {
         if (tx.releaseType === "merchant") {
           merchantReleases[token] = (merchantReleases[token] || 0) + val;
-        } else {
+        } else if (tx.releaseType === "platform") {
           platformReleases[token] = (platformReleases[token] || 0) + val;
         }
       }
@@ -164,7 +170,7 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
       <div className="md:col-span-12 flex flex-col md:flex-row md:items-center justify-between shrink-0 gap-4 mb-2">
         <div>
            <h3 className="text-[10px] uppercase font-bold tracking-[0.2em] text-muted-foreground flex items-center gap-2">
-             <div className="w-1.5 h-1.5 rounded-full bg-[var(--pp-secondary)]" /> 
+             <div className="w-1.5 h-1.5 rounded-full bg-[var(--pp-secondary)]" />
              Transaction History
            </h3>
            <div className="text-[9px] text-muted-foreground/60 uppercase font-semibold tracking-wider mt-1">Split contract activity and historical payouts.</div>
@@ -266,7 +272,7 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
       {/* Summary Stats */}
       <div className="md:col-span-12 grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 shadow-sm h-full flex flex-col">
-          <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-6">Payments Received</div>
+          <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-6">Payments in recent preview</div>
           <div className="space-y-3 flex-1">
             {Object.entries(computedCumulative.payments).map(([token, amount]) => (
               <div key={token} className="flex items-center justify-between bg-foreground/[0.03] border border-foreground/[0.05] rounded-xl p-3.5">
@@ -282,7 +288,7 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
 
         <div className="rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 shadow-sm h-full flex flex-col relative overflow-hidden">
           <div className="absolute top-0 right-0 w-32 h-32 bg-emerald-500/[0.05] blur-[40px] pointer-events-none rounded-full" />
-          <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-6 relative z-10">Merchant Releases</div>
+          <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-6 relative z-10">Merchant releases in recent preview</div>
           <div className="space-y-3 flex-1 relative z-10">
             {Object.entries(computedCumulative.merchantReleases).map(([token, amount]) => (
               <div key={token} className="flex items-center justify-between bg-emerald-500/[0.03] border border-emerald-500/10 rounded-xl p-3.5">
@@ -298,7 +304,7 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
 
         <div className="rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 shadow-sm h-full flex flex-col relative overflow-hidden">
           <div className="absolute top-0 right-0 w-32 h-32 bg-purple-500/[0.05] blur-[40px] pointer-events-none rounded-full" />
-          <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-6 relative z-10">Platform Releases</div>
+          <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-6 relative z-10">Platform releases in recent preview</div>
           <div className="space-y-3 flex-1 relative z-10">
             {Object.entries(computedCumulative.platformReleases).map(([token, amount]) => (
               <div key={token} className="flex items-center justify-between bg-purple-500/[0.03] border border-purple-500/10 rounded-xl p-3.5">
@@ -318,7 +324,7 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
         <div className="text-[10px] md:text-xs uppercase font-bold tracking-wider text-foreground mb-6 block ml-1">
           Recent Transactions {filteredTransactions.length > 0 && <span className="text-muted-foreground/50 ml-2">({filteredTransactions.length})</span>}
         </div>
-        
+
         {filteredTransactions.length > 0 ? (
           <div className="space-y-3 max-h-[600px] overflow-y-auto custom-scrollbar pr-2 -mr-2">
             {filteredTransactions.map((tx: any, idx: number) => {
@@ -326,16 +332,17 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
               const releaseType = tx?.releaseType;
               const isPayment = txType === 'payment';
               const isRelease = txType === 'release';
-              
+
               const txSplitAddr = String(tx.splitAddress || "").toLowerCase();
+              const record = splitRecords.find(entry => entry.address === txSplitAddr);
               const isActiveCredit = splitAddress && txSplitAddr === splitAddress.toLowerCase();
               const isActiveDebit = splitAddressCredit && txSplitAddr === splitAddressCredit.toLowerCase();
-              
+
               return (
-                <div 
-                  key={idx} 
+                <div
+                  key={idx}
                   className={`p-4 md:p-5 rounded-2xl border transition-colors ${
-                    isRelease 
+                    isRelease
                       ? releaseType === 'merchant'
                         ? 'bg-emerald-500/[0.02] border-emerald-500/10 hover:bg-emerald-500/[0.03]'
                         : 'bg-purple-500/[0.02] border-purple-500/10 hover:bg-purple-500/[0.03]'
@@ -369,23 +376,11 @@ export function TransactionsViewer({ splitAddressFilter, merchantWallet: propMer
                           Platform Release
                         </span>
                       )}
-                      
-                      {/* Visual tags for Splits */}
-                      {isActiveCredit && (
-                        <span className="px-3 py-1.5 rounded-lg text-[8px] font-bold uppercase tracking-wider bg-emerald-500/10 text-emerald-500 border border-emerald-500/20">
-                          Credit Split
-                        </span>
-                      )}
-                      {isActiveDebit && (
-                        <span className="px-3 py-1.5 rounded-lg text-[8px] font-bold uppercase tracking-wider bg-purple-500/10 text-purple-500 border border-purple-500/20">
-                          Debit Split
-                        </span>
-                      )}
-                      {!isActiveCredit && !isActiveDebit && txSplitAddr && (
-                        <span className="px-3 py-1.5 rounded-lg text-[8px] font-bold uppercase tracking-wider bg-zinc-500/10 text-zinc-500 border border-zinc-500/20" title={tx.splitAddress}>
-                          Historical Split
-                        </span>
-                      )}
+
+                      {isPayment && <span className="text-xs text-muted-foreground">Funding: {tx.fundingType === "us_bank_account" ? "ACH" : tx.fundingType || "Unknown"}</span>}
+                      {txSplitAddr && <span className="rounded border px-2 py-1 text-xs" title={txSplitAddr}>
+                        {record ? `${record.splitKind === "ach" ? "ACH" : record.splitKind} split v${record.version || "legacy"}${record.active ? "" : " (inactive / history)"}` : "Unclassified split"}
+                      </span>}
                     </div>
                     <span className="font-mono font-bold text-sm text-foreground/90 shrink-0">
                       {Number(tx.value || 0).toFixed(4)} <span className="text-[10px] text-muted-foreground ml-1">{String(tx.token || 'ETH').toUpperCase()}</span>

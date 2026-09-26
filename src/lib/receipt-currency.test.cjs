@@ -26,7 +26,7 @@ function harness({ eurPerUsd = 0.8, feeMinusEnabled = false, degraded = false, c
         const rows = [...docs.values()];
         const query = typeof spec === "string" ? spec : spec.query;
         if (query.includes("type='inventory_item'")) return { resources: rows.filter(row => row.type === "inventory_item") };
-        if (query.includes("type='receipt'")) {
+        if (query.includes("type='receipt'") || query.includes("c.receiptId = @id")) {
           assert.ok(query.includes("c.pricing") || query.includes("SELECT *"), "receipt reads must project native pricing");
           const id = spec.parameters?.find(p => p.name === "@id")?.value;
           return { resources: rows.filter(row => row.type === "receipt" && (!id || row.receiptId === id)) };
@@ -219,4 +219,69 @@ test("native response amounts follow USD edits while retaining the original valu
   assert.equal(fields.lineItems[1].amount, 10);
   assert.equal(fields.pricing.originalTotal, 100);
   assert.equal(formatReceiptAmount(receipt, receipt.totalUsd), "€110.00");
+});
+
+
+test("crypto terminal receipt uses the dedicated half-percent split instead of legacy five-percent fees", async () => {
+  const h = harness();
+  Object.assign(h.config, { processingFeePct: 0, presentedFeeBps: 450,
+    splitConfig: { platformBps: 0, partnerBps: 50, agents: [] },
+    splitAddressCrypto: `0x${"5".repeat(40)}`, splitConfigCrypto: { platformBps: 50, partnerBps: 0, agents: [] }, splitOverrides: { crypto: true } });
+  const created = await h.call("receipts/terminal", { amountUsd: 1, crypto: true });
+  assert.equal(created.status, 200, JSON.stringify(created.data));
+  assert.equal(created.data.receipt.totalUsd, 1.01);
+  assert.equal(created.data.receipt.lineItems.find(row => row.label === "Processing Fee").priceUsd, 0.01);
+  const doc = [...h.docs.values()].find(row => row.type === "receipt");
+  assert.equal(doc.detectedCardFunding, "crypto");
+  assert.equal(doc.splitRoutingSnapshot.splitConfigCrypto.platformBps, 50);
+  const { recalculateReceiptForCardFunding } = h.load("lib/receipts.ts");
+  assert.equal(recalculateReceiptForCardFunding(doc, "crypto", h.config).totalUsd, 1.01);
+  const card = await h.call("receipts/terminal", { amountUsd: 1 });
+  assert.equal(card.data.receipt.totalUsd, 1.05, "existing card creation policy is preserved");
+});
+
+
+test("crypto fee+ minimum survives terminal creation, edits and shipping updates", async () => {
+  const h = harness();
+  Object.assign(h.config, { processingFeePct: 0, splitConfig: { platformBps: 50, partnerBps: 0, agents: [] } });
+  const created = await h.call("receipts/terminal", { amountUsd: 0.5, crypto: true });
+  assert.equal(created.status, 200);
+  assert.equal(created.data.receipt.totalUsd, 0.51);
+  const id = created.data.receipt.receiptId;
+  const edit = await h.call("receipts/[id]", { items: [{ label: "Crypto Payment", priceUsd: 0.5 }] }, "PATCH", id);
+  assert.equal(edit.status, 200, JSON.stringify(edit.data));
+  assert.equal(h.docs.get(`receipt:${id}`).totalUsd, 0.51);
+  const shipping = await h.call("receipts/[id]/shipping", { shippingCostUsd: 0.1,
+    shippingAddress: { line1: "1 Test St", city: "Test", zip: "00000", email: "test@example.invalid" } }, "POST", id);
+  assert.equal(shipping.status, 200, JSON.stringify(shipping.data));
+  assert.equal(shipping.data.receipt.totalUsd, 0.61);
+  assert.equal(shipping.data.receipt.lineItems.find(row => row.label === "Processing Fee").priceUsd, 0.01);
+});
+
+test("crypto fee-minus and a zero-percent crypto allocation do not add the minimum at creation", async () => {
+  for (const [feeMinusEnabled, platformBps] of [[true, 50], [false, 0]]) {
+    const h = harness({ feeMinusEnabled });
+    Object.assign(h.config, { processingFeePct: 0, splitConfig: { platformBps, partnerBps: 0, agents: [] } });
+    const created = await h.call("receipts/terminal", { amountUsd: 0.5, crypto: true });
+    assert.equal(created.data.receipt.totalUsd, 0.5);
+  }
+});
+
+test("ACH edits and shipping preserve its allocation and Stripe fee instead of card presented fees", async () => {
+  for (const feeMinusEnabled of [false, true]) {
+    const h = harness({ feeMinusEnabled });
+    Object.assign(h.config, { processingFeePct: 0, presentedFeeBps: 400 });
+    const created = await h.call("receipts/terminal", { amountUsd: 100 });
+    const id = created.data.receipt.receiptId;
+    Object.assign(h.docs.get(`receipt:${id}`), { detectedCardFunding: "us_bank_account",
+      splitRoutingSnapshot: { feeMinusEnabled, processingFeePct: 0, presentedFeeBps: 400,
+        splitAddressAch: '0x' + '4'.repeat(40), splitConfigAch: { platformBps: 50, partnerBps: 0, agents: [] }, splitOverrides: { ach: true } } });
+    const edit = await h.call("receipts/[id]", { items: [{ label: "Order", priceUsd: 100 }] }, "PATCH", id);
+    assert.equal(edit.status, 200, JSON.stringify(edit.data));
+    assert.equal(h.docs.get(`receipt:${id}`).totalUsd, feeMinusEnabled ? 100 : 101.1);
+    const shipping = await h.call("receipts/[id]/shipping", { shippingCostUsd: 10,
+      shippingAddress: { line1: "1 Test St", city: "Test", zip: "00000", email: "test@example.invalid" } }, "POST", id);
+    assert.equal(shipping.status, 200, JSON.stringify(shipping.data));
+    assert.equal(shipping.data.receipt.totalUsd, feeMinusEnabled ? 110 : 111.21);
+  }
 });

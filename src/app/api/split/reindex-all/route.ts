@@ -1,3 +1,4 @@
+import { discoverSplitContracts } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { requireRole } from "@/lib/auth";
@@ -104,7 +105,7 @@ export async function POST(req: NextRequest) {
     if (isPartnerContainer && envBrandKey) {
       spec = {
         query: `
-          SELECT c.wallet, c.splitAddress, c.split, c.splitAddressCredit, c.splitCredit, c.splitHistory, c.partnerWallet, c.splitConfig, c.splitConfigCredit, c.createdAt, c.updatedAt
+          SELECT c.wallet, c.splitAddress, c.split, c.splitAddressCredit, c.splitCredit, c.splitAddressAch, c.splitAddressCrypto, c.splitAch, c.splitCrypto, c.splitOverrides, c.splitConfigAch, c.splitConfigCrypto, c.splitHistory, c.partnerWallet, c.splitConfig, c.splitConfigCredit, c.createdAt, c.updatedAt
           FROM c
           WHERE c.type='site_config' 
             AND (IS_DEFINED(c.splitAddress) OR IS_DEFINED(c.split.address) OR IS_DEFINED(c.splitAddressCredit) OR IS_DEFINED(c.splitCredit.address))
@@ -115,7 +116,7 @@ export async function POST(req: NextRequest) {
     } else {
       spec = {
         query: `
-          SELECT c.wallet, c.splitAddress, c.split, c.splitAddressCredit, c.splitCredit, c.splitHistory, c.partnerWallet, c.splitConfig, c.splitConfigCredit, c.createdAt, c.updatedAt
+          SELECT c.wallet, c.splitAddress, c.split, c.splitAddressCredit, c.splitCredit, c.splitAddressAch, c.splitAddressCrypto, c.splitAch, c.splitCrypto, c.splitOverrides, c.splitConfigAch, c.splitConfigCrypto, c.splitHistory, c.partnerWallet, c.splitConfig, c.splitConfigCredit, c.createdAt, c.updatedAt
           FROM c
           WHERE c.type='site_config' AND (IS_DEFINED(c.splitAddress) OR IS_DEFINED(c.split.address) OR IS_DEFINED(c.splitAddressCredit) OR IS_DEFINED(c.splitCredit.address))
         `,
@@ -199,6 +200,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      for (const split of discoverSplitContracts(config)) {
+        if (!entry.allAddresses.has(split.address)) entry.allAddresses.set(split.address, { version: `${split.splitKind}_v${split.version}`, deployedAt: split.deployedAt });
+      }
+      for (const allocation of [config.splitConfigAch, config.splitConfigCrypto]) for (const agent of allocation?.agents || []) if (!entry.agentWallets.includes(agent.wallet.toLowerCase())) entry.agentWallets.push(agent.wallet.toLowerCase());
+
       // Collect from splitHistory
       if (Array.isArray(config.splitHistory)) {
         for (const h of config.splitHistory) {
@@ -226,6 +232,8 @@ export async function POST(req: NextRequest) {
       const agentConfigs = [
         config?.splitConfig?.agents,
         config?.splitConfigCredit?.agents,
+        config?.splitConfigAch?.agents,
+        config?.splitConfigCrypto?.agents,
       ];
       for (const agentsList of agentConfigs) {
         if (Array.isArray(agentsList)) {

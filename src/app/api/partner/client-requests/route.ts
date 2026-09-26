@@ -1,3 +1,4 @@
+import { settlementRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { encrypt, decrypt } from "@/lib/encryption";
@@ -235,6 +236,7 @@ export async function GET(req: NextRequest) {
                             if (addr && /^0x[a-f0-9]{40}$/i.test(addr)) {
                                 const conf = configMap.get(wallet);
                                 if (conf) {
+                                    Object.assign(conf, settlementRoutingFields(resource));
                                     // OVERRIDE split fields with authoritative values
                                     conf.splitAddress = resource.splitAddress || addr;
                                     conf.split = resource.split || conf.split;
@@ -254,6 +256,7 @@ export async function GET(req: NextRequest) {
                                 if (addr && /^0x[a-f0-9]{40}$/i.test(addr)) {
                                     const conf = configMap.get(wallet);
                                     if (conf) {
+                                        Object.assign(conf, settlementRoutingFields(legacyDoc));
                                         conf.splitAddress = legacyDoc.splitAddress || addr;
                                         conf.split = legacyDoc.split || conf.split;
                                         conf.splitHistory = legacyDoc.splitHistory || conf.splitHistory;
@@ -311,6 +314,9 @@ export async function GET(req: NextRequest) {
                     createdAt: normalizedCreatedAt,
                     deployedSplitAddress: deployedAddress,
                     deployedSplitAddressCredit: conf?.splitAddressCredit || conf?.splitCredit?.address,
+                    ...settlementRoutingFields(conf),
+                    deployedSplitAddressAch: conf?.splitAddressAch,
+                    deployedSplitAddressCrypto: conf?.splitAddressCrypto,
                     splitHistory: conf?.splitHistory || [],
                     splitConfig: conf?.splitConfig || req.splitConfig, // Prefer deployed config
                     splitConfigCredit: conf?.splitConfigCredit || req.splitConfigCredit || null,
@@ -385,6 +391,9 @@ export async function GET(req: NextRequest) {
                     splitConfigCredit: conf.splitConfigCredit,
                     deployedSplitAddress: conf.splitAddress || conf.split?.address,
                     deployedSplitAddressCredit: conf.splitAddressCredit || conf.splitCredit?.address,
+                    ...settlementRoutingFields(conf),
+                    deployedSplitAddressAch: conf.splitAddressAch,
+                    deployedSplitAddressCrypto: conf.splitAddressCrypto,
                     splitHistory: conf.splitHistory || [],
                     note: "This merchant has a configuration but no request record.",
                 };
@@ -432,6 +441,9 @@ export async function GET(req: NextRequest) {
                 splitConfigCredit: conf.splitConfigCredit,
                 deployedSplitAddress: conf.splitAddress || conf.split?.address,
                 deployedSplitAddressCredit: conf.splitAddressCredit || conf.splitCredit?.address,
+                ...settlementRoutingFields(conf),
+                deployedSplitAddressAch: conf.splitAddressAch,
+                deployedSplitAddressCrypto: conf.splitAddressCrypto,
                 splitHistory: conf.splitHistory || [],
                 // Touchpoint themes
                 touchpointThemes: conf.touchpointThemes || undefined,

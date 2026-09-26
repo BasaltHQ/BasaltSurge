@@ -1,7 +1,8 @@
+import { settlementRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import * as crypto from "crypto";
 import { getContainer } from "@/lib/cosmos";
-import { getSiteConfig } from "@/lib/site-config";
+import { getSiteConfig, getSiteConfigForWallet } from "@/lib/site-config";
 import { getReceipts, pushReceipts } from "@/lib/receipts-mem";
 import { requireApimOrJwt } from "@/lib/gateway-auth";
 import { requireCsrf, rateLimitOrThrow, rateKey } from "@/lib/security";
@@ -328,6 +329,7 @@ export async function POST(req: NextRequest) {
 
     // Compute split breakdown and effective processing fee
     const brand = getBrandConfig();
+    const merchantRouting = settlementRoutingFields(await getSiteConfigForWallet(wallet, brand.key).catch(() => null));
     let merchantFeeBps: number | undefined = undefined;
     try {
       const c = await getContainer();
@@ -432,6 +434,8 @@ export async function POST(req: NextRequest) {
       sessionId,
       // Deployed smart contract split addresses and configs
       ...((brand as any).splitAddress || (brand as any).config?.splitAddress ? { splitAddress: (brand as any).splitAddress || (brand as any).config?.splitAddress } : {}),
+      splitRoutingSnapshot: merchantRouting.splitAddress || merchantRouting.splitAddressCredit ? merchantRouting : undefined,
+      ...merchantRouting,
       ...((brand as any).splitAddressCredit || (brand as any).config?.splitAddressCredit ? { splitAddressCredit: (brand as any).splitAddressCredit || (brand as any).config?.splitAddressCredit } : {}),
       ...((brand as any).splitConfig || (brand as any).config?.splitConfig ? { splitConfig: (brand as any).splitConfig || (brand as any).config?.splitConfig } : {}),
       ...((brand as any).splitConfigCredit || (brand as any).config?.splitConfigCredit ? { splitConfigCredit: (brand as any).splitConfigCredit || (brand as any).config?.splitConfigCredit } : {}),

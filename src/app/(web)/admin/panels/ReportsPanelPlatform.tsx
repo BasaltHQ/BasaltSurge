@@ -579,6 +579,9 @@ export default function ReportsPanelPlatform() {
                     </div>
 
                     {/* Visualization Row */}
+                    {!!data.aggregate.feeUnknownCount && (
+                        <p className="text-xs text-amber-500">Fees exclude {data.aggregate.feeUnknownCount} paid receipts without recorded fee evidence.</p>
+                    )}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                         {(data.aggregate.totalSales > 0) && (
                             <div className="rounded-xl border p-6 glass-pane">
