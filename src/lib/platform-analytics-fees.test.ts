@@ -2,7 +2,16 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 // @ts-expect-error allowImportingTsExtensions is intentionally disabled for the app build.
-import { getPlatformAnalyticsFeeData } from "./platform-analytics-fees.ts";
+import { getPlatformAnalyticsFeeData, getRecordedPlatformFeeData } from "./platform-analytics-fees.ts";
+
+test("Reports preserves actual minor-unit fees, including zero and amounts below the modeled floor", () => {
+  assert.deepEqual(getRecordedPlatformFeeData({ totalUsd: 1.01, amountPlatformMinor: 0 }), { amount: 0, source: "recorded_minor" });
+  assert.deepEqual(getRecordedPlatformFeeData({ totalUsd: 100, amountPlatformMinor: 25, platformFeeBps: 100 }), { amount: 0.25, source: "recorded_minor" });
+  assert.deepEqual(getRecordedPlatformFeeData({ totalUsd: 100, splitConfig: { platformBps: 100 } }), { amount: 1, source: "recorded_bps" });
+  assert.deepEqual(getRecordedPlatformFeeData({ totalUsd: 100, splitConfig: { platformBps: 0 } }), { amount: 0, source: "recorded_bps" });
+  assert.equal(getRecordedPlatformFeeData({ totalUsd: 100 }), null);
+  assert.equal(getRecordedPlatformFeeData({ totalUsd: 100, platformFee: 0.5, platformFeeSource: "minimum_50bps" }), null);
+});
 
 test("applies the 50 BPS floor when legacy receipts have no fee evidence", () => {
   assert.deepEqual(getPlatformAnalyticsFeeData({ totalUsd: 1830.75 }), {

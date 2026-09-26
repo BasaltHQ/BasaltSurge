@@ -6,6 +6,7 @@ export type AnalyticsFeeSummary = {
   platformFee: number | null;
   partnerFee: number | null;
   unifiedFeeEnabled: boolean;
+  feeUnknownCount?: number;
 };
 
 /** Reuse Reports' final amounts, including its rounding and unified fee policy. */
@@ -29,7 +30,7 @@ export async function loadAnalyticsFeeSummary(
     }
     const report = await loadPlatformReport(params);
     return { status: "available", platformFee: report.aggregate.platformFee,
-      partnerFee: null, unifiedFeeEnabled: false };
+      partnerFee: null, unifiedFeeEnabled: false, feeUnknownCount: report.aggregate.feeUnknownCount };
   } catch (error) {
     console.error("[Analytics] Reports fee summary unavailable:", error);
     return { status: "unavailable", platformFee: null, partnerFee: null, unifiedFeeEnabled: false };

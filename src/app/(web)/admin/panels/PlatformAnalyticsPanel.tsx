@@ -2116,7 +2116,8 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
             {isPartner && reportFees?.status === "available" && !reportFees.unifiedFeeEnabled && reportFees.partnerFee !== null && (
               <p className="mt-2 text-sm text-zinc-300">Partner fees: {money(reportFees.partnerFee)}</p>
             )}
-            <p className="mt-3 text-xs text-zinc-400">Same totals as Reports for the selected dates and brand. All-time totals use the latest index.</p>
+            <p className="mt-3 text-xs text-zinc-400">Same totals as Reports for the selected dates and brand. {isPartner ? "All-time totals use the latest index." : "Date ranges use recorded receipt fees; all-time uses indexed totals when available."}</p>
+            {!!reportFees?.feeUnknownCount && <p className="mt-2 text-xs text-amber-300">Excludes {reportFees.feeUnknownCount} paid receipts without recorded fee evidence.</p>}
             <p className="mt-2 text-xs text-zinc-500">Receipt search, status, KYC, failure and payment filters do not change these totals.</p>
             {reportFees?.status !== "available" && <p className="mt-2 text-xs text-amber-300">Refresh to retry loading Reports fees.</p>}
           </div>

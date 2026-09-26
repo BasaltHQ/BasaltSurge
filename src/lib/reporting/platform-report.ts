@@ -1,4 +1,6 @@
 import { getContainer } from "@/lib/cosmos";
+import { getRecordedPlatformFeeData } from "@/lib/platform-analytics-fees";
+import { roundReceiptAmount } from "@/lib/receipt-currency";
 
 /** Shared Reports data source. Call only after authorizing the requested scope. */
 export async function loadPlatformReport(searchParams: URLSearchParams) {
@@ -181,7 +183,7 @@ export async function loadPlatformReport(searchParams: URLSearchParams) {
                 } else if (tx.type === 'release') {
                     if (tx.releaseType === 'merchant') {
                         filtCumMR[token] = (filtCumMR[token] || 0) + value;
-                    } else {
+                    } else if (tx.releaseType === 'platform') {
                         filtCumPR[token] = (filtCumPR[token] || 0) + value;
                     }
                 }
@@ -274,54 +276,60 @@ export async function loadPlatformReport(searchParams: URLSearchParams) {
     // (split_index totalVolumeUsd can be inflated due to stale/incorrect indexing)
     const receiptStatsMap = new Map<
         string,
-        { totalSales: number; totalTips: number; transactionCount: number }
+        { totalSales: number; totalTips: number; transactionCount: number; platformFee: number; feeUnknownCount: number }
     >();
 
     if (selectedWallets.size > 0) {
-        try {
-            // For all-time: query all receipts; for time-bounded: filter by date range
-            const receiptQueryStr = useIndexed
-                ? `SELECT c.wallet, c.totalUsd, c.tipAmount FROM c
-                   WHERE c.type = 'receipt' AND c.status = 'paid'
-                   AND ARRAY_CONTAINS(@wallets, c.wallet)`
-                : `SELECT c.wallet, c.totalUsd, c.tipAmount FROM c
-                   WHERE c.type = 'receipt' AND c.status = 'paid'
-                   AND ARRAY_CONTAINS(@wallets, c.wallet)
-                   AND c.createdAt >= @startDate AND c.createdAt <= @endDate`;
-            const receiptParams: { name: string; value: any }[] = [
-                { name: "@wallets", value: Array.from(selectedWallets) },
-            ];
-            if (!useIndexed) {
-                receiptParams.push(
-                    { name: "@startDate", value: new Date(startMs) },
-                    { name: "@endDate", value: new Date(endMs) },
-                );
-            }
-            const { resources: receipts } = await container.items.query({
-                query: receiptQueryStr,
-                parameters: receiptParams,
-            }).fetchAll();
+        // Propagate read failures instead of reporting zero earnings.
+        // For all-time: query all receipts; for time-bounded: filter by date range
+        const receiptQueryStr = useIndexed
+            ? `SELECT c.wallet, c.totalUsd, c.tipAmount, c.paymentMethod, c.amountPlatformMinor,
+                      c.platformFeeUsd, c.platformFee, c.portalFeeUsd, c.platformFeeBps, c.platformBps, c.splitConfig FROM c
+               WHERE c.type = 'receipt' AND c.status = 'paid'
+               AND ARRAY_CONTAINS(@wallets, c.wallet)`
+            : `SELECT c.wallet, c.totalUsd, c.tipAmount, c.paymentMethod, c.amountPlatformMinor,
+                      c.platformFeeUsd, c.platformFee, c.portalFeeUsd, c.platformFeeBps, c.platformBps, c.splitConfig FROM c
+               WHERE c.type = 'receipt' AND c.status = 'paid'
+               AND ARRAY_CONTAINS(@wallets, c.wallet)
+               AND c.createdAt >= @startDate AND c.createdAt <= @endDate`;
+        const receiptParams: { name: string; value: any }[] = [
+            { name: "@wallets", value: Array.from(selectedWallets) },
+        ];
+        if (!useIndexed) {
+            receiptParams.push(
+                { name: "@startDate", value: new Date(startMs) },
+                { name: "@endDate", value: new Date(endMs) },
+            );
+        }
+        const { resources: receipts } = await container.items.query({
+            query: receiptQueryStr,
+            parameters: receiptParams,
+        }).fetchAll();
 
-            for (const r of receipts || []) {
-                const w = String(r.wallet || "").toLowerCase();
-                const totalUsd = Number(r.totalUsd || 0);
-                const tipAmount = Number(r.tipAmount || 0);
+        for (const r of receipts || []) {
+            const w = String(r.wallet || "").toLowerCase();
+            const totalUsd = Number(r.totalUsd || 0);
+            const tipAmount = Number(r.tipAmount || 0);
+            // Cash is explicitly fee-free; missing on-chain indexing is not.
+            const fee = String(r.paymentMethod || "").toLowerCase() === "cash"
+                ? { amount: 0 } : getRecordedPlatformFeeData(r);
 
-                const existing = receiptStatsMap.get(w);
-                if (existing) {
-                    existing.totalSales += totalUsd;
-                    existing.totalTips += tipAmount;
-                    existing.transactionCount += 1;
-                } else {
-                    receiptStatsMap.set(w, {
-                        totalSales: totalUsd,
-                        totalTips: tipAmount,
-                        transactionCount: 1,
-                    });
-                }
+            const existing = receiptStatsMap.get(w);
+            if (existing) {
+                existing.totalSales += totalUsd;
+                existing.totalTips += tipAmount;
+                existing.transactionCount += 1;
+                existing.platformFee += fee?.amount ?? 0;
+                existing.feeUnknownCount += fee === null ? 1 : 0;
+            } else {
+                receiptStatsMap.set(w, {
+                    totalSales: totalUsd,
+                    totalTips: tipAmount,
+                    transactionCount: 1,
+                    platformFee: fee?.amount ?? 0,
+                    feeUnknownCount: fee === null ? 1 : 0,
+                });
             }
-        } catch (e) {
-            console.warn("[PlatformReports] Receipt query failed:", e);
         }
     }
 
@@ -336,6 +344,8 @@ export async function loadPlatformReport(searchParams: URLSearchParams) {
         let merchantEarned: number;
         let platformFee: number;
         let customers: number;
+        let feeSource: "index" | "receipts" | "none" = "none";
+        let feeUnknownCount = 0;
 
         // Split_index is the SOURCE OF TRUTH for volume/fees (blockchain data survives receipt loss).
         // Only fall back to receipts when split_index is missing or has obviously bad data
@@ -344,11 +354,12 @@ export async function loadPlatformReport(searchParams: URLSearchParams) {
         const splitIsValid = splitStats && splitStats.totalVolumeUsd > 0 && splitStats.totalVolumeUsd < MAX_SANE_VOLUME;
         const hasReceipts = receiptStats && receiptStats.transactionCount > 0;
 
-        if (useIndexed && splitIsValid) {
-            // All-time with valid split_index: use as source of truth
+        if (splitIsValid && (useIndexed || !hasReceipts) && (splitStats.platformFeeUsd > 0 || !hasReceipts)) {
+            // Use all-time index totals, or period releases when receipts are absent.
             totalSales = splitStats.totalVolumeUsd;
             merchantEarned = splitStats.merchantEarnedUsd;
             platformFee = splitStats.platformFeeUsd;
+            feeSource = "index";
             // Tips come from receipts (not tracked on-chain)
             totalTips = receiptStats?.totalTips || 0;
             transactionCount = splitStats.transactionCount;
@@ -360,14 +371,18 @@ export async function loadPlatformReport(searchParams: URLSearchParams) {
             transactionCount = receiptStats.transactionCount;
             customers = splitStats?.customers || 0;
 
-            // Estimate earned/fee from receipt volume using the split_index fee ratio
-            merchantEarned = totalSales;
-            platformFee = 0;
-            if (splitIsValid && splitStats.totalVolumeUsd > 0) {
-                const feeRatio = splitStats.platformFeeUsd / splitStats.totalVolumeUsd;
-                platformFee = Math.round(totalSales * feeRatio * 100) / 100;
-                merchantEarned = Math.round((totalSales - platformFee) * 100) / 100;
+            // Earned fees belong to the paid receipts in this period. A release
+            // can happen later, and an empty/stale index is not a zero fee.
+            platformFee = roundReceiptAmount(receiptStats.platformFee);
+            feeSource = "receipts";
+            feeUnknownCount = receiptStats.feeUnknownCount;
+            if (feeUnknownCount === receiptStats.transactionCount && splitIsValid && splitStats.platformFeeUsd > 0) {
+                // Legacy receipts can lack fees even though a real release is indexed.
+                platformFee = splitStats.platformFeeUsd;
+                feeSource = "index";
+                feeUnknownCount = 0;
             }
+            merchantEarned = roundReceiptAmount(totalSales - platformFee);
         } else {
             // No data at all
             totalSales = 0;
@@ -386,6 +401,8 @@ export async function loadPlatformReport(searchParams: URLSearchParams) {
             totalSales,
             merchantEarned,
             platformFee,
+            feeSource,
+            feeUnknownCount,
             totalTips,
             transactionCount,
             customers,
@@ -424,6 +441,7 @@ export async function loadPlatformReport(searchParams: URLSearchParams) {
             totalSales: partnerMerchants.reduce((s, m) => s + m.totalSales, 0),
             merchantEarned: partnerMerchants.reduce((s, m) => s + m.merchantEarned, 0),
             platformFee: partnerMerchants.reduce((s, m) => s + m.platformFee, 0),
+            feeUnknownCount: partnerMerchants.reduce((s, m) => s + m.feeUnknownCount, 0),
             totalTips: partnerMerchants.reduce((s, m) => s + m.totalTips, 0),
             transactionCount: partnerMerchants.reduce((s, m) => s + m.transactionCount, 0),
             customers: partnerMerchants.reduce((s, m) => s + m.customers, 0),
@@ -435,6 +453,7 @@ export async function loadPlatformReport(searchParams: URLSearchParams) {
         totalSales: merchants.reduce((s, m) => s + m.totalSales, 0),
         merchantEarned: merchants.reduce((s, m) => s + m.merchantEarned, 0),
         platformFee: merchants.reduce((s, m) => s + m.platformFee, 0),
+        feeUnknownCount: merchants.reduce((s, m) => s + m.feeUnknownCount, 0),
         totalTips: merchants.reduce((s, m) => s + m.totalTips, 0),
         transactionCount: merchants.reduce((s, m) => s + m.transactionCount, 0),
         averageOrderValue: 0 as number,
