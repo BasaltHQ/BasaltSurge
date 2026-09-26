@@ -26,6 +26,7 @@ export async function generateCartExtensionFiles(config: CartExtensionConfig): P
     "extensions/cart-payment/locales/en.default.json": "{}\n",
     "extensions/cart-payment/blocks/cart-payment.liquid": `<div hidden data-surge-cart-config
   data-gateway="${escape(origin)}"
+  data-brand-label="${escape(label)}"
   data-shop="{{ shop.permanent_domain | escape }}"
   data-button-label="{{ block.settings.button_label | escape }}"></div>
 {% schema %}
