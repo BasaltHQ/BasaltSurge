@@ -108,6 +108,44 @@ test('linked profiles are never presented as the original sign-up contact', asyn
     assert.equal(await api.getWalletSignupContact(wallet), null);
 });
 
+test('phone logins resolve from provider profiles when the top-level phone is absent', async () => {
+    for (const email of [undefined, 'owner@example.com']) {
+        const user = { walletAddress: wallet, email, profiles: [
+            { type: 'email', details: { email: 'linked@example.com' } },
+            { type: 'phone', details: { phone: '+1 555 123 4567' } },
+        ] };
+        const contact = await identityHarness({ [wallet]: user }).getWalletSignupContact(wallet);
+        assert.equal(contact.phone, '+1 555 123 4567');
+        assert.equal(contact.phoneSource, 'linked_profile');
+        assert.equal(contact.email, email);
+        const primary = await identityHarness({ [wallet]: { ...user, phone: '+15559876543' } }).getWalletSignupContact(wallet);
+        assert.equal(primary.phone, '+15559876543');
+        assert.equal(primary.phoneSource, undefined);
+    }
+});
+
+test('profile phone contacts still require verified wallet ownership', async () => {
+    const user = { walletAddress: signer, profiles: [{ type: 'phone', details: { phone: '+15551234567' } }] };
+    assert.equal(await identityHarness({ [signer]: user }).getWalletSignupContact(wallet, signer), null);
+    const deployed = await identityHarness({ [signer]: user }, [signer]).getWalletSignupContact(wallet);
+    assert.equal(deployed.phone, '+15551234567');
+    const undeployed = await identityHarness({ [signer]: user }, [], { deployed: false, predicted: wallet }).getWalletSignupContact(wallet, signer);
+    assert.equal(undeployed.phoneSource, 'linked_profile');
+});
+
+test('profile extraction ignores unrelated, empty, malformed, and ambiguous phone values', async () => {
+    const profile = phone => ({ type: 'phone', details: { phone } });
+    for (const profiles of [
+        [profile(''), profile('   '), profile(123), { type: 'phone' }],
+        [{ type: 'email', details: { phone: '+15551234567' } }],
+        [profile('+15551234567'), profile('+15557654321')],
+    ]) {
+        assert.equal(await identityHarness({ [wallet]: { walletAddress: wallet, profiles } }).getWalletSignupContact(wallet), null);
+    }
+    const duplicate = await identityHarness({ [wallet]: { walletAddress: wallet, profiles: [profile('+15551234567'), profile('+15551234567')] } }).getWalletSignupContact(wallet);
+    assert.equal(duplicate.phone, '+15551234567');
+});
+
 test('undeployed smart wallets resolve signup contacts only after verifying the factory address', async () => {
     const users = { [signer]: { walletAddress: signer, phone: '+15551234567' } };
     const verified = identityHarness(users, [], { deployed: false, predicted: wallet });
@@ -155,7 +193,8 @@ test('contact lookup accepts shared-project brands but rejects missing or mismat
     await assert.rejects(contactClientHarness(null).getWalletContactClient('partner'), /lookup_unavailable/);
 });
 
-function routeHarness({ admin = false, platformAdmin = false, resources = [], lookupFailure = false, verified = true } = {}) {
+function routeHarness({ admin = false, platformAdmin = false, resources = [], lookupFailure = false, verified = true,
+    lookupContact = { email: 'verified@example.com', source: 'thirdweb', retrievedAt: 123 } } = {}) {
     const created = [];
     const queries = [];
     let lookups = 0;
@@ -192,7 +231,7 @@ function routeHarness({ admin = false, platformAdmin = false, resources = [], lo
             lookups++;
             lookupArgs.push(args);
             if (lookupFailure) throw new Error('Provider unavailable');
-            return { email: 'verified@example.com', source: 'thirdweb', retrievedAt: 123 };
+            return lookupContact;
         } },
     });
     return { api, created, queries, lookupArgs, get lookups() { return lookups; } };
@@ -300,4 +339,57 @@ test('normal admin list responses do not include wallet provider identity fields
     assert.equal(data.requests.length, 1);
     assert.equal('walletSignupContact' in data.requests[0], false);
     assert.equal('walletSignerAddress' in data.requests[0], false);
+});
+
+test('email-only submission snapshots resolve profile phones without replacing the recorded email', async () => {
+    const saved = { email: 'submitted@example.com', source: 'thirdweb', retrievedAt: 123 };
+    const live = await identityHarness({ [wallet]: { walletAddress: wallet,
+        email: 'current@example.com', profiles: [{ type: 'phone', details: { phone: '+15551234567' } }],
+    } }).getWalletSignupContact(wallet);
+    const h = routeHarness({ admin: true, lookupContact: live,
+        resources: [{ id: 'one', wallet, walletSignupContact: saved }],
+    });
+    const response = await h.api.GET({ headers: new Headers(), url: 'https://example.com/api/partner/client-requests?brandKey=basaltsurge&walletContactRequestId=one' });
+    const data = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    assert.equal(data.contact.email, saved.email);
+    assert.equal(data.contact.phone, live.phone);
+    assert.equal(data.contact.phoneSource, 'linked_profile');
+    assert.equal(data.recordedAtSubmission, true);
+    assert.equal(data.phoneResolvedNow, true);
+    assert.equal(saved.phone, undefined);
+    assert.equal(h.lookups, 1);
+});
+
+test('missing or unavailable phone lookups preserve saved emails and distinguish failures', async () => {
+    for (const lookupFailure of [false, true]) {
+        const saved = { email: 'submitted@example.com', source: 'thirdweb', retrievedAt: 123 };
+        const h = routeHarness({ admin: true, lookupFailure, lookupContact: null,
+            resources: [{ id: 'one', wallet, walletSignupContact: saved }],
+        });
+        const response = await h.api.GET({ headers: new Headers(), url: 'https://example.com/api/partner/client-requests?brandKey=basaltsurge&walletContactRequestId=one' });
+        const data = await response.json();
+        assert.equal(response.status, 200);
+        assert.deepEqual(data.contact, saved);
+        assert.equal(data.recordedAtSubmission, true);
+        assert.equal(data.phoneLookupUnavailable === true, lookupFailure);
+        assert.notEqual(data.phoneResolvedNow, true);
+    }
+});
+
+test('phone-only profile contacts are saved on submission and returned by the details API', async () => {
+    const contact = await identityHarness({ [wallet]: { walletAddress: wallet,
+        profiles: [{ type: 'phone', details: { phone: '+15551234567' } }],
+    } }).getWalletSignupContact(wallet);
+    const h = routeHarness({ lookupContact: contact });
+    assert.equal((await h.api.POST({ headers: new Headers(), json: async () => valid })).status, 200);
+    assert.equal(h.created[0].walletSignupContact.phone, contact.phone);
+    const admin = routeHarness({ admin: true, resources: h.created });
+    const response = await admin.api.GET({ headers: new Headers(), url: 'https://example.com/api/partner/client-requests?brandKey=basaltsurge&walletContactRequestId=application-id' });
+    const data = await response.json();
+    assert.equal(data.contact.phone, contact.phone);
+    assert.equal(data.contact.phoneSource, 'linked_profile');
+    assert.equal(data.recordedAtSubmission, true);
+    assert.equal(admin.lookups, 0);
 });

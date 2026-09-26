@@ -9,6 +9,8 @@ export function WalletSignupContactDetails({ requestId, brandKey }: {
 }) {
     const [contact, setContact] = useState<WalletSignupContact>();
     const [recordedAtSubmission, setRecordedAtSubmission] = useState(false);
+    const [phoneResolvedNow, setPhoneResolvedNow] = useState(false);
+    const [phoneLookupUnavailable, setPhoneLookupUnavailable] = useState(false);
     const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
     const [attempt, setAttempt] = useState(0);
 
@@ -17,6 +19,8 @@ export function WalletSignupContactDetails({ requestId, brandKey }: {
         setStatus("loading");
         setContact(undefined);
         setRecordedAtSubmission(false);
+        setPhoneResolvedNow(false);
+        setPhoneLookupUnavailable(false);
         const params = new URLSearchParams({ brandKey, walletContactRequestId: requestId });
         fetch(`/api/partner/client-requests?${params}`, { credentials: "include", cache: "no-store", signal: controller.signal })
             .then(async response => {
@@ -25,6 +29,8 @@ export function WalletSignupContactDetails({ requestId, brandKey }: {
                 if (!controller.signal.aborted) {
                     setContact(data.contact || undefined);
                     setRecordedAtSubmission(data.recordedAtSubmission === true);
+                    setPhoneResolvedNow(data.phoneResolvedNow === true);
+                    setPhoneLookupUnavailable(data.phoneLookupUnavailable === true);
                     setStatus("ready");
                 }
             })
@@ -41,7 +47,11 @@ export function WalletSignupContactDetails({ requestId, brandKey }: {
                 : <>
                     {contact.email && <div className="grid grid-cols-[80px_1fr] gap-2 text-sm"><span className="text-muted-foreground">Email</span><a className="break-all select-all hover:underline" href={`mailto:${contact.email}`}>{contact.email}</a></div>}
                     {contact.phone && <div className="grid grid-cols-[80px_1fr] gap-2 text-sm"><span className="text-muted-foreground">Phone</span><a className="break-all select-all hover:underline" href={`tel:${contact.phone}`}>{contact.phone}</a></div>}
-                    <p className="text-xs text-muted-foreground">From Thirdweb&apos;s wallet record{recordedAtSubmission ? " at application submission" : " (current lookup)"}.</p>
+                    <p className="text-xs text-muted-foreground">{phoneResolvedNow
+                        ? "Email recorded at application submission. Phone from current wallet lookup."
+                        : <>From Thirdweb&apos;s wallet record{recordedAtSubmission ? " at application submission" : " (current lookup)"}.</>}</p>
+                    {contact.phoneSource === "linked_profile" && <p className="text-xs text-muted-foreground">Phone from a linked phone login on this wallet; the original sign-up method is not provided.</p>}
+                    {phoneLookupUnavailable && <p className="text-xs text-muted-foreground">Phone lookup unavailable. <button type="button" className="underline" onClick={() => setAttempt(value => value + 1)}>Retry</button></p>}
                 </>}
         </div>
     );

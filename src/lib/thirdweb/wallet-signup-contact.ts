@@ -9,6 +9,7 @@ import { getWalletContactClient } from "@/lib/thirdweb/wallet-contact-client";
 export type WalletSignupContact = {
     email?: string;
     phone?: string;
+    phoneSource?: "linked_profile";
     source: "thirdweb";
     retrievedAt: number;
 };
@@ -23,10 +24,21 @@ export async function getWalletSignupContact(wallet: string, signerHint?: string
         addresses.push(signerHint);
     }
     const toContact = (user: Awaited<ReturnType<typeof getUser>>): WalletSignupContact | null => {
-        if (!user?.email && !user?.phone) return null;
+        if (!user) return null;
+        // Enclave phone logins can expose their number only in the phone
+        // authentication profile. This runs only after wallet ownership is checked.
+        const profilePhones = [...new Set((user.profiles || [])
+            .filter(profile => profile.type === "phone")
+            .map(profile => profile.details?.phone)
+            .filter((phone): phone is string => typeof phone === "string" && !!phone.trim()))];
+        const primaryPhone = typeof user.phone === "string" && user.phone.trim() ? user.phone : undefined;
+        // Do not arbitrarily select one of several linked phone identities.
+        const phone = primaryPhone || (profilePhones.length === 1 ? profilePhones[0] : undefined);
+        if (!user.email && !phone) return null;
         return {
             ...(user.email ? { email: user.email } : {}),
-            ...(user.phone ? { phone: user.phone } : {}),
+            ...(phone ? { phone } : {}),
+            ...(phone && !primaryPhone ? { phoneSource: "linked_profile" as const } : {}),
             source: "thirdweb",
             retrievedAt: Date.now(),
         };
@@ -39,7 +51,7 @@ export async function getWalletSignupContact(wallet: string, signerHint?: string
             if (/^0x[a-fA-F0-9]{40}$/.test(user.walletAddress)) signerUsers.push(user);
             continue;
         }
-        // Top-level contacts identify this wallet; linked profiles may be added later.
+        // Profile contacts are labeled separately from original signup data.
         const contact = toContact(user);
         if (contact) return contact;
     }

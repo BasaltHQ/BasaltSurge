@@ -129,13 +129,30 @@ export async function GET(req: NextRequest) {
             const { resources: applications } = await container.items.query(contactQuery).fetchAll();
             const application = applications[0];
             if (!application) return responseJson({ error: "request_not_found" }, { status: 404 });
-            if (application.walletSignupContact?.source === "thirdweb") {
-                return responseJson({ ok: true, contact: application.walletSignupContact, recordedAtSubmission: true });
+            const savedContact = application.walletSignupContact?.source === "thirdweb"
+                ? application.walletSignupContact as WalletSignupContact : undefined;
+            if (savedContact?.phone) {
+                return responseJson({ ok: true, contact: savedContact, recordedAtSubmission: true });
             }
             try {
                 const contact = await getWalletSignupContact(application.wallet, application.walletSignerAddress, brandKey);
+                if (savedContact?.email) {
+                    // Older snapshots omitted profile-only phone numbers. Keep
+                    // the submitted email and resolve the missing phone on read.
+                    return responseJson({
+                        ok: true,
+                        contact: contact?.phone ? {
+                            ...savedContact, phone: contact.phone, phoneSource: contact.phoneSource,
+                        } : savedContact,
+                        recordedAtSubmission: true,
+                        phoneResolvedNow: !!contact?.phone,
+                    });
+                }
                 return responseJson({ ok: true, contact, recordedAtSubmission: false });
             } catch {
+                if (savedContact?.email) {
+                    return responseJson({ ok: true, contact: savedContact, recordedAtSubmission: true, phoneLookupUnavailable: true });
+                }
                 return responseJson({ error: "wallet_contact_lookup_unavailable" }, { status: 503 });
             }
         }
