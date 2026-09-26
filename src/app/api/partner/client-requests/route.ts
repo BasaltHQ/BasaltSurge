@@ -133,7 +133,7 @@ export async function GET(req: NextRequest) {
                 return responseJson({ ok: true, contact: application.walletSignupContact, recordedAtSubmission: true });
             }
             try {
-                const contact = await getWalletSignupContact(application.wallet, application.walletSignerAddress);
+                const contact = await getWalletSignupContact(application.wallet, application.walletSignerAddress, brandKey);
                 return responseJson({ ok: true, contact, recordedAtSubmission: false });
             } catch {
                 return responseJson({ error: "wallet_contact_lookup_unavailable" }, { status: 503 });
@@ -647,7 +647,7 @@ export async function POST(req: NextRequest) {
         // read and stored. Legacy header-only applications remain supported;
         // their contact is resolved later through the admin-only details API.
         const walletSignupContact = hasVerifiedWalletSession
-            ? await getWalletSignupContact(w, walletSignerAddress).catch(() => null)
+            ? await getWalletSignupContact(w, walletSignerAddress, brandKey).catch(() => null)
             : null;
         const doc: ClientRequestDoc = {
             id: crypto.randomUUID(),

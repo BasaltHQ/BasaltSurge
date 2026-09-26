@@ -6,13 +6,13 @@ const vm = require('node:vm');
 const ts = require('typescript');
 const { NextResponse } = require('next/server');
 
-function load(file, mocks = {}) {
+function load(file, mocks = {}, env = {}) {
     const module = { exports: {} };
     const code = ts.transpileModule(fs.readFileSync(path.resolve(__dirname, file), 'utf8'), {
         compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
     }).outputText;
     vm.runInNewContext(code, {
-        module, exports: module.exports, URL, Date, process: { env: {} },
+        module, exports: module.exports, URL, Date, process: { env },
         console: { log() {}, error() {} },
         require: name => { if (!(name in mocks)) throw new Error(`Unmocked dependency: ${name}`); return mocks[name]; },
     });
@@ -65,12 +65,18 @@ test('normal application-list records omit provider contact and signer identity'
     assert.equal('walletSignerAddress' in listRecord, false);
 });
 
-function identityHarness(users, admins = []) {
+function identityHarness(users, admins = [], { deployed = true, predicted = signer, rpcFailure = false } = {}) {
     return load('thirdweb/wallet-signup-contact.ts', {
         'thirdweb/wallets': { getUser: async ({ walletAddress }) => users[walletAddress] || null },
         'thirdweb': { getContract: value => value },
-        'thirdweb/extensions/erc4337': { getAllAdmins: async () => admins },
-        '@/lib/thirdweb/server': { chain: {}, getServerClient: () => ({ secretKey: 'test' }) },
+        'thirdweb/extensions/erc4337': { getAllAdmins: async () => {
+            if (rpcFailure) throw new Error('RPC unavailable');
+            return admins;
+        } },
+        'thirdweb/utils': { isContractDeployed: async () => deployed },
+        'thirdweb/wallets/smart': { predictSmartAccountAddress: async () => predicted },
+        '@/lib/thirdweb/server': { chain: {} },
+        '@/lib/thirdweb/wallet-contact-client': { getWalletContactClient: async () => ({ secretKey: 'test' }) },
     });
 }
 
@@ -102,10 +108,58 @@ test('linked profiles are never presented as the original sign-up contact', asyn
     assert.equal(await api.getWalletSignupContact(wallet), null);
 });
 
+test('undeployed smart wallets resolve signup contacts only after verifying the factory address', async () => {
+    const users = { [signer]: { walletAddress: signer, phone: '+15551234567' } };
+    const verified = identityHarness(users, [], { deployed: false, predicted: wallet });
+    assert.equal((await verified.getWalletSignupContact(wallet, signer)).phone, '+15551234567');
+    const unrelated = identityHarness(users, [], { deployed: false, predicted: signer });
+    assert.equal(await unrelated.getWalletSignupContact(wallet, signer), null);
+    // Some provider records returned by smart address omit smartAccountAddress.
+    const legacy = identityHarness({ [wallet]: users[signer] }, [], { deployed: false, predicted: wallet });
+    assert.equal((await legacy.getWalletSignupContact(wallet)).phone, '+15551234567');
+    // A factory prediction must not override the actual owners of a deployed wallet.
+    const multipleOwners = identityHarness(users, [signer, wallet], { predicted: wallet });
+    assert.equal(await multipleOwners.getWalletSignupContact(wallet, signer), null);
+});
+
+test('on-chain lookup failures stay retryable instead of reporting no contact', async () => {
+    await assert.rejects(identityHarness({}, [], { rpcFailure: true }).getWalletSignupContact(wallet), /RPC unavailable/);
+});
+
+function contactClientHarness(overrides, env = {}) {
+    return load('thirdweb/wallet-contact-client.ts', {
+        'thirdweb': { createThirdwebClient: ({ secretKey }) => ({ secretKey, clientId: `${secretKey}-id` }) },
+        '@/lib/brand-config': { readBrandOverridesCached: async () => overrides },
+        '@/lib/thirdweb/server': { getServerClient: () => ({ secretKey: 'default', clientId: 'default-id' }) },
+    }, env);
+}
+
+test('contact lookup uses the signup brand project, preferring DB credentials over env defaults', async () => {
+    const api = contactClientHarness({ thirdwebClientId: 'partner-id', thirdwebSecretKey: 'partner' }, {
+        THIRDWEB_SECRET_KEY: 'platform', NEXT_PUBLIC_THIRDWEB_CLIENT_ID: 'platform-id',
+        THIRDWEB_SECRET_KEY_DATA_OPT: 'old', NEXT_PUBLIC_THIRDWEB_CLIENT_ID_DATA_OPT: 'old-id',
+    });
+    assert.equal((await api.getWalletContactClient('data-opt')).secretKey, 'partner');
+    const envOnly = contactClientHarness(null, {
+        THIRDWEB_SECRET_KEY: 'platform', NEXT_PUBLIC_THIRDWEB_CLIENT_ID: 'platform-id',
+        THIRDWEB_SECRET_KEY_DATA_OPT: 'partner', NEXT_PUBLIC_THIRDWEB_CLIENT_ID_DATA_OPT: 'partner-id',
+    });
+    assert.equal((await envOnly.getWalletContactClient('DATA-OPT')).secretKey, 'partner');
+    assert.equal((await envOnly.getWalletContactClient('basaltsurge')).secretKey, 'platform');
+});
+
+test('contact lookup accepts shared-project brands but rejects missing or mismatched keys', async () => {
+    const env = { THIRDWEB_SECRET_KEY: 'platform', NEXT_PUBLIC_THIRDWEB_CLIENT_ID: 'platform-id' };
+    assert.equal((await contactClientHarness(null, env).getWalletContactClient('partner')).secretKey, 'platform');
+    await assert.rejects(contactClientHarness({ thirdwebClientId: 'partner-id' }, env).getWalletContactClient('partner'), /project_mismatch/);
+    await assert.rejects(contactClientHarness(null).getWalletContactClient('partner'), /lookup_unavailable/);
+});
+
 function routeHarness({ admin = false, platformAdmin = false, resources = [], lookupFailure = false, verified = true } = {}) {
     const created = [];
     const queries = [];
     let lookups = 0;
+    const lookupArgs = [];
     const api = load('../app/api/partner/client-requests/route.ts', {
         '@/lib/payment-split-routing': { settlementRoutingFields: () => ({}) },
         '@/lib/notifications/outbox': { enqueueNotification: async () => {} },
@@ -134,13 +188,14 @@ function routeHarness({ admin = false, platformAdmin = false, resources = [], lo
         },
         '@/lib/brand-config': { getBrandConfigFromCosmos: async () => ({ brand: null }) },
         '@/lib/client-application': validation,
-        '@/lib/thirdweb/wallet-signup-contact': { getWalletSignupContact: async () => {
+        '@/lib/thirdweb/wallet-signup-contact': { getWalletSignupContact: async (...args) => {
             lookups++;
+            lookupArgs.push(args);
             if (lookupFailure) throw new Error('Provider unavailable');
             return { email: 'verified@example.com', source: 'thirdweb', retrievedAt: 123 };
         } },
     });
-    return { api, created, queries, get lookups() { return lookups; } };
+    return { api, created, queries, lookupArgs, get lookups() { return lookups; } };
 }
 
 test('API rejects incomplete submissions and ignores spoofed wallet contact data', async () => {
@@ -152,6 +207,7 @@ test('API rejects incomplete submissions and ignores spoofed wallet contact data
     assert.equal(h.created[0].walletSignupContact.email, 'verified@example.com');
     assert.equal(h.created[0].wallet, wallet);
     assert.equal(h.created[0].ein, 'encrypted:12-3456789');
+    assert.equal(h.lookupArgs[0][2], 'basaltsurge');
 });
 
 test('API requires every business and shop field before persisting an application', async () => {
@@ -224,6 +280,7 @@ test('contact lookup requires admin access, brand scope, and an existing applica
     assert.equal((await legacyResponse.json()).recordedAtSubmission, false);
     assert.equal(legacyResponse.headers.get('cache-control'), 'private, no-store');
     assert.equal(legacy.lookups, 1);
+    assert.equal(legacy.lookupArgs[0][2], 'basaltsurge');
     const unavailable = routeHarness({ admin: true, resources: [{ id: 'one', type: 'client_request', wallet }], lookupFailure: true });
     const unavailableResponse = await unavailable.api.GET(request('basaltsurge'));
     assert.equal(unavailableResponse.status, 503);
