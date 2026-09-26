@@ -10,7 +10,8 @@ const cart = { items: [{ sku: '36MJU5H68', quantity: 2, variant_id: 123 }], tota
 const ok = value => ({ ok: true, json: async () => value });
 
 // Minimal DOM surface for exercising real event handlers, cart redraws and network failures.
-function storefront({ embed = true, loading = false, disabled = false, fetcher, controls = 1 } = {}) {
+function storefront({ embed = true, loading = false, disabled = false, fetcher, controls = 1,
+  gateway = 'https://surge.basalthq.com', buttonLabel = 'Pay with Surge', brandLabel = '' } = {}) {
   class Element {
     constructor(tag) { this.tagName = tag.toUpperCase(); this.children = []; this.dataset = {}; this.attrs = {}; this.disabled = false; }
     get isConnected() { return this === body || this === head || !!this.parent?.isConnected; }
@@ -31,12 +32,12 @@ function storefront({ embed = true, loading = false, disabled = false, fetcher, 
     body.appendChild(anchor); anchors.push(anchor); return anchor;
   }
   for (let i = 0; i < controls; i++) addControl();
-  const config = { dataset: { gateway: 'https://surge.basalthq.com', buttonLabel: 'Pay with Surge', shop: 'test.myshopify.com' } };
+  const config = { dataset: { gateway, buttonLabel, brandLabel, shop: 'test.myshopify.com' } };
   const events = {}, requests = [], redirects = [], timers = new Map();
   let mutation, timerId = 0;
   const document = {
     readyState: loading ? 'loading' : 'complete', body: loading ? null : body, head,
-    currentScript: { src: embed ? 'https://cdn.shopify.com/extensions/assets/surge-cart-payment.js' : 'https://surge.basalthq.com/js/shopify-cart-hijack.js' },
+    currentScript: { src: embed ? 'https://cdn.shopify.com/extensions/assets/surge-cart-payment.js' : gateway + '/js/shopify-cart-hijack.js' },
     querySelector: () => embed ? config : null,
     querySelectorAll: () => anchors.filter(anchor => anchor.isConnected),
     createElement: tag => new Element(tag),
@@ -162,6 +163,36 @@ test('legacy ScriptTags use the same opt-in flow; external links do not gain but
   await page.click(); assert.equal(page.redirects.length, 1);
 });
 
+test('legacy buttons resolve the deployment brand and retain it after cart redraws', async () => {
+  const page = storefront({ embed: false, gateway: 'https://pay.partner.example',
+    fetcher: () => ok({ buttonLabel: 'Pay with True North Payments' }) });
+  await new Promise(setImmediate);
+  assert.equal(page.requests[0].url, 'https://pay.partner.example/api/shopify/cart-config');
+  assert.equal(page.requests[0].options.credentials, 'omit');
+  assert.equal(page.views()[0].children[0].textContent, 'Pay with True North Payments');
+  page.anchors[0].remove(); page.addControl(); page.mutate();
+  assert.equal(page.views()[0].children[0].textContent, 'Pay with True North Payments');
+});
+
+test('embed labels prefer merchant copy and fall back to the packaged brand when blank', () => {
+  for (const [buttonLabel, expected] of [['Pay securely', 'Pay securely'], ['  ', 'Pay with Partner']]) {
+    const page = storefront({ gateway: 'https://pay.partner.example', buttonLabel, brandLabel: 'Pay with Partner' });
+    assert.equal(page.views()[0].children[0].textContent, expected);
+    assert.equal(page.requests.length, 0);
+  }
+});
+
+test('a failed brand lookup leaves legacy payments usable without showing another brand', async () => {
+  const page = storefront({ embed: false, fetcher: url => {
+    if (url.endsWith('/cart-config')) throw new Error('Unavailable');
+    return ok(url.endsWith('cart.js') ? cart : { paymentUrl: 'https://surge.basalthq.com/portal/TEST' });
+  } });
+  await new Promise(setImmediate);
+  assert.equal(page.views()[0].children[0].textContent, 'Secure payment');
+  await page.click();
+  assert.equal(page.redirects.length, 1);
+});
+
 function loadTs(file, mocks = {}, env = {}) {
   const module = { exports: {} };
   const code = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
@@ -184,12 +215,32 @@ test('extension packages public assets and brand settings without API credential
     assert.equal(schema.target, 'body');
     assert.equal(schema.settings[0].default, brandKey === 'basaltsurge' ? 'Pay with Surge' : 'Pay with Partner');
     assert.match(liquid, /data-gateway="https:\/\/gateway.example"/);
+    assert.ok(liquid.includes(`data-brand-label="${schema.settings[0].default}"`));
     assert.match(liquid, /shop.permanent_domain/);
     assert.equal(files['extensions/cart-payment/assets/' + schema.javascript], runtime);
     assert.ok(files['extensions/cart-payment/assets/' + schema.stylesheet]);
     assert.doesNotMatch(Object.values(files).join('\n'), /api[_-]?key|accessToken/);
   }
   await assert.rejects(generateCartExtensionFiles({ brandKey: 'x', name: 'X', applicationUrl: 'http://localhost' }), /HTTPS/);
+});
+
+test('public cart branding uses gateway identity and exposes only the payment label', async () => {
+  for (const [brandKey, name, expected] of [
+    ['partner', 'True North Payments', 'Pay with True North Payments'],
+    ['basaltsurge', 'BasaltSurge', 'Pay with Surge'],
+    ['portalpay', 'PortalPay', 'Pay with PortalPay']
+  ]) {
+    const route = loadTs(path.resolve(__dirname, '../../app/api/shopify/cart-config/route.ts'), {
+      'next/server': { NextResponse: { json: (body, options) => ({ body, ...options }) } },
+      '@/lib/brand-config': {
+        getContainerIdentity: async host => { assert.equal(host, 'gateway.example'); return { brandKey }; },
+        getBrandConfigFromCosmos: async key => { assert.equal(key, brandKey); return { brand: { name, privateField: 'hidden' } }; }
+      }
+    }, { PLESK_MAIN_DOMAIN: 'gateway.example', NEXT_PUBLIC_APP_URL: 'http://localhost:3001' });
+    const result = await route.GET({ url: 'http://localhost:3001/api/shopify/cart-config' });
+    assert.equal(JSON.stringify(result.body), JSON.stringify({ buttonLabel: expected }));
+    assert.equal(result.headers['Access-Control-Allow-Origin'], '*');
+  }
 });
 
 test('cart orders use the gateway brand and retain the linked merchant wallet', async () => {

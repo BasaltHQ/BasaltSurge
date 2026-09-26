@@ -10,6 +10,13 @@ Partner app packages use their configured gateway and a partner button label. Th
 is a storefront payment button that opens the existing hosted portal; it does not
 register a payment provider inside Shopify checkout.
 
+Legacy ScriptTag buttons resolve their label from the gateway's public
+`/api/shopify/cart-config` endpoint using the deployment brand. Generated embeds
+include their brand label as a fallback when the theme's editable label is blank.
+If a legacy brand lookup is unavailable, the button reads **Secure payment** and
+checkout remains usable. Deploy the backend and public script together to update
+existing ScriptTag installations; redeploy the Shopify extension for embed changes.
+
 1. Deploy the updated application backend and public assets. The legacy
    `shopify-cart-hijack.js` URL now adds a separate button instead of intercepting
    regular Checkout. Existing ScriptTags use the same behavior during migration.

@@ -13,8 +13,9 @@
       gateway = new URL(config ? config.dataset.gateway : sourceUrl).origin;
       if (!gateway.startsWith("https://")) return;
     } catch { return; }
-    const label = (config && config.dataset.buttonLabel) ||
-      (new URL(gateway).hostname === "surge.basalthq.com" ? "Pay with Surge" : "Pay with PortalPay");
+    const configuredLabel = config && (config.dataset.buttonLabel || "").trim();
+    const brandLabel = config && (config.dataset.brandLabel || "").trim();
+    let label = configuredLabel || brandLabel || "Secure payment";
     const shop = (config && config.dataset.shop) || (window.Shopify && window.Shopify.shop);
     const cartRoot = (window.Shopify && window.Shopify.routes && window.Shopify.routes.root) || "/";
     const placements = new Map();
@@ -132,6 +133,19 @@
       });
     }
     render();
+    // Legacy ScriptTags have no Liquid settings. Resolve their deployment brand
+    // from the same gateway that handles payment, without delaying checkout.
+    if (!configuredLabel && !brandLabel) {
+      fetch(gateway + "/api/shopify/cart-config", { credentials: "omit" })
+        .then(function (response) { return response.ok ? response.json() : null; })
+        .then(function (data) {
+          if (data && typeof data.buttonLabel === "string" && data.buttonLabel.trim()) {
+            label = data.buttonLabel.trim();
+            render();
+          }
+        })
+        .catch(function () { /* Keep the payment option usable if branding is unavailable. */ });
+    }
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start, { once: true });
   else start();
