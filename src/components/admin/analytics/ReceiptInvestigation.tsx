@@ -263,8 +263,10 @@ export default function ReceiptInvestigation({
   { id: "origin", label: "Initialization & Origin", icon: Chrome },
   { id: "logs", label: "Client Logs", icon: Activity },
   { id: "customers", label: "Customer Metadata", icon: Users },
-  { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
-  ...(!readOnly ? [{ id: "reconcile", label: "Reconcile & Actions", icon: Wrench }] : [])
+  ...(!readOnly ? [
+    { id: "fees", label: "Fee & Split Breakdown", icon: Percent },
+    { id: "reconcile", label: "Reconcile & Actions", icon: Wrench },
+  ] : [])
   ];
 
 

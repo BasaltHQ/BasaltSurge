@@ -82,11 +82,11 @@ test('every regular investigation section renders evidence or actions in the sha
 });
 
 test('ACH analytics separates the 0.6 percent Stripe deduction from the routed split allocation', () => {
-  for (const readOnly of [false, true]) for (const feeMinusEnabled of [false, true]) {
+  for (const feeMinusEnabled of [false, true]) {
     const totalUsd = feeMinusEnabled ? 100 : 101.1;
     const onchain = +(totalUsd / 1.006).toFixed(2);
     const splitFee = +(onchain * 0.005).toFixed(2);
-    const html = render({ readOnly, activeTab: 'fees', receipt: { ...receipt, cardFunding: 'us_bank_account', status: 'paid', totalUsd,
+    const html = render({ activeTab: 'fees', receipt: { ...receipt, cardFunding: 'us_bank_account', status: 'paid', totalUsd,
       customerSessions: [], lineItems: [{ label: 'Order', priceUsd: 100 }],
       splitRoutingSnapshot: { feeMinusEnabled, processingFeePct: 0, presentedFeeBps: 400,
         splitAddressAch: '0x' + '4'.repeat(40), splitConfigAch: { platformBps: 50, partnerBps: 0, agents: [] }, splitOverrides: { ach: true } } } });
@@ -135,7 +135,8 @@ test('partner read-only investigations retain evidence and omit mutation and liv
   assert.match(customerEvidence, /test@example.invalid/);
   assert.doesNotMatch(customerEvidence, /Enrich &amp; Sync Limits/);
   const fees = render({ readOnly: true, activeTab: 'fees' });
-  assert.match(fees, /Fee Breakdown|Split Components|Net Payout|Charge Components/);
+  assert.match(fees, /Card declined/, 'A stale fees link resolves to the evidence overview');
+  assert.doesNotMatch(fees, /Fee &amp; Split Breakdown|Fee Breakdown|Split Components|Net Payout|Charge Components/);
   const missingLogs = render({ readOnly: true, activeTab: 'logs', expandedLogs: { [receipt.receiptId]: [] } });
   assert.match(missingLogs, /No client logs with verified brand and receipt attribution are available/);
   assert.doesNotMatch(missingLogs, /No client logs were recorded/);

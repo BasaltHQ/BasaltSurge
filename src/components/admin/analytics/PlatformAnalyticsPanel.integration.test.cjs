@@ -112,6 +112,9 @@ test('partner view links keep a separate namespace, lock brand, and reject globa
   assert.equal(serialized.get('ppa_receiptTab'), 'overview');
   assert.equal(serialized.get('pa_brand'), 'foreign', 'Platform view state is kept independent');
   assert.deepEqual(serialized.getAll('ppa_reason'), ['declined', 'timeout']);
+  mixed.set('ppa_receiptTab', 'fees');
+  assert.equal(parsePartnerAnalyticsViewState(mixed, 'brand-a').receiptTab, 'overview');
+  assert.equal(writePartnerAnalyticsViewState(mixed, { ...partner, receiptTab: 'fees' }, 'brand-a').get('ppa_receiptTab'), 'overview');
 });
 
 test('partner workspace loads and exports only its brand with merchant metrics and read-only scoped investigations', async () => {
