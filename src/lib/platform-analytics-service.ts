@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
 import { getPlatformAnalyticsFeeData } from "@/lib/platform-analytics-fees";
+import { loadAnalyticsFeeSummary } from "@/lib/reporting/analytics-fee-summary";
 import { resolveAnalyticsKyc } from "@/lib/platform-analytics-metrics";
 import { aggregateAnalyticsReceipts } from "@/lib/platform-analytics-aggregation";
 import { requirePlatformAnalyticsAccess, partnerAnalyticsMongoBrandFilter, partnerAnalyticsRecordMatchesBrand, partnerAnalyticsSqlBrandScope } from "@/lib/partner-analytics-access";
@@ -422,6 +423,7 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
 
     return analyticsJson({
       ok: true,
+      reportFees: includeAggregates ? await loadAnalyticsFeeSummary(scope, partnerScope) : null,
       stats: aggregates.stats,
       failureReasons: failureAnalytics.reasonCounts,
       failureHeatmap: failureAnalytics,

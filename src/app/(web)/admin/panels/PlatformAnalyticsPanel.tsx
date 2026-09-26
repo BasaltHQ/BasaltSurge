@@ -78,6 +78,7 @@ import {
   exportFailureDiagnosticsPDF
 } from "@/lib/reporting/analytics-pdf";
 import { exportAnalyticsXLSX } from "@/lib/reporting/analytics-excel";
+import type { AnalyticsFeeSummary } from "@/lib/reporting/analytics-fee-summary";
 import {
   accordionStepForOnrampState,
   buildAccordionJourneyPath,
@@ -424,6 +425,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
   const initialLoadDoneRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState<Stat | null>(null);
+  const [reportFees, setReportFees] = useState<AnalyticsFeeSummary | null>(null);
   const [failureReasons, setFailureReasons] = useState<FailureReason[]>([]);
   const [failureHeatmap, setFailureHeatmap] = useState<FailureHeatmapData | null>(null);
   const [brandStats, setBrandStats] = useState<BrandStat[]>([]);
@@ -907,6 +909,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
             setQueryMetadata(firstData.metadata);
             setServerComparison(firstData.comparison);
             setStats(firstData.stats);
+            setReportFees(firstData.reportFees ?? null);
             setFailureReasons(firstData.failureReasons || []);
             setFailureHeatmap(firstData.failureHeatmap || null);
             setBrandStats(firstData.brandStats || []);
@@ -927,6 +930,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
       setQueryMetadata(result.firstData.metadata);
       setServerComparison(result.firstData.comparison);
       setStats(result.firstData.stats);
+      setReportFees(result.firstData.reportFees ?? null);
       setFailureReasons(result.firstData.failureReasons || []);
       setFailureHeatmap(result.firstData.failureHeatmap || null);
       setBrandStats(result.firstData.brandStats || []);
@@ -966,6 +970,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
       setQueryMetadata(data.metadata);
       setServerComparison(data.comparison);
       setStats(data.stats);
+      setReportFees(data.reportFees ?? null);
       setFailureReasons(data.failureReasons);
       setFailureHeatmap(data.failureHeatmap || null);
       setBrandStats(data.brandStats);
@@ -2069,7 +2074,7 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
           </div>
           <p className="text-xs text-muted-foreground">Payment source and receiving contract are separate breakdowns. ACH and Crypto may use shared Credit. Unknown means historical evidence is unavailable.</p>
           <div className="grid gap-4 lg:grid-cols-2">
-            {(["methodBreakdown", "splitBreakdown"] as const).map(dimension => <div key={dimension}><h4 className="mb-2 font-semibold">{dimension === "methodBreakdown" ? "By payment method" : "By receiving split"}</h4><table className="w-full text-left text-xs"><thead><tr><th>Type</th><th>Paid / created</th><th>Paid volume</th><th>Platform revenue</th></tr></thead><tbody>{Object.entries((stats as any)?.[dimension] || {}).map(([kind, row]: [string, any]) => <tr key={kind}><td className="py-2">{kind === "bank" ? "ACH" : kind}</td><td>{row.paid} / {row.total}</td><td>${Number(row.gmv || 0).toFixed(2)}</td><td>${Number(row.fees || 0).toFixed(2)}</td></tr>)}</tbody></table></div>)}
+            {(["methodBreakdown", "splitBreakdown"] as const).map(dimension => <div key={dimension}><h4 className="mb-2 font-semibold">{dimension === "methodBreakdown" ? "By payment method" : "By receiving split"}</h4><table className="w-full text-left text-xs"><thead><tr><th>Type</th><th>Paid / created</th><th>Paid volume</th><th>Receipt fees (recorded + modeled)</th></tr></thead><tbody>{Object.entries((stats as any)?.[dimension] || {}).map(([kind, row]: [string, any]) => <tr key={kind}><td className="py-2">{kind === "bank" ? "ACH" : kind}</td><td>{row.paid} / {row.total}</td><td>${Number(row.gmv || 0).toFixed(2)}</td><td>${Number(row.fees || 0).toFixed(2)}</td></tr>)}</tbody></table></div>)}
           </div>
         </section>
         {isExportingReport && <div role="status" aria-live="polite" className="flex items-center gap-3 text-sm"><progress max={100} value={exportProgress} aria-label="Report export progress" /><span>Preparing {activeExportFormat?.toUpperCase()} report · {exportProgress}%</span><button type="button" className="underline" onClick={() => exportAbortRef.current?.abort()}>Cancel export</button></div>}
@@ -2106,9 +2111,14 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
             <p className="mt-3 text-xs text-zinc-400">{financialChange("totalGmv")}</p><p className="mt-2 text-xs text-zinc-400">Average paid receipt: {displayStats.totalPaid ? money(displayStats.aov) : "—"}</p>
           </div>
           <div className="glass-pane rounded-xl border p-5">
-            <h3 className="text-sm text-zinc-400">Platform fees · recorded + modeled</h3><p className="mt-3 text-3xl font-semibold tabular-nums">{money(displayStats.totalFees)}</p>
-            <p className="mt-3 text-xs text-zinc-400">{financialChange("totalFees")}</p><p className="mt-2 text-xs text-zinc-400">Recorded {money(displayStats.feeRecordedTotal ?? 0)} · Modeled {money(displayStats.feeModeledTotal ?? 0)}</p>
-            <p className="mt-2 text-xs text-zinc-500">{displayStats.feeKnownCount ?? 0}/{displayStats.totalPaid} paid receipts have fee evidence. Missing evidence uses the 50 bps contractual minimum.</p>
+            <h3 className="text-sm text-zinc-400">{reportFees?.unifiedFeeEnabled ? "Fees" : "Platform fees"} · Reports</h3>
+            <p className="mt-3 text-3xl font-semibold tabular-nums">{reportFees?.status === "available" && reportFees.platformFee !== null ? money(reportFees.platformFee) : "Unavailable"}</p>
+            {isPartner && reportFees?.status === "available" && !reportFees.unifiedFeeEnabled && reportFees.partnerFee !== null && (
+              <p className="mt-2 text-sm text-zinc-300">Partner fees: {money(reportFees.partnerFee)}</p>
+            )}
+            <p className="mt-3 text-xs text-zinc-400">Same totals as Reports for the selected dates and brand. All-time totals use the latest index.</p>
+            <p className="mt-2 text-xs text-zinc-500">Receipt search, status, KYC, failure and payment filters do not change these totals.</p>
+            {reportFees?.status !== "available" && <p className="mt-2 text-xs text-amber-300">Refresh to retry loading Reports fees.</p>}
           </div>
 
           {/* Card Funding & Consumer KYC Profile Flippable Card */}

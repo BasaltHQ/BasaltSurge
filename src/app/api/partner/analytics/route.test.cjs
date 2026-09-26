@@ -62,6 +62,13 @@ function harness(options = {}) {
   const env = {};
   Object.defineProperty(env, "BRAND_KEY", { get: () => state.brand });
   const dependencies = {
+    "@/lib/reporting/analytics-fee-summary": { loadAnalyticsFeeSummary: async (scope, partnerScope) => {
+      if (partnerScope) {
+        assert.equal(partnerScope.brandKey, state.brand);
+        assert.equal(scope.brandKey, state.brand);
+      }
+      return { status: "available", platformFee: 12.34, partnerFee: 56.78, unifiedFeeEnabled: false };
+    } },
     "next/server": { NextResponse: { json: (body, init) => ({ body: normalize(body), status: init?.status || 200, headers: new Headers(init?.headers) }) } },
     "@/lib/auth": { requireThirdwebAuth: async () => { if (!state.session) throw new Error("unauthorized"); return { wallet: state.session }; } },
     "@/lib/env": { getEnv: () => ({ ADMIN_WALLETS: [], ...options.env }) },

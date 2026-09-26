@@ -139,6 +139,7 @@ test('partner workspace loads and exports only its brand with merchant metrics a
   const requests = [];
   const exportStart = exported.length;
   let responseBrand = 'brand-a';
+  let reportFees = { status: 'available', platformFee: 123.45, partnerFee: 67.89, unifiedFeeEnabled: false };
   global.fetch = async (input, options) => {
     const url = new URL(String(input), 'https://partner.example.invalid');
     requests.push({ url, options });
@@ -151,6 +152,7 @@ test('partner workspace loads and exports only its brand with merchant metrics a
     const offset = Number(url.searchParams.get('offset') || 0);
     return { ok: true, json: async () => ({
       ...aggregates, ok: true, merchantStats, recentReceipts: [rows[offset]],
+      reportFees,
       pagination: { totalMatchingCount: rows.length, hasMore: offset === 0, snapshotEnd: '2026-09-07T00:00:00.000Z', continuationToken: offset === 0 ? 'partner-page-two' : undefined },
       metadata: { generatedAt: '2026-09-07T00:00:00.000Z', accessScope: { type: 'partner', brandKey: responseBrand, attribution: 'explicit-brand-only' }, query: { start: null, end: '2026-09-07T00:00:00.000Z' } },
     }) };
@@ -168,6 +170,11 @@ test('partner workspace loads and exports only its brand with merchant metrics a
     assert.equal(window.location.searchParams.get('ppa_brand'), 'brand-a');
     assert.equal(window.location.searchParams.get('pa_brand'), 'foreign');
     assert.match(text(tree), /Partner Analytics/);
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Overview').props.onClick();
+    tree = await runner.settle(Partner);
+    assert.match(text(tree), /Platform fees · Reports\$123\.45/);
+    assert.match(text(tree), /Partner fees: \$67\.89/);
+    assert.doesNotMatch(text(tree), /Platform fees · recorded \+ modeled/);
     assert.match(text(tree), /Only records explicitly attributed to this brand/);
     assert.match(text(tree), /Merchant Performance/);
     assert.match(text(tree), /Merchant 1/);
@@ -205,6 +212,18 @@ test('partner workspace loads and exports only its brand with merchant metrics a
     assert.match(output.args[3], /Brand scope: brand-a/);
     assert.match(output.args[3], /Only explicitly attributed brand records/);
     assert.deepEqual(output.args[5], { brandName: 'Brand A', brandKey: 'brand-a' });
+
+    reportFees = { status: 'available', platformFee: 191.34, partnerFee: 0, unifiedFeeEnabled: true };
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Refresh').props.onClick();
+    tree = await runner.settle(Partner);
+    assert.match(text(tree), /Fees · Reports\$191\.34/);
+    assert.doesNotMatch(text(tree), /Partner fees:/);
+
+    reportFees = { status: 'unavailable', platformFee: null, partnerFee: null, unifiedFeeEnabled: false };
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Refresh').props.onClick();
+    tree = await runner.settle(Partner);
+    assert.match(text(tree), /Platform fees · ReportsUnavailable/);
+    assert.doesNotMatch(text(tree), /\$191\.34/);
 
     responseBrand = 'foreign';
     walk(tree).find(node => node.type === 'button' && text(node) === 'Refresh').props.onClick();
@@ -254,6 +273,7 @@ test('shared URL query flows through live panel filters, bounded batches, and co
     const offset = Number(url.searchParams.get('offset') || 0);
     return { ok: true, json: async () => ({
       ...aggregates, ok: true, recentReceipts: [rows[responseMode === 'duplicate' ? 0 : offset]],
+      reportFees: { status: 'available', platformFee: 321.98, partnerFee: null, unifiedFeeEnabled: false },
       failureReasons: getAnalyticsFailureReportData(rows).reasonCounts,
       failureHeatmap: buildAnalyticsFailureHeatmap(rows),
       pagination: { totalMatchingCount: rows.length + (responseMode === 'drift' && offset > 0 ? 1 : 0), hasMore: offset === 0, snapshotEnd, continuationToken: offset === 0 ? 'next-page' : undefined },
@@ -274,6 +294,9 @@ test('shared URL query flows through live panel filters, bounded batches, and co
     assert.deepEqual(initial.getAll('failureReason'), ['Card declined']);
     assert.equal(requests[1].searchParams.get('snapshotEnd'), snapshotEnd);
     assert.equal(requests[1].searchParams.get('continuationToken'), 'next-page');
+    walk(tree).find(node => node.type === 'button' && text(node) === 'Overview').props.onClick();
+    tree = await runner.settle(Panel);
+    assert.match(text(tree), /Platform fees · Reports\$321\.98/);
 
     const brandFilter = walk(tree).find(node => node.type === 'select' && text(node).includes('All Brands'));
     assert.ok(brandFilter);
