@@ -670,7 +670,7 @@ export default function TouchpointMonitoringPanel() {
                         <div className="shrink-0 h-12 w-12 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center">
                             <Smartphone className="h-6 w-6 text-primary" />
                         </div>
-                        <div>
+                        <div data-tour="devices.device-monitoring">
                             <h2 className="text-2xl font-bold text-foreground">Touchpoint Devices</h2>
                             <p className="text-sm text-muted-foreground mt-1">
                                 Monitor and manage configured Terminal/Kiosk devices
@@ -687,7 +687,7 @@ export default function TouchpointMonitoringPanel() {
                             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
                             Refresh
                         </button>
-                        <button
+                        <button data-tour="devices.provisioning-entry-point"
                             onClick={() => setShowProvisionForm(true)}
                             className="h-10 px-4 rounded-lg bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border border-emerald-500/20 text-xs flex items-center gap-2 font-bold transition-colors"
                         >

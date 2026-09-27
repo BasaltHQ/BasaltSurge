@@ -42,7 +42,7 @@ export function ReserveTabs({ initialTab = "configuration" }: { initialTab?: Res
             { id: "tips", label: "Tips" },
             { id: "offramp", label: "Fiat Offramp" }
           ].map(tab => (
-            <button
+            <button data-tour={`reserve.activeTab.${tab.id}`} data-tour-action="activate" data-tour-active={activeTab === tab.id}
               key={tab.id}
               className={`px-3 md:px-5 py-1.5 md:py-2.5 whitespace-nowrap rounded-lg text-[10px] md:text-sm font-bold uppercase tracking-wider transition-all flex-shrink-0 ${
                 activeTab === tab.id
@@ -60,7 +60,7 @@ export function ReserveTabs({ initialTab = "configuration" }: { initialTab?: Res
         <div className="flex-1 min-h-0 rounded-2xl md:rounded-3xl bg-foreground/[0.015] border border-foreground/[0.03] backdrop-blur-sm overflow-y-auto shadow-2xl relative custom-scrollbar">
           <div className="p-4 md:p-8">
             {activeTab === "configuration" && (
-              <div className="space-y-6 md:space-y-8 w-full">
+              <div data-tour="reserve.activeTab.configuration.content" className="space-y-6 md:space-y-8 w-full">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg md:text-2xl font-bold">Configuration</h2>
@@ -77,25 +77,25 @@ export function ReserveTabs({ initialTab = "configuration" }: { initialTab?: Res
             )}
 
             {activeTab === "analytics" && (
-              <div className="space-y-6 md:space-y-8">
+              <div data-tour="reserve.activeTab.analytics.content" className="space-y-6 md:space-y-8">
                 <ReserveAnalytics />
               </div>
             )}
 
             {activeTab === "transactions" && (
-              <div className="space-y-6 md:space-y-8">
+              <div data-tour="reserve.activeTab.transactions.content" className="space-y-6 md:space-y-8">
                 <TransactionsViewer />
               </div>
             )}
 
             {activeTab === "tax" && (
-              <div className="space-y-6 md:space-y-8 w-full">
+              <div data-tour="reserve.activeTab.tax.content" className="space-y-6 md:space-y-8 w-full">
                 <TaxManagement />
               </div>
             )}
 
             {activeTab === "tips" && (
-              <div className="space-y-6 md:space-y-8 w-full">
+              <div data-tour="reserve.activeTab.tips.content" className="space-y-6 md:space-y-8 w-full">
                 <div className="flex items-center justify-between">
                   <div>
                     <h2 className="text-lg md:text-2xl font-bold">Tip Settings</h2>
@@ -110,7 +110,7 @@ export function ReserveTabs({ initialTab = "configuration" }: { initialTab?: Res
             )}
 
             {activeTab === "offramp" && (
-              <div className="space-y-6 md:space-y-8 w-full">
+              <div data-tour="reserve.activeTab.offramp.content" className="space-y-6 md:space-y-8 w-full">
                 <OfframpPanel />
               </div>
             )}

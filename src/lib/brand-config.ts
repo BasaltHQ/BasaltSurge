@@ -256,6 +256,8 @@ export type BrandConfigDoc = {
   dualSplitEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
+  achPresentedFeeBps?: number | null;
+  cryptoPresentedFeeBps?: number | null;
 
   stripeOnrampEnabled?: boolean;
   stripeOnrampV2Enabled?: boolean;
@@ -549,6 +551,8 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     primaryAgentWallet: undefined,
     presentedFeeBps: undefined,
     creditPresentedFeeBps: undefined,
+    achPresentedFeeBps: null,
+    cryptoPresentedFeeBps: null,
     stripeOnrampEnabled: true,
     stripeOnrampV2Enabled: false,
     v2CheckoutEnabled: false,
@@ -606,6 +610,8 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     primaryAgentWallet: typeof overrides.primaryAgentWallet === "string" ? overrides.primaryAgentWallet : withDefaults.primaryAgentWallet,
     presentedFeeBps: typeof overrides.presentedFeeBps === "number" ? overrides.presentedFeeBps : withDefaults.presentedFeeBps,
     creditPresentedFeeBps: typeof overrides.creditPresentedFeeBps === "number" ? overrides.creditPresentedFeeBps : withDefaults.creditPresentedFeeBps,
+    achPresentedFeeBps: overrides.achPresentedFeeBps !== undefined ? overrides.achPresentedFeeBps : withDefaults.achPresentedFeeBps,
+    cryptoPresentedFeeBps: overrides.cryptoPresentedFeeBps !== undefined ? overrides.cryptoPresentedFeeBps : withDefaults.cryptoPresentedFeeBps,
     stripeOnrampEnabled: typeof overrides.stripeOnrampEnabled === "boolean" ? overrides.stripeOnrampEnabled : withDefaults.stripeOnrampEnabled,
     stripeOnrampV2Enabled: typeof overrides.stripeOnrampV2Enabled === "boolean" ? overrides.stripeOnrampV2Enabled : (typeof overrides.v2CheckoutEnabled === "boolean" ? overrides.v2CheckoutEnabled : withDefaults.stripeOnrampV2Enabled),
     v2CheckoutEnabled: typeof overrides.v2CheckoutEnabled === "boolean" ? overrides.v2CheckoutEnabled : (typeof overrides.stripeOnrampV2Enabled === "boolean" ? overrides.stripeOnrampV2Enabled : withDefaults.v2CheckoutEnabled),

@@ -766,7 +766,7 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between border-b border-foreground/10 pb-5 mb-6">
           <div className="space-y-1">
-            <div className="flex items-center gap-2">
+            <div data-tour="notificationsMerchant.notification-settings" className="flex items-center gap-2">
               <div className="p-2 bg-[var(--pp-secondary)]/10 rounded-xl text-[var(--pp-secondary)]">
                 <Bell className="w-6 h-6 animate-pulse" />
               </div>
@@ -793,7 +793,7 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
               
               {/* Target Address Card */}
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5 space-y-4">
-                <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+                <div data-tour="notificationsMerchant.recipient-target" className="flex items-center gap-2 border-b border-white/5 pb-3">
                   <Mail className="w-4 h-4 text-[var(--pp-secondary)]" />
                   <h3 className="text-sm font-bold uppercase tracking-wider text-white/80">Recipient Target</h3>
                 </div>
@@ -846,7 +846,7 @@ export default function NotificationsPanel({ level, merchantWallet }: { level: "
 
               {/* Specific toggles List */}
               <div className="rounded-xl border border-white/5 bg-white/[0.02] p-5 space-y-4">
-                <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+                <div data-tour="notificationsMerchant.notification-types" className="flex items-center gap-2 border-b border-white/5 pb-3">
                   <Shield className="w-4 h-4 text-[var(--pp-secondary)]" />
                   <h3 className="text-sm font-bold uppercase tracking-wider text-white/80">Notification Types & Recipients</h3>
                 </div>

@@ -252,7 +252,7 @@ export default function SubscriptionsPanel() {
             <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
                 <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-foreground/[0.05] to-transparent"></div>
                 <div className="flex items-center justify-between mb-6 relative z-10">
-                    <div>
+                    <div data-tour="subscriptions.subscription-plans">
                         <h2 className="text-xl font-semibold text-foreground">Subscription Plans</h2>
                         <p className="text-sm text-muted-foreground mt-1">
                             Create and manage recurring payment plans for your customers
@@ -359,7 +359,7 @@ export default function SubscriptionsPanel() {
             )}
 
             {/* Plans List */}
-            <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
+            <div data-tour="subscriptions.your-plans" className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
                 <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-foreground/[0.05] to-transparent"></div>
                 <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2 relative z-10">
                     <Repeat className="w-5 h-5 text-primary" />
@@ -425,7 +425,7 @@ export default function SubscriptionsPanel() {
 
             {/* Subscribers Table */}
             {subscriptions.length > 0 && (
-                <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
+                <div data-tour="subscriptions.subscribers" className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
                     <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-foreground/[0.05] to-transparent"></div>
                     <h3 className="text-lg font-semibold text-foreground mb-4 flex items-center gap-2 relative z-10">
                         <Users className="w-5 h-5 text-primary" />

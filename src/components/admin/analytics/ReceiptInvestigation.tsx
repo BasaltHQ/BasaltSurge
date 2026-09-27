@@ -1,6 +1,7 @@
 "use client";
 import { analyticsFunding, analyticsSplitRoute } from "@/lib/platform-analytics-query";
 import { resolveSettlementSplitConfig } from "@/lib/payment-split-routing";
+import { resolveFundingPresentedFeeBps } from "@/lib/portal-checkout-pricing";
 
 import React, { useEffect, useState } from "react";
 import {
@@ -1585,7 +1586,7 @@ export default function ReceiptInvestigation({
        ? !!siteCfg.feeMinusEnabled
        : (r.feeMinusEnabled !== undefined ? !!r.feeMinusEnabled : (r.merchantConfig?.feeMinusEnabled !== undefined ? !!r.merchantConfig.feeMinusEnabled : true));
      
-     const rawPresentedBps = isAch ? undefined : isCredit
+     const rawPresentedBps = isAch || isCrypto ? resolveFundingPresentedFeeBps(isAch ? "us_bank_account" : "crypto", siteCfg) : isCredit
        ? (siteCfg.creditPresentedFeeBps ?? r.creditPresentedFeeBps ?? r.merchantConfig?.creditPresentedFeeBps ?? siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps)
        : (siteCfg.presentedFeeBps ?? r.presentedFeeBps ?? r.merchantConfig?.presentedFeeBps);
 
@@ -1593,7 +1594,7 @@ export default function ReceiptInvestigation({
 
      // Normalize presented fee BPS: if stored as base share (e.g. 9550 BPS = 95.5%), convert to fee BPS (10000 - 9550 = 450 BPS = 4.5%)
      const effectivePresentedFeeBps = hasPresentedBps
-       ? (Number(rawPresentedBps) > 1000 ? (10000 - Number(rawPresentedBps)) : Number(rawPresentedBps))
+       ? (!isAch && !isCrypto && Number(rawPresentedBps) > 1000 ? (10000 - Number(rawPresentedBps)) : Number(rawPresentedBps))
        : null;
 
      const basePresentedBps = effectivePresentedFeeBps !== null ? effectivePresentedFeeBps : (hasPresentedBps ? rawPresentedBps : null);
@@ -1608,7 +1609,7 @@ export default function ReceiptInvestigation({
        ? (splitCfg?.platformBps ?? siteCfg.creditPlatformFeeBps ?? siteCfg.platformFeeBps ?? r.creditPlatformFeeBps ?? r.platformFeeBps ?? r.merchantConfig?.creditPlatformFeeBps ?? r.merchantConfig?.platformFeeBps ?? 50)
        : (splitCfg?.platformBps ?? siteCfg.platformFeeBps ?? siteCfg.creditPlatformFeeBps ?? r.platformFeeBps ?? r.creditPartnerFeeBps ?? r.merchantConfig?.platformFeeBps ?? r.merchantConfig?.creditPartnerFeeBps ?? 75);
 
-     const agentBps = isAch && splitCfg
+     const agentBps = (isAch || isCrypto) && splitCfg
        ? (Array.isArray(splitCfg.agents) ? splitCfg.agents : []).reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
        : isCredit
        ? (splitCfg && Array.isArray(splitCfg.agents) && splitCfg.agents.length > 0
@@ -1618,12 +1619,12 @@ export default function ReceiptInvestigation({
            ? splitCfg.agents.reduce((s: number, a: any) => s + (Number(a.bps) || 0), 0)
            : (siteCfg.agentFeeBps ?? siteCfg.creditAgentFeeBps ?? r.agentFeeBps ?? r.creditAgentFeeBps ?? r.merchantConfig?.agentFeeBps ?? r.merchantConfig?.creditAgentFeeBps ?? 150));
 
-     const stripeCardRatePct = isAch ? 0.6 : isCredit ? 3.5 : 2.25;
+     const stripeCardRatePct = isCrypto ? 0 : isAch ? 0.6 : isCredit ? 3.5 : 2.25;
       
-     const displayPresentedRatePct = isAch
+     const displayPresentedRatePct = (isAch || isCrypto) && effectivePresentedFeeBps === null
        ? (platformBps + partnerBps + agentBps) / 100 + Number(siteCfg.processingFeePct || 0) + stripeCardRatePct
        : effectivePresentedFeeBps !== null
-       ? (effectivePresentedFeeBps + partnerBps) / 100
+       ? (effectivePresentedFeeBps + partnerBps) / 100 + (isAch || isCrypto ? Number(siteCfg.processingFeePct || 0) : 0)
        : stripeCardRatePct;
 
      let calculatedFeePct = displayPresentedRatePct;
@@ -1664,7 +1665,7 @@ export default function ReceiptInvestigation({
      const stripeFeeDeductionUsd = Math.max(0, Math.round((stripeProcessedUsd - onChainSettlementUsd) * 100) / 100);
 
      // Dollar amounts for each BPS split component of the customer total charge
-     const allocationBaseUsd = isAch ? onChainSettlementUsd : stripeProcessedUsd;
+     const allocationBaseUsd = isAch || isCrypto ? onChainSettlementUsd : stripeProcessedUsd;
      const partnerUsd = Math.round((allocationBaseUsd * (partnerBps / 10000)) * 100) / 100;
      const platformUsd = Math.round((allocationBaseUsd * (platformBps / 10000)) * 100) / 100;
      const agentUsd = Math.round((allocationBaseUsd * (agentBps / 10000)) * 100) / 100;
@@ -1672,7 +1673,7 @@ export default function ReceiptInvestigation({
      // Merchant Base Component is the scaled-down catalog base so all components sum to customer charge
      const merchantBaseComponentUsd = Math.max(0, Math.round((stripeProcessedUsd - partnerUsd - platformUsd - agentUsd - stripeFeeDeductionUsd) * 100) / 100);
 
-     const feeUsd = isAch ? +(partnerUsd + platformUsd + agentUsd).toFixed(2) : isFeeMinus
+     const feeUsd = isAch || isCrypto ? +(partnerUsd + platformUsd + agentUsd).toFixed(2) : isFeeMinus
        ? Math.round((onChainSettlementUsd * (calculatedFeePct / 100)) * 100) / 100
        : Math.round((catalogItemsSubtotal * (calculatedFeePct / 100)) * 100) / 100;
 
@@ -1867,7 +1868,7 @@ export default function ReceiptInvestigation({
                <div className="text-lg font-extrabold text-emerald-400">${onChainSettlementUsd.toFixed(2)}</div>
              </div>
              <div className="bg-white/[0.02] p-3 rounded-xl border border-white/5 space-y-1">
-               <div className="text-[10px] text-muted-foreground uppercase font-bold">{isAch ? `Split Allocation (${((partnerBps + platformBps + agentBps) / 100).toFixed(2)}%)` : `Platform Fee (${calculatedFeePct.toFixed(2)}%)`}</div>
+               <div className="text-[10px] text-muted-foreground uppercase font-bold">{isAch || isCrypto ? `Split Allocation (${((partnerBps + platformBps + agentBps) / 100).toFixed(2)}%)` : `Platform Fee (${calculatedFeePct.toFixed(2)}%)`}</div>
                <div className="text-lg font-extrabold text-amber-400">-${feeUsd.toFixed(2)}</div>
              </div>
              <div className="bg-emerald-500/10 p-3 rounded-xl border border-emerald-500/30 space-y-1">

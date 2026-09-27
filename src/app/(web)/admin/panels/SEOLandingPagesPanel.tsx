@@ -672,14 +672,14 @@ export function SEOLandingPagesPanel() {
       {/* View Mode Toggle */}
       {!loading && (
         <div className="flex gap-2 p-1 border border-foreground/[0.05] bg-foreground/[0.02] rounded-xl w-fit">
-          <button
+          <button data-tour="seoPages.viewMode.pages" data-tour-action="activate" data-tour-active={viewMode === 'pages'}
             onClick={() => setViewMode('pages')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${viewMode === 'pages' ? 'bg-background shadow text-foreground border border-foreground/[0.05]' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'
               }`}
           >
             <FileText className="h-4 w-4" />Pages
           </button>
-          <button
+          <button data-tour="seoPages.viewMode.templates" data-tour-action="activate" data-tour-active={viewMode === 'templates'}
             onClick={() => setViewMode('templates')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${viewMode === 'templates' ? 'bg-background shadow text-foreground border border-foreground/[0.05]' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'
               }`}

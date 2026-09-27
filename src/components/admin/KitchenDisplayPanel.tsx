@@ -429,14 +429,14 @@ export default function KitchenDisplayPanel() {
       <div className="h-full flex flex-col space-y-4">
         {/* Header Bar */}
         <div className="flex items-center justify-between px-1">
-          <div>
+          <div data-tour="kitchen.kitchen-board">
             <h2 className="text-2xl font-bold tracking-tight text-white">Kitchen Display</h2>
             <div className="text-xs text-neutral-400 font-medium">
               Live • {orders.length} Orders • Last Sync: {new Date(lastUpdate).toLocaleTimeString()}
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={fetchOrders} className="px-4 py-2 text-xs font-semibold uppercase tracking-wider border border-white/10 rounded-lg hover:bg-white/5 transition-colors text-white">
+            <button data-tour="kitchen.kitchen-synchronization" onClick={fetchOrders} className="px-4 py-2 text-xs font-semibold uppercase tracking-wider border border-white/10 rounded-lg hover:bg-white/5 transition-colors text-white">
               Sync
             </button>
           </div>

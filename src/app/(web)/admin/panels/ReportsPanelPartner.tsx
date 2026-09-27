@@ -439,10 +439,10 @@ export default function ReportsPanelPartner() {
                             </button>
                         </>
                     )}
-                    <button onClick={() => setViewMode("dashboard")} className={`h-8 px-4 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${viewMode === "dashboard" ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5 hover:text-foreground"}`}>
+                    <button data-tour="reportsPartner.viewMode.dashboard" data-tour-action="activate" data-tour-active={viewMode === "dashboard"} onClick={() => setViewMode("dashboard")} className={`h-8 px-4 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${viewMode === "dashboard" ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5 hover:text-foreground"}`}>
                         <BarChart3 className="w-3 h-3 inline mr-1.5" />Dashboard
                     </button>
-                    <button onClick={() => setViewMode("transactions")} className={`h-8 px-4 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${viewMode === "transactions" ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5 hover:text-foreground"}`}>
+                    <button data-tour="reportsPartner.viewMode.transactions" data-tour-action="activate" data-tour-active={viewMode === "transactions"} onClick={() => setViewMode("transactions")} className={`h-8 px-4 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${viewMode === "transactions" ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5 hover:text-foreground"}`}>
                         <Link2 className="w-3 h-3 inline mr-1.5" />Txns
                     </button>
                 </div>
@@ -825,7 +825,7 @@ export default function ReportsPanelPartner() {
 
             {/* Transactions Tab */}
             {viewMode === "transactions" && (
-                <div className="space-y-6">
+                <div data-tour="reportsPartner.viewMode.transactions.content" className="space-y-6">
                     <TransactionHistoryChart transactions={getFilteredTransactions()} height={180} />
                     <div className="border rounded-xl glass-pane overflow-hidden">
                         <div className="p-5 border-b border-foreground/10 space-y-4">

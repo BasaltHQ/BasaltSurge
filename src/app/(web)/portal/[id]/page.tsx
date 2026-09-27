@@ -28,7 +28,7 @@ import { isValidIsoCountryCode, micaIdentifierLabel, normalizeMicaIdentifier, va
 import { isStripeEmbeddedCheckoutEnabled, isUnsupportedStripeCheckoutRegion } from "@/lib/stripe-checkout-eligibility";
 import { isStripeOnrampPreflightErrorCode } from "@/lib/stripe-onramp-preflight";
 import { resolvePortalCheckoutMode } from "@/lib/stripe-onramp-status";
-import { calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps } from "@/lib/portal-checkout-pricing";
 import { resolveReceiptCustomerEmail } from "@/lib/receipt-customer-email";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
@@ -2834,12 +2834,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
 
   const activeFeePct = useMemo(() => {
-    const hasPresentedBps = detectedCardFunding === "us_bank_account" ? false : detectedCardFunding === "credit"
+    const hasPresentedBps = detectedCardFunding === "us_bank_account" ? resolveFundingPresentedFeeBps("us_bank_account", methodSplits) !== undefined : detectedCardFunding === "credit"
       ? (creditPresentedFeeBps ?? presentedFeeBps) !== undefined
       : presentedFeeBps !== undefined;
     const stripePct = (isCryptoDirect || feeMinusEnabled || hasPresentedBps) ? 0 : stripeFeePct;
     return Math.max(0, effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct);
-  }, [isCryptoDirect, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps, detectedCardFunding]);
+  }, [isCryptoDirect, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps, detectedCardFunding, methodSplits]);
 
   const processingFeeUsd = useMemo(() => {
     const baseUsd = itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd;
@@ -3094,7 +3094,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     getSiteConfigOnce(String(targetWallet).toLowerCase(), String(targetWallet))
       .then((j: SiteConfigResponse) => {
         if (cancelled) return;
-        const cfg = { ...(j?.config || {}), ...((receipt as any)?.splitRoutingSnapshot || {}) };
+        const snapshot = (receipt as any)?.splitRoutingSnapshot;
+        const cfg = { ...(j?.config || {}), ...(snapshot || {}), ...(snapshot ? { achPresentedFeeBps: snapshot.achPresentedFeeBps ?? null, cryptoPresentedFeeBps: snapshot.cryptoPresentedFeeBps ?? null } : {}) };
 
         // Merge runtime tokens if present (preserves ETH, adds/updates others)
         if (cfg?.tokens && Array.isArray(cfg.tokens) && cfg.tokens.length > 0) {

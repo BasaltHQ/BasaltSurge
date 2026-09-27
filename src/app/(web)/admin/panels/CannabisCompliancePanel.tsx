@@ -1140,7 +1140,7 @@ export default function CannabisCompliancePanel() {
       {/* Tabs */}
       <div className="flex gap-1 overflow-x-auto pb-1 scrollbar-none">
         {visibleTabs.map(tab => (
-          <button key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
+          <button data-tour={`cannabisCompliance.activeTab.${tab.key}`} data-tour-action="activate" data-tour-active={activeTab === tab.key} key={tab.key} type="button" onClick={() => setActiveTab(tab.key)}
             className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium whitespace-nowrap transition-all ${activeTab === tab.key ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-white/40 hover:text-white/70 hover:bg-white/[0.04]'}`}>
             {renderIcon(tab.icon, 'w-4 h-4')}<span>{tab.label}</span>
           </button>

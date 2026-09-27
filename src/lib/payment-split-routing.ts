@@ -27,14 +27,15 @@ export function settlementRoutingFields(config: any): any {
     for (const key of Object.values(f)) normalized[key] = config?.[key] ?? config?.config?.[key];
     normalized[f.address] ||= normalized[f.contract]?.address;
   }
-  for (const key of ["splitRevision", "feeMinusEnabled", "processingFeePct", "basePlatformFeePct", "presentedFeeBps", "creditPresentedFeeBps"]) normalized[key] = config?.[key] ?? config?.config?.[key];
+  for (const key of ["splitRevision", "feeMinusEnabled", "processingFeePct", "basePlatformFeePct", "presentedFeeBps", "creditPresentedFeeBps", "achPresentedFeeBps", "cryptoPresentedFeeBps"]) normalized[key] = config?.[key] !== undefined ? config[key] : config?.config?.[key];
   normalized.splitOverrides = config?.splitOverrides ?? config?.config?.splitOverrides;
   return Object.fromEntries(Object.entries(normalized).filter(([, value]) => value !== undefined));
 }
 
 /** A recorded routing snapshot pins all method choices for this payment attempt. */
 export function receiptRoutingFields(receipt: any, config?: any): any {
-  return receipt?.splitRoutingSnapshot || settlementRoutingFields(config || receipt);
+  const snapshot = receipt?.splitRoutingSnapshot;
+  return snapshot ? { ...snapshot, achPresentedFeeBps: snapshot.achPresentedFeeBps ?? null, cryptoPresentedFeeBps: snapshot.cryptoPresentedFeeBps ?? null } : settlementRoutingFields(config || receipt);
 }
 
 export function optionalSplitActive(config: any, kind: "ach" | "crypto"): boolean {

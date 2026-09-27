@@ -333,7 +333,7 @@ export default function SplitConfigPanel() {
   return (
     <div className="w-full space-y-6 pb-24 admin-panel-enter">
       <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
-        <div className="flex items-center justify-between mb-2">
+        <div data-tour="splitConfig.split-versions" className="flex items-center justify-between mb-2">
           <h2 className="text-xl font-semibold tracking-tight">Split Config</h2>
           <div className="flex items-center gap-3">
             {isPlatform ? (
@@ -547,7 +547,7 @@ export default function SplitConfigPanel() {
             />
             <div className="text-[10px] text-muted-foreground">If provided, must be a valid 0x address.</div>
           </div>
-          <div className="space-y-1.5">
+          <div data-tour="splitConfig.platform-fee" className="space-y-1.5">
             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Platform Fee (bps)</label>
             <input
               type="number"
@@ -595,7 +595,7 @@ export default function SplitConfigPanel() {
             />
             <div className="text-[10px] text-muted-foreground">Optional field for metadata/reference.</div>
           </div>
-          <div className="md:col-span-2 space-y-1.5">
+          <div data-tour="splitConfig.version-notes" className="md:col-span-2 space-y-1.5">
             <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Notes</label>
             <textarea
               className="w-full h-24 p-3 rounded-lg border border-foreground/10 bg-background text-sm transition-colors hover:border-foreground/20 focus:border-foreground/30 focus:outline-none resize-none"

@@ -186,7 +186,7 @@ export default function PlatformSettingsPanel() {
 
       {/* Feature Switches Card */}
       <div className="glass-pane rounded-xl border border-white/5 overflow-hidden">
-        <div className="px-5 py-4 border-b border-white/5">
+        <div data-tour="platformSettings.platform-feature-switches" className="px-5 py-4 border-b border-white/5">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Feature Switches</h4>
         </div>
         <div className="p-5 space-y-4 divide-y divide-white/5">
@@ -420,7 +420,7 @@ export default function PlatformSettingsPanel() {
       {/* Dual Split Parameters Card */}
       <div className="glass-pane rounded-xl border border-white/5 overflow-hidden">
         <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div data-tour="platformSettings.split-parameters" className="flex items-center gap-2">
             <GitMerge className="w-4 h-4 text-purple-400" />
             <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
               Dual Split Parameters (BPS)

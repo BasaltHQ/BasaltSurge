@@ -289,13 +289,13 @@ export function UpdatesPanel({ brandKey }: { brandKey?: string }) {
           {/* Tabs & Layout Controls */}
           <div className="flex items-center gap-4">
             <div className="flex gap-1">
-              <button
+              <button data-tour="updates.activeTab.system" data-tour-action="activate" data-tour-active={activeTab === "system"}
                 onClick={() => setActiveTab("system")}
                 className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === "system" ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" : "text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]"}`}
               >
                 System Updates
               </button>
-              <button
+              <button data-tour="updates.activeTab.newsletter" data-tour-action="activate" data-tour-active={activeTab === "newsletter"}
                 onClick={() => setActiveTab("newsletter")}
                 className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === "newsletter" ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" : "text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]"}`}
               >
@@ -325,7 +325,7 @@ export function UpdatesPanel({ brandKey }: { brandKey?: string }) {
 
       {/* SYSTEM UPDATES TAB */}
       {activeTab === "system" && (
-        <div className="space-y-6">
+        <div data-tour="updates.activeTab.system.content" className="space-y-6">
           {!isEditing ? (
             <>
               <div className="flex justify-end">
@@ -462,7 +462,7 @@ export function UpdatesPanel({ brandKey }: { brandKey?: string }) {
 
       {/* NEWSLETTER STUDIO TAB */}
       {activeTab === "newsletter" && (
-        <div className={layoutMode === "split" ? "grid 2xl:grid-cols-[1fr_600px] xl:grid-cols-[1fr_500px] gap-8 items-start" : "flex flex-col gap-8"}>
+        <div data-tour="updates.activeTab.newsletter.content" className={layoutMode === "split" ? "grid 2xl:grid-cols-[1fr_600px] xl:grid-cols-[1fr_500px] gap-8 items-start" : "flex flex-col gap-8"}>
           
           {/* Left Column: Editor & Builder */}
           <div className="space-y-6">

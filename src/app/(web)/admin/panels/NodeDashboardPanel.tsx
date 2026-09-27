@@ -134,7 +134,7 @@ export function NodeDashboardPanel() {
       {/* Nav */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {tabs.map(([key, label]) => (
-          <button
+          <button data-tour={`nodeDashboard.view.${key}`} data-tour-action="activate" data-tour-active={view === key}
             key={key}
             onClick={() => setView(key)}
             className={`px-4 py-2 rounded-lg text-[13px] font-medium transition ${
@@ -156,7 +156,7 @@ export function NodeDashboardPanel() {
 
       {/* ─── Network Overview ─────────────────────────────────────────── */}
       {view === 'network' && (
-        <div className="space-y-6">
+        <div data-tour="nodeDashboard.view.network.content" className="space-y-6">
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading network...</p>
           ) : (
@@ -315,7 +315,7 @@ export function NodeDashboardPanel() {
 
       {/* ─── Routing ──────────────────────────────────────────────────── */}
       {view === 'routing' && (
-        <div className="space-y-6">
+        <div data-tour="nodeDashboard.view.routing.content" className="space-y-6">
           <h3 className="text-lg font-bold">How Traffic Routing Works</h3>
 
           <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md p-6">

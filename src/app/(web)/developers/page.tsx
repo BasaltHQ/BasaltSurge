@@ -128,7 +128,7 @@ export default function DevelopersPage() {
 
       {/* Documentation Sections */}
       <section className="border-b">
-        <div className="max-w-5xl mx-auto px-4 py-16">
+        <div data-tour="developers.developer-documentation" className="max-w-5xl mx-auto px-4 py-16">
           <h2 className="text-2xl md:text-3xl font-bold text-center mb-12">
             Documentation
           </h2>
@@ -252,7 +252,7 @@ curl -X POST ${app}/api/orders \\
 
       {/* API Categories */}
       <section className="border-b">
-        <div className="max-w-5xl mx-auto px-4 py-16">
+        <div data-tour="developers.api-categories" className="max-w-5xl mx-auto px-4 py-16">
           <h2 className="text-2xl md:text-3xl font-bold text-center mb-12">
             API Categories
           </h2>
@@ -298,7 +298,7 @@ curl -X POST ${app}/api/orders \\
 
       {/* Integration Guides */}
       <section className="border-b">
-        <div className="max-w-5xl mx-auto px-4 py-16">
+        <div data-tour="developers.integration-guides" className="max-w-5xl mx-auto px-4 py-16">
           <h2 className="text-2xl md:text-3xl font-bold text-center mb-12">
             Integration Guides
           </h2>

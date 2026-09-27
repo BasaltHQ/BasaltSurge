@@ -1599,14 +1599,14 @@ export default function PlatformPluginsPanel() {
 
     return (
       <div className="flex items-center gap-2 flex-wrap">
-        <button
+        <button data-tour="pluginStudio.backToCatalog" data-tour-action="activate" data-tour-destination="pluginStudio.catalog" data-tour-active={!selectedPlugin}
           className="px-3 py-1.5 rounded-lg border border-foreground/[0.05] text-sm hover:bg-foreground/[0.04] transition"
           onClick={() => { setSelectedPlugin(null); setWorkspaceSection('overview'); }}
         >
           ← Back to Catalog
         </button>
         {tabs.map(t => (
-          <button
+          <button data-tour={`pluginStudio.workspaceSection.${t.key}`} data-tour-action="activate" data-tour-active={workspaceSection === t.key}
             key={t.key}
             className={`px-3 py-1.5 rounded-lg border text-sm ${borderClassFor(t.key)} ${workspaceSection === t.key ? 'bg-foreground/[0.06] border-foreground/[0.15]' : 'border-foreground/[0.05] hover:bg-foreground/[0.04]'} transition`}
             onClick={() => setWorkspaceSection(t.key)}
@@ -2637,7 +2637,7 @@ export default function PlatformPluginsPanel() {
                 );
               };
               return (
-                <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] p-3">
+                <div data-tour="pluginStudio.publishChecklist" className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] p-3">
                   <div className="text-sm font-medium mb-1">Configuration Checklist</div>
                   <ul className="space-y-1">
                     {row('Configuration', st.config)}
@@ -2751,7 +2751,7 @@ export default function PlatformPluginsPanel() {
   // Catalog item renderers for view modes
   function CatalogItemFull(p: CatalogPlugin, enabled: boolean) {
     return (
-      <button
+      <button data-tour={`pluginStudio.open.${p.key}`} data-tour-action="activate" data-tour-destination={`pluginStudio.workspace.${p.key}`} data-tour-active={selectedPlugin === p.key}
         key={p.key}
         type="button"
         className={`text-left rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] p-4 flex items-start gap-3 hover:bg-foreground/[0.04] transition`}
@@ -2785,7 +2785,7 @@ export default function PlatformPluginsPanel() {
 
   function CatalogItemCompact(p: CatalogPlugin, enabled: boolean) {
     return (
-      <button
+      <button data-tour={`pluginStudio.open.${p.key}`} data-tour-action="activate" data-tour-destination={`pluginStudio.workspace.${p.key}`} data-tour-active={selectedPlugin === p.key}
         key={p.key}
         type="button"
         className={`text-left rounded-xl border border-foreground/[0.05] bg-foreground/[0.02] p-2 flex items-center gap-2 hover:bg-foreground/[0.04] transition`}
@@ -2818,7 +2818,7 @@ export default function PlatformPluginsPanel() {
 
   function CatalogItemList(p: CatalogPlugin, enabled: boolean) {
     return (
-      <button
+      <button data-tour={`pluginStudio.open.${p.key}`} data-tour-action="activate" data-tour-destination={`pluginStudio.workspace.${p.key}`} data-tour-active={selectedPlugin === p.key}
         key={p.key}
         type="button"
         className={`w-full text-left border-b border-foreground/[0.05] py-2 px-2 flex items-center gap-3 hover:bg-foreground/[0.04] transition`}
@@ -2857,15 +2857,15 @@ export default function PlatformPluginsPanel() {
           <div className="flex items-center justify-between p-3 border-b border-foreground/[0.05]">
             <div className="text-sm font-medium">Available Plugins</div>
             <div className="flex items-center gap-2">
-              <button
+              <button data-tour="pluginStudio.viewMode.grid-full" data-tour-action="activate" data-tour-active={viewMode === 'grid-full'}
                 className="microtext px-2 py-1 rounded-md border hover:bg-foreground/[0.04]"
                 onClick={() => setViewMode('grid-full')}
               >Full Grid</button>
-              <button
+              <button data-tour="pluginStudio.viewMode.grid-compact" data-tour-action="activate" data-tour-active={viewMode === 'grid-compact'}
                 className="microtext px-2 py-1 rounded-md border hover:bg-foreground/[0.04]"
                 onClick={() => setViewMode('grid-compact')}
               >Compact Grid</button>
-              <button
+              <button data-tour="pluginStudio.viewMode.list" data-tour-action="activate" data-tour-active={viewMode === 'list'}
                 className={`microtext px-2 py-1 rounded-md border ${isList(viewMode) ? 'bg-foreground/[0.06] border-foreground/[0.15]' : 'border-foreground/[0.05] hover:bg-foreground/[0.04]'} transition`}
                 onClick={() => setViewMode('list')}
               >List</button>
@@ -2895,15 +2895,15 @@ export default function PlatformPluginsPanel() {
           <div className="text-sm font-medium">Available Plugins</div>
           {/* View mode controls */}
           <div className="flex items-center gap-2">
-            <button
+            <button data-tour="pluginStudio.viewMode.grid-full" data-tour-action="activate" data-tour-active={viewMode === 'grid-full'}
               className={`microtext px-2 py-1 rounded-md border ${viewMode === 'grid-full' ? 'bg-foreground/[0.06] border-foreground/[0.15]' : 'border-foreground/[0.05] hover:bg-foreground/[0.04]'} transition`}
               onClick={() => setViewMode('grid-full')}
             >Full Grid</button>
-            <button
+            <button data-tour="pluginStudio.viewMode.grid-compact" data-tour-action="activate" data-tour-active={viewMode === 'grid-compact'}
               className={`microtext px-2 py-1 rounded-md border ${viewMode === 'grid-compact' ? 'bg-foreground/[0.06] border-foreground/[0.15]' : 'border-foreground/[0.05] hover:bg-foreground/[0.04]'} transition`}
               onClick={() => setViewMode('grid-compact')}
             >Compact Grid</button>
-            <button
+            <button data-tour="pluginStudio.viewMode.list" data-tour-action="activate" data-tour-active={viewMode === 'list'}
               className={`microtext px-2 py-1 rounded-md border ${isList(viewMode) ? 'bg-foreground/[0.06] border-foreground/[0.15]' : 'border-foreground/[0.05] hover:bg-foreground/[0.04]'} transition`}
               onClick={() => setViewMode('list')}
             >List</button>
@@ -2937,7 +2937,7 @@ export default function PlatformPluginsPanel() {
       </div>
 
       {/* Brand Key dropdown */}
-      <div className="flex items-center gap-2">
+      <div data-tour="pluginStudio.brand" className="flex items-center gap-2">
         <label className="microtext text-muted-foreground">Brand</label>
         <select
           className="h-9 px-3 border border-foreground/[0.05] rounded-lg bg-background w-60"
@@ -2951,11 +2951,11 @@ export default function PlatformPluginsPanel() {
       </div>
 
       {/* Catalog view (hidden when a plugin workspace is open) */}
-      {!selectedPlugin && renderCatalog()}
+      {!selectedPlugin && <div data-tour="pluginStudio.catalog" data-tour-active="true">{renderCatalog()}</div>}
 
       {/* Workspace shell */}
       {selectedPlugin && (
-        <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md p-6 space-y-4">
+        <div data-tour={`pluginStudio.workspace.${selectedPlugin}`} data-tour-active="true" className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md p-6 space-y-4">
           {/* Header */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -3026,7 +3026,7 @@ export default function PlatformPluginsPanel() {
           })()}
 
           {/* Section content */}
-          <div className="mt-2">
+          <div data-tour={`pluginStudio.content.${workspaceSection}`} className="mt-2">
             {renderPluginWorkspace(workspaceSection)}
           </div>
         </div>

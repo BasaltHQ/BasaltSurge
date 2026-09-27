@@ -1,4 +1,4 @@
-import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps } from "@/lib/portal-checkout-pricing";
 import { receiptRoutingFields } from "@/lib/payment-split-routing";
 import { pinReceiptSplitRouting } from "@/lib/receipt-split-snapshot";
 import { NextRequest, NextResponse } from "next/server";
@@ -639,7 +639,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     } else {
       basePlatformFeePct = typeof (cfg as any)?.basePlatformFeePct === "number" ? Math.max(0, (cfg as any).basePlatformFeePct) : 0.5;
     }
-    const totalFeePct = Math.max(0, basePlatformFeePct + Number(processingFeePct || 0) + (isAch && !cfg?.feeMinusEnabled ? 0.6 : 0));
+    const totalFeePct = Math.max(0, basePlatformFeePct + Number(processingFeePct || 0) + (isAch && !cfg?.feeMinusEnabled && resolveFundingPresentedFeeBps("us_bank_account", cfg || {}) === undefined ? 0.6 : 0));
     const feePctFraction = totalFeePct / 100;
     const processingFeeCents = isCryptoOnly
       ? toCents(calculateCryptoFeeUsd(fromCents(baseWithoutFeeCents), totalFeePct))

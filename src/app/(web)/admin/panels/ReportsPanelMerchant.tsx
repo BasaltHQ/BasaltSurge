@@ -426,7 +426,7 @@ export default function ReportsPanelMerchant({ overrideWallet }: { overrideWalle
                     </div>
                     <div className="flex flex-wrap gap-2">
                         {[{ id: "z-report", label: "Z-Report" }, { id: "x-report", label: "X-Report" }, { id: "employee", label: "Staff" }, { id: "hourly", label: "Hourly" }, { id: "transactions", label: "Txns" }].map((t) => (
-                            <button key={t.id} onClick={() => setReportType(t.id)} className={`flex-1 min-w-[80px] px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${reportType === t.id ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5 hover:text-foreground"}`}>
+                            <button data-tour={`reports.reportType.${t.id}`} data-tour-action="activate" data-tour-active={reportType === t.id} key={t.id} onClick={() => setReportType(t.id)} className={`flex-1 min-w-[80px] px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${reportType === t.id ? "bg-primary text-black border-primary shadow-[0_0_10px_rgba(var(--primary),0.2)]" : "bg-foreground/[0.02] text-muted-foreground border-foreground/5 hover:bg-foreground/5 hover:text-foreground"}`}>
                                 {t.label}
                             </button>
                         ))}
@@ -589,7 +589,7 @@ export default function ReportsPanelMerchant({ overrideWallet }: { overrideWalle
                         )}
 
                         {reportType === "hourly" && (
-                            <div className="rounded-xl border border-foreground/5 bg-foreground/[0.01] p-4">
+                            <div data-tour="reports.reportType.hourly.content" className="rounded-xl border border-foreground/5 bg-foreground/[0.01] p-4">
                                 <VerticalBarChart
                                     data={(dashboardStats.hourly || []).map((h: any) => ({ label: `${h.hour}:00`, value: h.amount }))}
                                     height={240}
@@ -603,7 +603,7 @@ export default function ReportsPanelMerchant({ overrideWallet }: { overrideWalle
 
             {/* On-Chain Transactions Tab */}
             {reportType === "transactions" && (
-                <div className="space-y-6">
+                <div data-tour="reports.reportType.transactions.content" className="space-y-6">
                     <TransactionHistoryChart transactions={splitTransactions} height={180} />
                     <div className="border rounded-xl glass-pane overflow-hidden">
                         <div className="p-5 border-b border-foreground/10 space-y-4">

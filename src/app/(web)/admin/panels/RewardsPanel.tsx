@@ -951,13 +951,13 @@ export default function RewardsPanel() {
                         My Merchants
                     </h3>
                     <div className="flex gap-2">
-                        <button
+                        <button data-tour="rewards.activeTab.my-rewards" data-tour-action="activate" data-tour-active={activeTab === 'my-rewards'}
                             onClick={() => setActiveTab('my-rewards')}
                             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeTab === 'my-rewards' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
                         >
                             Cards
                         </button>
-                        <button
+                        <button data-tour="rewards.activeTab.system-breakdown" data-tour-action="activate" data-tour-active={activeTab === 'system-breakdown'}
                             onClick={() => setActiveTab('system-breakdown')}
                             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${activeTab === 'system-breakdown' ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
                         >

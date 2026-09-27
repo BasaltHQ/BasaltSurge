@@ -41,6 +41,8 @@ type BrandConfigDoc = {
   unifiedFeeEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
+  achPresentedFeeBps?: number | null;
+  cryptoPresentedFeeBps?: number | null;
   dualSplitEnabled?: boolean;
   stripeOnrampEnabled?: boolean;
   stripeOnrampV2Enabled?: boolean;
@@ -166,6 +168,8 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     primaryAgentWallet: typeof overrides.primaryAgentWallet === "string" ? overrides.primaryAgentWallet : withDefaults.primaryAgentWallet,
     presentedFeeBps: typeof overrides.presentedFeeBps === "number" ? overrides.presentedFeeBps : withDefaults.presentedFeeBps,
     creditPresentedFeeBps: typeof overrides.creditPresentedFeeBps === "number" ? overrides.creditPresentedFeeBps : withDefaults.creditPresentedFeeBps,
+    achPresentedFeeBps: overrides.achPresentedFeeBps !== undefined ? overrides.achPresentedFeeBps : withDefaults.achPresentedFeeBps,
+    cryptoPresentedFeeBps: overrides.cryptoPresentedFeeBps !== undefined ? overrides.cryptoPresentedFeeBps : withDefaults.cryptoPresentedFeeBps,
     stripeOnrampEnabled: typeof overrides.stripeOnrampEnabled === "boolean" ? overrides.stripeOnrampEnabled : withDefaults.stripeOnrampEnabled,
     stripeOnrampV2Enabled: typeof overrides.stripeOnrampV2Enabled === "boolean" ? overrides.stripeOnrampV2Enabled : (typeof overrides.v2CheckoutEnabled === "boolean" ? overrides.v2CheckoutEnabled : withDefaults.stripeOnrampV2Enabled),
     v2CheckoutEnabled: typeof overrides.v2CheckoutEnabled === "boolean" ? overrides.v2CheckoutEnabled : (typeof overrides.stripeOnrampV2Enabled === "boolean" ? overrides.stripeOnrampV2Enabled : withDefaults.v2CheckoutEnabled),
@@ -230,6 +234,11 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
 
   const presCredit = clampBps(raw?.creditPresentedFeeBps);
   if (typeof presCredit === "number") out.creditPresentedFeeBps = presCredit;
+
+  for (const key of ["achPresentedFeeBps", "cryptoPresentedFeeBps"] as const) {
+    if (raw?.[key] === null) out[key] = null;
+    else if (typeof raw?.[key] === "number" && Number.isFinite(raw[key])) out[key] = clampBps(raw[key]);
+  }
 
   const partner = clampBps(raw?.partnerFeeBps);
   if (typeof partner === "number") out.partnerFeeBps = partner;

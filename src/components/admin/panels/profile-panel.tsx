@@ -356,12 +356,12 @@ export function ProfilePanel() {
 
       <div className="w-full space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div data-tour="profileSetup.your-identity" className="flex items-center justify-between">
           <h1 className="text-xl font-bold tracking-tight">Your Profile</h1>
           <div className="flex items-center gap-2">
             <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">{loading ? 'Loading…' : msg || ''}</span>
             {!editMode ? (
-              <button onClick={() => setEditMode(true)} className="px-4 py-2 border border-foreground/10 glass-pane rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-foreground/5 transition-colors">
+              <button data-tour="profileSetup.edit-your-profile" onClick={() => setEditMode(true)} className="px-4 py-2 border border-foreground/10 glass-pane rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-foreground/5 transition-colors">
                 Edit
               </button>
             ) : (

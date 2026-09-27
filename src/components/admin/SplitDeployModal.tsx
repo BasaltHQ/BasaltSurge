@@ -7,11 +7,13 @@ import { client, chain } from "@/lib/thirdweb/client";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { SPLIT_FIELDS, SPLIT_KINDS, discoverSplitContracts, optionalSplitActive, type SplitKind } from "@/lib/payment-split-routing";
 import { SPLIT_LABELS, validateSplitAllocation, type SplitDraft } from "@/lib/split-allocation";
+import { resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps } from "@/lib/portal-checkout-pricing";
 
-export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditPlatform, onClose, onSaved, onApprove, approvedAgents = [], unifiedFeeEnabled = false, presentedFeeBps, creditPresentedFeeBps, requiredAgents = {}, processorFeeBps = {}, showFeeExplainer = false, merchantName }: {
+export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditPlatform, onClose, onSaved, onApprove, approvedAgents = [], unifiedFeeEnabled = false, presentedFeeBps, creditPresentedFeeBps, achPresentedFeeBps, cryptoPresentedFeeBps, requiredAgents = {}, processorFeeBps = {}, showFeeExplainer = false, merchantName }: {
   wallet: string; brandKey: string; account: any; defaults: Partial<Record<SplitKind, SplitDraft>>;
   approvedAgents?: { wallet: string; name?: string }[];
   unifiedFeeEnabled?: boolean; presentedFeeBps?: number; creditPresentedFeeBps?: number;
+  achPresentedFeeBps?: number | null; cryptoPresentedFeeBps?: number | null;
   requiredAgents?: Partial<Record<SplitKind, { wallet: string; bps: number }[]>>;
   processorFeeBps?: Partial<Record<SplitKind, number>>;
   showFeeExplainer?: boolean; merchantName?: string;
@@ -153,7 +155,11 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
   const customAgentsBps = customAgents.reduce((sum, a) => sum + Number(a.bps || 0), 0);
   const unifiedServiceFeeBps = currentPlatformBps + currentAgents.filter(a => isAgentImmutable(a.wallet, isDebitTab)).reduce((sum, a) => sum + a.bps, 0);
   const stripeFeeBps = processorFeeBps[active] ?? (active === "crypto" ? 0 : active === "ach" ? 60 : isDebitTab ? 225 : 350);
-  const platformPresentedFeeBps = stripeFeeBps + totalFeeBps;
+  const methodFunding = active === "ach" ? "us_bank_account" : active;
+  const optionalPricing = { splitConfig: draft, achPresentedFeeBps, cryptoPresentedFeeBps };
+  const optionalPresentedFeeBps = Math.round(resolveFundingPlatformFeePct(methodFunding, optionalPricing) * 100)
+    + (resolveFundingPresentedFeeBps(methodFunding, optionalPricing) === undefined ? stripeFeeBps : 0);
+  const platformPresentedFeeBps = active === "ach" || active === "crypto" ? optionalPresentedFeeBps : stripeFeeBps + totalFeeBps;
   const history = discoverSplitContracts(config).filter(entry => entry.splitKind === active);
   const inherited = (["ach", "crypto"] as const).filter(k => !optionalSplitActive(config, k));
   const configuredKinds = SPLIT_KINDS.filter(k => drafts[k]);
@@ -244,7 +250,7 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                 {(() => {
                   const fallbackFeeBps = unifiedServiceFeeBps + currentPartnerBps + customAgentsBps;
                   const basePresentedFeeBps = (isDebitTab ? (presentedFeeBps ?? creditPresentedFeeBps) : (creditPresentedFeeBps ?? presentedFeeBps));
-                  const activePresentedFeeBps = basePresentedFeeBps !== undefined
+                  const activePresentedFeeBps = active === "ach" || active === "crypto" ? optionalPresentedFeeBps : basePresentedFeeBps !== undefined
                     ? (basePresentedFeeBps + currentPartnerBps + customAgentsBps)
                     : fallbackFeeBps;
                   return (
@@ -257,7 +263,7 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                         {(activePresentedFeeBps / 100).toFixed(2)}%
                       </span>
                       <span className="text-zinc-500 text-[10px]">
-                        Top-line transaction fee presented to checkout users.
+                        Top-line transaction fee presented to checkout users.{active === "ach" ? " Includes Stripe’s 0.60% ACH charge." : ""}
                       </span>
                     </div>
                   );
@@ -716,12 +722,17 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
                     <div className="flex justify-between text-xs uppercase tracking-wider font-mono text-zinc-500">
                       <span>Allocation Check</span>
                       <span>
-                        {isPlatformContainer
+                        {isPlatformContainer || active === "ach" || active === "crypto"
                           ? `Total Presented: ${(platformPresentedFeeBps / 100).toFixed(2)}%`
                           : `Total: ${(totalFeeBps / 100).toFixed(2)}% Fees`}
                       </span>
                     </div>
                     <div className="p-3 rounded-lg border border-white/5 bg-black/20 space-y-2">
+                      {!isPlatformContainer && (active === "ach" || active === "crypto") && <>
+                        <div className="flex justify-between text-xs"><span className="text-zinc-400">Customer Fee</span><span className="font-mono text-emerald-400">{(optionalPresentedFeeBps / 100).toFixed(2)}%</span></div>
+                        <div className="flex justify-between text-xs"><span className="text-zinc-400">{active === "ach" ? "Stripe ACH (included)" : "Stripe Fee"}</span><span className="font-mono text-zinc-300">{(stripeFeeBps / 100).toFixed(2)}%</span></div>
+                        <div className="text-[10px] uppercase text-zinc-500 pt-2">On-chain allocation</div>
+                      </>}
                       {isPlatformContainer ? (
                         <>
                           <div className="text-[10px] uppercase font-mono tracking-wider text-zinc-400 pb-1 border-b border-white/5 flex justify-between">

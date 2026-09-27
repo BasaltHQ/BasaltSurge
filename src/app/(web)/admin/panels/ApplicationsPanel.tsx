@@ -305,7 +305,7 @@ export default function ApplicationsPanel() {
   return (
     <div className="glass-pane rounded-xl border border-foreground/[0.1] bg-foreground/[0.02] p-6 space-y-6">
       <div className="flex items-center justify-between border-b border-foreground/5 pb-4">
-        <div>
+        <div data-tour="applications.partner-applications">
           <h2 className="text-xl font-bold tracking-tight">Applications</h2>
           <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider mt-1">
             Review partner applications submitted from the public /partners page.
@@ -315,7 +315,7 @@ export default function ApplicationsPanel() {
           <button className="px-3 py-1.5 rounded-md border border-foreground/10 bg-foreground/5 hover:bg-foreground/10 text-xs font-bold transition-colors uppercase tracking-wider" onClick={load} disabled={loading}>
             {loading ? "Refreshing…" : "Refresh"}
           </button>
-          <button
+          <button data-tour="applications.application-synchronization"
             className="px-3 py-1.5 rounded-md border border-foreground/10 bg-foreground/5 hover:bg-foreground/10 text-xs font-bold transition-colors uppercase tracking-wider disabled:opacity-30"
             onClick={async () => {
               try {

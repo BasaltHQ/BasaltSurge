@@ -2,6 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { useActiveAccount } from "thirdweb/react";
+import { usePathname } from 'next/navigation';
+import { isWorkshopPath } from '@/lib/routing';
 import { 
   Sliders, 
   X, 
@@ -27,6 +29,7 @@ import {
 } from "lucide-react";
 
 export function SandboxWidget() {
+  const pathname = usePathname() || '';
   const [visible, setVisible] = useState(false);
   const [isOpen, setIsOpen] = useState(false);
   const [widgetSize, setWidgetSize] = useState<"compact" | "medium" | "large" | "full">("medium");
@@ -406,7 +409,7 @@ export function SandboxWidget() {
 
   const diag = getDiagnostics();
 
-  if (!visible) return null;
+  if (!visible || isWorkshopPath(pathname)) return null;
 
   return (
     <div className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-[10005] font-sans antialiased flex flex-col items-end pointer-events-none">

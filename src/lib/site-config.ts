@@ -221,6 +221,23 @@ export async function getSiteConfig(): Promise<SiteConfig> {
 }
 
 export async function getSiteConfigForWallet(wallet?: string, brandKeyOverride?: string, req?: NextRequest): Promise<SiteConfig> {
+  let resolvedBrand = brandKeyOverride;
+  if (!resolvedBrand && req) {
+    const { deriveContainerIdentityFromHostname } = await import("@/lib/brand-config");
+    resolvedBrand = (await deriveContainerIdentityFromHostname(req.headers.get("x-forwarded-host") || req.headers.get("host") || "", req.headers.get("cookie") || ""))?.brandKey;
+  }
+  const cfg = await readSiteConfigForWallet(wallet, resolvedBrand, req);
+  const brandKey = resolvedBrand || cfg.brandKey || getBrandKey(req);
+  if (brandKey) {
+    const { getBrandConfigFromCosmos } = await import("@/lib/brand-config");
+    const { brand } = await getBrandConfigFromCosmos(brandKey);
+    cfg.achPresentedFeeBps = brand.achPresentedFeeBps ?? null;
+    cfg.cryptoPresentedFeeBps = brand.cryptoPresentedFeeBps ?? null;
+  }
+  return cfg;
+}
+
+async function readSiteConfigForWallet(wallet?: string, brandKeyOverride?: string, req?: NextRequest): Promise<SiteConfig> {
   try {
     const c = await getContainer();
 

@@ -1688,7 +1688,7 @@ export default function DeviceInstallerPanel() {
             <div className="shrink-0 h-12 w-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
               <Download className="h-6 w-6 text-emerald-500" />
             </div>
-            <div>
+            <div data-tour="devices.installer-workflow">
               <h3 className="text-lg font-bold text-emerald-500">
                 Touchpoint Provisioning
               </h3>

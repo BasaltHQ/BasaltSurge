@@ -10,8 +10,19 @@ type PricingConfig = {
   splitConfigCredit?: any;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
+  achPresentedFeeBps?: number | null;
+  cryptoPresentedFeeBps?: number | null;
   processingFeePct?: number;
 };
+
+/** Method-specific presented rates include the processor fee; null means derive from the split. */
+export function resolveFundingPresentedFeeBps(funding: unknown, config: PricingConfig): number | undefined {
+  const method = normalizeSettlementFunding(funding);
+  const value = method === "us_bank_account" ? config.achPresentedFeeBps
+    : method === "crypto" ? config.cryptoPresentedFeeBps
+    : method === "credit" ? (config.creditPresentedFeeBps ?? config.presentedFeeBps) : config.presentedFeeBps;
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
 
 /** Preserve the presented-fee and inverted split policies for the selected method. */
 export function resolveFundingPlatformFeePct(funding: unknown, config: PricingConfig): number {
@@ -19,9 +30,7 @@ export function resolveFundingPlatformFeePct(funding: unknown, config: PricingCo
   const partner = typeof split?.partnerBps === "number" ? split.partnerBps : 0;
   // Card presented fees may already include the processor charge. ACH and crypto
   // use the allocation of their routed contract, including inherited Credit.
-  const method = normalizeSettlementFunding(funding);
-  const presented = method === "crypto" || method === "us_bank_account" ? undefined
-    : funding === "credit" ? (config.creditPresentedFeeBps ?? config.presentedFeeBps) : config.presentedFeeBps;
+  const presented = resolveFundingPresentedFeeBps(funding, config);
   if (presented !== undefined) return (presented + partner) / 100;
   if (typeof split?.platformBps === "number") {
     const agents = Array.isArray(split.agents) ? split.agents.reduce((sum: number, agent: any) => sum + (Number(agent.bps) || 0), 0) : 0;
@@ -41,7 +50,7 @@ export function resolveFundingOnrampAmount(options: PricingConfig & {
   const { funding, feeMinusEnabled, customerTotalUsd, baseUsd } = options;
   const stripeFeePct = funding === "us_bank_account" ? 0.6 : options.stripeFeePct;
   if (feeMinusEnabled) return +(customerTotalUsd / (1 + stripeFeePct / 100)).toFixed(2);
-  const presented = funding === "us_bank_account" ? undefined : funding === "credit" ? (options.creditPresentedFeeBps ?? options.presentedFeeBps) : options.presentedFeeBps;
+  const presented = resolveFundingPresentedFeeBps(funding, options);
   const platformPct = resolveFundingPlatformFeePct(funding, options);
   const feePct = Math.max(0, platformPct + Number(options.processingFeePct || 0) + (presented !== undefined ? 0 : stripeFeePct));
   const feeUsd = +(baseUsd * feePct / 100).toFixed(2);

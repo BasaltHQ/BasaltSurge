@@ -46,6 +46,8 @@ import TeamPanel from "@/app/(web)/admin/panels/TeamPanel";
 import MyPurchasesPanelExt from "@/app/(web)/admin/panels/MyPurchasesPanel";
 import { SEOLandingPagesPanel } from "@/app/(web)/admin/panels/SEOLandingPagesPanel";
 import { AdminSidebar, type AdminTabKey } from "@/components/admin/admin-sidebar";
+import TakeTheTour from "@/components/admin/TakeTheTour";
+import type { TourNavigation } from "@/lib/admin-tour/catalog";
 import AdminHero from "@/components/admin/admin-hero";
 import InstallerPackagesPanel from "@/app/(web)/admin/panels/InstallerPackagesPanel";
 import DeviceInstallerPanel from "@/app/(web)/admin/panels/DeviceInstallerPanel";
@@ -602,7 +604,7 @@ function WithdrawalInstructionsPanel() {
         <span className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider">How funds flow and how to cash out</span>
       </div>
 
-      <div>
+      <div data-tour="manualWithdrawal.money-flow">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">Overview: How money flows</h3>
         <div className="microtext text-muted-foreground mt-1">
           Money flows on-chain on Base (Coinbase L2). Each purchase is paid into your Payment Splitter (“Split”) which records shares for each recipient. Your portion is instantly releasable from the Split to your wallet. You can verify on‑chain any time:&nbsp;
@@ -771,7 +773,7 @@ function WithdrawalInstructionsPanel() {
         </div>
       </div>
 
-      <div>
+      <div data-tour="manualWithdrawal.release-funds">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">Where to release funds</h3>
         <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider leading-relaxed">
           Use the Reserve Analytics panel on the Reserve tab:
@@ -859,7 +861,7 @@ function WithdrawalInstructionsPanel() {
         </div>
       </div>
 
-      <div>
+      <div data-tour="manualWithdrawal.before-cashing-out">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">Best practices before cashing out</h3>
         <ul className="space-y-2 mt-4">
           <li className="flex items-start gap-2">
@@ -877,7 +879,7 @@ function WithdrawalInstructionsPanel() {
         </ul>
       </div>
 
-      <div className="space-y-6">
+      <div data-tour="manualWithdrawal.exchange-deposit" className="space-y-6">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">Transfer to Coinbase (deposit)</h3>
         
         <div className="space-y-2">
@@ -959,7 +961,7 @@ function WithdrawalInstructionsPanel() {
         </ul>
       </div>
 
-      <div>
+      <div data-tour="manualWithdrawal.bank-withdrawal">
         <h3 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-2">Withdraw to bank or spend with Coinbase Card</h3>
         <ul className="space-y-2 mt-4">
           <li className="flex items-start gap-2">
@@ -1044,7 +1046,7 @@ function ShopSetupInstructionsPanel() {
 
       <div className="space-y-6">
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualShop.claim-your-shop-slug" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">1</span>
             <h4 className="text-sm font-semibold">Claim your shop slug</h4>
           </div>
@@ -1057,7 +1059,7 @@ function ShopSetupInstructionsPanel() {
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualShop.add-your-inventory" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">2</span>
             <h4 className="text-sm font-semibold">Add inventory</h4>
           </div>
@@ -1067,7 +1069,7 @@ function ShopSetupInstructionsPanel() {
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualShop.share-your-shop" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">3</span>
             <h4 className="text-sm font-semibold">Share your shop link</h4>
           </div>
@@ -1094,7 +1096,7 @@ function ShopSetupInstructionsPanel() {
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualShop.create-orders" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">4</span>
             <h4 className="text-sm font-semibold">Create quick orders or terminal payments</h4>
           </div>
@@ -1138,7 +1140,7 @@ function ProfileSetupInstructionsPanel() {
 
       <div className="space-y-6">
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualProfile.edit-your-identity" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">1</span>
             <h4 className="text-sm font-semibold">Edit Your Identity</h4>
           </div>
@@ -1148,7 +1150,7 @@ function ProfileSetupInstructionsPanel() {
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualProfile.choose-your-role" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">2</span>
             <h4 className="text-sm font-semibold">Choose Your Role</h4>
           </div>
@@ -1181,7 +1183,7 @@ function ProfileSetupInstructionsPanel() {
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualProfile.verify-your-public-profile" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">3</span>
             <h4 className="text-sm font-semibold">Verify Public Profile</h4>
           </div>
@@ -1216,7 +1218,7 @@ function WhitelabelInstructionsPanel() {
 
       <div className="space-y-6">
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualWhitelabel.configure-your-shop" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">1</span>
             <h4 className="text-sm font-semibold">Configure Your Shop</h4>
           </div>
@@ -1226,7 +1228,7 @@ function WhitelabelInstructionsPanel() {
         </div>
 
         <div className="space-y-2">
-          <div className="flex items-center gap-2">
+          <div data-tour="manualWhitelabel.brand-and-theme" className="flex items-center gap-2">
             <span className="flex items-center justify-center w-5 h-5 rounded-full bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-bold">2</span>
             <h4 className="text-sm font-semibold">Set Brand and Theme</h4>
           </div>
@@ -5933,7 +5935,7 @@ function UsersPanel() {
 
   return (
     <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 space-y-6 admin-panel-enter">
-      <div className="flex items-center justify-between border-b border-foreground/[0.05] pb-4">
+      <div data-tour="users.merchant-directory" className="flex items-center justify-between border-b border-foreground/[0.05] pb-4">
         <h2 className="text-sm font-bold text-foreground/80 uppercase tracking-wider">Merchants</h2>
         <div className="flex items-center gap-2">
           {indexing && (
@@ -5952,7 +5954,7 @@ function UsersPanel() {
       <div className={`grid grid-cols-1 md:grid-cols-2 ${containerTypeEnv === "platform" ? "lg:grid-cols-6" : "lg:grid-cols-5"} gap-4`}>
         <div className="space-y-1.5">
           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Search</label>
-          <input
+          <input data-tour="users.find-a-merchant"
             className="w-full h-10 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none"
             placeholder="Wallet or shop name…"
             value={q}
@@ -5989,7 +5991,7 @@ function UsersPanel() {
             <option value="connected">Connected</option>
           </select>
         </div>
-        <div className="space-y-1.5">
+        <div data-tour="users.sort-the-directory" className="space-y-1.5">
           <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Sort Field</label>
           <select
             className="w-full h-10 px-3 rounded-lg border border-foreground/[0.05] bg-foreground/[0.02] text-sm transition-colors hover:bg-foreground/[0.04] focus:border-foreground/30 focus:outline-none"
@@ -8314,7 +8316,7 @@ function InventoryPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
 
       <div className="rounded-3xl border border-foreground/[0.04] bg-foreground/[0.02] p-6 md:p-8 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
-          <div>
+          <div data-tour="inventory.inventory-catalog">
             <h3 className="text-[10px] uppercase font-bold tracking-[0.2em] text-muted-foreground flex items-center gap-2">
               <div className="w-1.5 h-1.5 rounded-full bg-[var(--pp-secondary)]" />
               Inventory Management
@@ -8324,15 +8326,15 @@ function InventoryPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             {/* Layout Toggle (Only show if not in categories view) */}
             {viewMode !== "categories" && (
-              <div className="flex items-center bg-foreground/[0.03] rounded-xl border border-foreground/[0.05] p-1 mr-2">
-                <button
+              <div data-tour="inventory.viewMode.categories.content" className="flex items-center bg-foreground/[0.03] rounded-xl border border-foreground/[0.05] p-1 mr-2">
+                <button data-tour="inventory.viewMode.grid" data-tour-action="activate" data-tour-active={viewMode === "grid"}
                   onClick={() => setViewMode("grid")}
                   className={`p-2 rounded-lg transition-all ${viewMode === "grid" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"}`}
                   title="Grid View"
                 >
                   <LayoutGrid className="w-4 h-4" />
                 </button>
-                <button
+                <button data-tour="inventory.viewMode.list" data-tour-action="activate" data-tour-active={viewMode === "list"}
                   onClick={() => setViewMode("list")}
                   className={`p-2 rounded-lg transition-all ${viewMode === "list" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"}`}
                   title="List View"
@@ -8360,7 +8362,7 @@ function InventoryPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
               >
                 Inventory
               </button>
-              <button
+              <button data-tour="inventory.viewMode.categories" data-tour-action="activate" data-tour-active={viewMode === "categories"}
                 onClick={() => setViewMode("categories")}
                 className={`h-8 px-4 text-[9px] uppercase font-bold tracking-wider rounded-lg flex items-center justify-center gap-2 transition-all relative z-10 w-28 ${viewMode === "categories" ? "text-white" : "text-muted-foreground hover:text-foreground"}`}
               >
@@ -8434,7 +8436,7 @@ function InventoryPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
         <div className="mb-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div>
             <label className="text-[9px] uppercase font-bold tracking-wider text-muted-foreground mb-2 ml-1 block">Search</label>
-            <input
+            <input data-tour="inventory.inventory-search"
               className="w-full h-12 px-4 border border-foreground/[0.05] rounded-xl bg-foreground/[0.02] hover:bg-foreground/[0.04] transition-colors"
               placeholder="SKU, name, description, tag…"
               value={q}
@@ -10461,7 +10463,7 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
       <div className="absolute top-0 left-1/2 -translate-x-1/2 w-3/4 h-32 bg-[var(--pp-secondary)] opacity-10 blur-[100px] pointer-events-none" />
 
       <div className="flex items-center justify-between relative z-10 shrink-0">
-        <div className="flex items-center gap-3 md:gap-4">
+        <div data-tour="terminal.take-a-payment" className="flex items-center gap-3 md:gap-4">
           <div className="w-8 h-8 md:w-12 md:h-12 rounded-xl md:rounded-2xl bg-gradient-to-br from-foreground/10 to-transparent flex items-center justify-center overflow-hidden shadow-lg border border-foreground/5 backdrop-blur-md">
             <svg className="w-4 h-4 md:w-6 md:h-6 opacity-80" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
           </div>
@@ -10479,7 +10481,7 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
             Enter Details
           </div>
           <div className="flex flex-col gap-2 md:gap-6 flex-1 min-h-0">
-            <div className="hidden md:block shrink-0">
+            <div data-tour="terminal.describe-the-charge" className="hidden md:block shrink-0">
               <label className="text-[9px] md:text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-1 md:mb-2 block ml-1">Item name (optional)</label>
               <input
                 className="w-full h-10 md:h-12 px-4 py-2 rounded-xl bg-foreground/[0.03] border-none focus:bg-foreground/[0.05] focus:ring-1 focus:ring-[var(--pp-secondary)] focus:outline-none transition-all text-sm placeholder:text-muted-foreground/50"
@@ -10524,7 +10526,7 @@ function TerminalPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
             Summary
           </div>
 
-          <div className="shrink-0 relative z-10 mb-2 md:mb-6">
+          <div data-tour="terminal.payment-currency" className="shrink-0 relative z-10 mb-2 md:mb-6">
             <label className="text-[9px] md:text-[10px] uppercase font-bold tracking-wider text-muted-foreground mb-1 md:mb-2 block ml-1">Currency</label>
             <select
               className="w-full h-10 md:h-12 px-4 rounded-xl bg-foreground/[0.03] border-none focus:bg-foreground/[0.05] focus:ring-1 focus:ring-[var(--pp-secondary)] focus:outline-none transition-all text-xs md:text-sm appearance-none cursor-pointer text-foreground"
@@ -11047,7 +11049,7 @@ function OrdersPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
             <div className="flex items-center justify-between mb-3">
               <div className="text-sm font-medium">Inventory</div>
               <div className="flex items-center gap-1">
-                <button
+                <button data-tour="orders.viewMode.list" data-tour-action="activate" data-tour-active={viewMode === "list"}
                   type="button"
                   onClick={() => { setViewMode("list"); setSelectedCategoryView(null); }}
                   className={`h-10 w-10 rounded-xl border border-foreground/[0.05] flex items-center justify-center transition-colors ${viewMode === "list" ? "bg-blue-500/10 text-blue-500 border-blue-500/20" : "bg-foreground/[0.02] hover:bg-foreground/[0.05]"}`}
@@ -11058,7 +11060,7 @@ function OrdersPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
                 </button>
-                <button
+                <button data-tour="orders.viewMode.grid" data-tour-action="activate" data-tour-active={viewMode === "grid"}
                   type="button"
                   onClick={() => { setViewMode("grid"); setSelectedCategoryView(null); }}
                   className={`h-10 w-10 rounded-xl border border-foreground/[0.05] flex items-center justify-center transition-colors ${viewMode === "grid" ? "bg-blue-500/10 text-blue-500 border-blue-500/20" : "bg-foreground/[0.02] hover:bg-foreground/[0.05]"}`}
@@ -11069,7 +11071,7 @@ function OrdersPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
                   </svg>
                 </button>
-                <button
+                <button data-tour="orders.viewMode.categories" data-tour-action="activate" data-tour-active={viewMode === "categories"}
                   type="button"
                   onClick={() => { setViewMode("categories"); setSelectedCategoryView(null); }}
                   className={`h-10 w-10 rounded-xl border border-foreground/[0.05] flex items-center justify-center transition-colors ${viewMode === "categories" ? "bg-blue-500/10 text-blue-500 border-blue-500/20" : "bg-foreground/[0.02] hover:bg-foreground/[0.05]"}`}
@@ -11153,7 +11155,7 @@ function OrdersPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
             {/* Scrollable inventory list with height limit */}
             <div className="max-h-[500px] overflow-y-auto overflow-x-hidden p-1 space-y-2">
               {viewMode === "list" && (
-                <div className="space-y-2">
+                <div data-tour="orders.viewMode.list.content" className="space-y-2">
                   {availableItems.map((it) => {
 
                     const rawStock = Number(it.stockQty);
@@ -11188,7 +11190,7 @@ function OrdersPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
               )}
 
               {viewMode === "grid" && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div data-tour="orders.viewMode.grid.content" className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {availableItems.map((it) => {
 
                     const rawStock = Number(it.stockQty);
@@ -11376,7 +11378,7 @@ function OrdersPanel({ overrideWallet }: { overrideWallet?: string } = {}) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.01] p-4">
             <div className="space-y-2">
-              <div>
+              <div data-tour="orders.tax-jurisdiction">
                 <label className="microtext text-muted-foreground">Jurisdiction</label>
                 <select
                   className="mt-1 w-full h-12 px-4 border border-foreground/[0.05] rounded-xl bg-foreground/[0.02] hover:bg-foreground/[0.04] transition-colors"
@@ -11579,6 +11581,7 @@ export default function AdminPage() {
   const canBranding = canAccessPanel("branding", wallet);
   const canAdmins = canAccessPanel("admins", wallet);
   const [activeTab, setActiveTab] = useState<AdminTabKey>("dashboard");
+  const [tourNavigation, setTourNavigation] = useState<TourNavigation | null>(null);
   const [reserveInitialTab, setReserveInitialTab] = useState<"configuration" | "analytics">("configuration");
   const navigateToPanel = (tab: AdminTabKey) => {
     if (tab === "reserve") setReserveInitialTab("configuration");
@@ -11786,6 +11789,7 @@ export default function AdminPage() {
         } ${isSupportTab ? '' : 'max-w-full'}`}>
         <AdminHero />
         <AdminSidebar
+          onTourNavigation={setTourNavigation}
           activeTab={activeTab}
           onChangeTab={navigateToPanel}
           industryPack={industryPack || ""}
@@ -11946,6 +11950,14 @@ export default function AdminPage() {
         </div>
 
         {/* Tabs Content */}
+        <TakeTheTour key={`${wallet}:${authRevision}:${tourNavigation?.brand.key || ''}`} navigation={tourNavigation} activeTab={activeTab} wallet={wallet} ready={merchantAccess?.wallet === wallet} />
+        <div id="admin-tour-panel" data-panel={activeTab}>
+        {activeTab === 'tourDevelopers' && (
+          <section className="space-y-3 pb-24">
+            <h2 className="text-xl font-semibold">Developers</h2>
+            <iframe data-tour-developers title="Developer portal tour" src="/developers" className="h-[75vh] w-full rounded-xl border border-white/10" />
+          </section>
+        )}
         {activeTeamContext && (
           <div className="bg-purple-950/40 border border-purple-500/30 rounded-xl p-3.5 mb-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-xs text-purple-200 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300">
             <div className="flex min-w-0 items-center gap-2.5">
@@ -12242,6 +12254,7 @@ export default function AdminPage() {
             <AgentUniversityPanelExt />
           </div>
         )}
+        </div>
       </div>
     </>
   );

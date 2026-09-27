@@ -207,7 +207,7 @@ export default function ContractsPanel() {
                 <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md overflow-hidden">
                     <div className="p-6 border-b border-foreground/[0.05]">
                         <div className="flex items-center justify-between">
-                            <div>
+                            <div data-tour="contracts.standard-agreement">
                                 <h3 className="text-lg font-semibold flex items-center gap-2">
                                     Standard MSA
                                     <span className="text-xs font-mono px-2 py-0.5 rounded-full border border-foreground/[0.1] bg-foreground/[0.02]">/msa</span>
@@ -288,7 +288,7 @@ export default function ContractsPanel() {
                 <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md overflow-hidden">
                     <div className="p-6 border-b border-foreground/[0.05]">
                         <div className="flex items-center justify-between">
-                            <div>
+                            <div data-tour="contracts.agent-agreement">
                                 <h3 className="text-lg font-semibold flex items-center gap-2">
                                     Introducer / Sales Agent MSA
                                     <span className="text-xs font-mono px-2 py-0.5 rounded-full border border-foreground/[0.1] bg-foreground/[0.02]">/msa-isa</span>
@@ -368,7 +368,7 @@ export default function ContractsPanel() {
 
             {/* Quick Reference */}
             <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md overflow-hidden">
-                <div className="p-6 border-b border-foreground/[0.05]">
+                <div data-tour="contracts.agreement-reference" className="p-6 border-b border-foreground/[0.05]">
                     <h3 className="text-lg font-semibold">Quick Reference</h3>
                     <p className="text-sm text-muted-foreground mt-1">How to update contract widgets</p>
                 </div>

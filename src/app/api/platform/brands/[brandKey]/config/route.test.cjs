@@ -80,3 +80,18 @@ test('non-admins cannot change the platform access mode', async () => {
     assert.equal((await h.patch({ accessMode: 'request' })).status, 403);
     assert.equal(h.saved.accessMode, 'open');
 });
+
+test('ACH and Crypto presented fees survive save, reload, zero, and clearing independently', async () => {
+    const h = harness('open');
+    for (const fields of [{ achPresentedFeeBps: 110, cryptoPresentedFeeBps: 50 }, { achPresentedFeeBps: 0 }, { cryptoPresentedFeeBps: 0 }, { achPresentedFeeBps: null, cryptoPresentedFeeBps: null }]) {
+        const response = await h.patch(fields);
+        assert.equal(response.status, 200);
+        const saved = (await response.json()).brand;
+        const reloaded = (await (await h.get()).json()).brand;
+        for (const [key, value] of Object.entries(fields)) {
+            assert.equal(h.saved[key], value);
+            assert.equal(saved[key], value);
+            assert.equal(reloaded[key], value);
+        }
+    }
+});

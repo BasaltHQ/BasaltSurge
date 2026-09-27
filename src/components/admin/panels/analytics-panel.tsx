@@ -387,7 +387,7 @@ export function AnalyticsPanel({ overrideWallet }: { overrideWallet?: string } =
 
   return (
     <div className="w-full h-[calc(100vh-140px)] p-6 md:p-8 flex flex-col gap-6 pb-24 overflow-y-auto">
-      <div className="flex items-center justify-between">
+      <div data-tour="analytics.sales-analytics" className="flex items-center justify-between">
         <h1 className="text-3xl font-bold">Analytics</h1>
         <span className="microtext badge-soft">Shop Performance</span>
       </div>
@@ -412,7 +412,7 @@ export function AnalyticsPanel({ overrideWallet }: { overrideWallet?: string } =
               {p.label}
             </button>
           ))}
-          <div className="flex items-center gap-2">
+          <div data-tour="analytics.reporting-window" className="flex items-center gap-2">
             <label className="text-sm text-muted-foreground">Custom since:</label>
             <input
               type="datetime-local"

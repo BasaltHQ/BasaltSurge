@@ -787,11 +787,11 @@ export default function GetSupportPanel({ brandKey }: { brandKey?: string }) {
     return (
         <div className="space-y-6 h-full glass-pane rounded-xl border border-foreground/[0.1] bg-foreground/[0.02] p-6">
             <div className="flex items-center justify-between">
-                <div>
+                <div data-tour="support.support-center">
                     <h2 className="text-xl font-bold tracking-tight">Support Center</h2>
                     <div className="text-[10px] uppercase font-bold text-muted-foreground tracking-wider mt-1">Track your requests and get help from our team.</div>
                 </div>
-                <button
+                <button data-tour="support.new-support-request"
                     className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-[10px] font-bold uppercase tracking-wider hover:bg-primary/90 transition-colors flex items-center gap-2"
                     onClick={() => setView('create')}
                 >

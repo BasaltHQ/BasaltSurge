@@ -108,7 +108,7 @@ export default function TablesPanel() {
 
     return (
         <div className="max-w-6xl mx-auto px-4 sm:px-6 w-full space-y-6 pb-24">
-            <div>
+            <div data-tour="tables.restaurant-tables">
                 <h2 className="text-xl font-semibold">Restaurant Tables</h2>
                 <p className="text-sm text-muted-foreground mt-1">
                     Manage your table identifiers. These will be available for selection on the Handheld devices.
@@ -116,7 +116,7 @@ export default function TablesPanel() {
             </div>
 
             <div className="flex gap-2 max-w-md">
-                <input
+                <input data-tour="tables.table-naming"
                     type="text"
                     value={newTable}
                     onChange={(e) => setNewTable(e.target.value)}

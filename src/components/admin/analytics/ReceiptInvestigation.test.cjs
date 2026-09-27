@@ -99,6 +99,17 @@ test('ACH analytics separates the 0.6 percent Stripe deduction from the routed s
   }
 });
 
+test('method-specific presented rates appear in analytics without re-adding processor fees', () => {
+  for (const funding of ['us_bank_account', 'crypto']) {
+    const html = render({ activeTab: 'fees', receipt: { ...receipt, cardFunding: funding, totalUsd: 102,
+      customerSessions: [], splitRoutingSnapshot: { achPresentedFeeBps: 200, cryptoPresentedFeeBps: 200,
+        splitConfig: { platformBps: 50, partnerBps: 0, agents: [] }, feeMinusEnabled: false } } });
+    assert.match(html, /Presented Rate: 2\.00%/);
+    assert.match(html, funding === 'crypto' ? /0\.00% Processing Fee/ : /0\.60% Processing Fee/);
+    assert.match(html, /Split Allocation \(0\.50%\)/);
+  }
+});
+
 test('crypto investigation retains routing, transaction, participants, and raw payload sections', () => {
   const html = render({ activeTab: 'crypto', receipt: { ...receipt, isCrypto: true, paymentId: 'payment-audit', thirdwebMetadata: { paymentId: 'payment-audit' } } });
   assert.match(html, /payment-audit/);

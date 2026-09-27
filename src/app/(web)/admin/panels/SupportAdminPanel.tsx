@@ -197,7 +197,7 @@ export default function SupportAdminPanel() {
                     <div className="flex items-center gap-2">
                         <div className="relative flex-1">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                            <input
+                            <input data-tour="supportAdmin.support-inbox-search"
                                 className="w-full h-10 pl-9 pr-3 rounded-lg border border-foreground/10 bg-background text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
                                 placeholder="Search tickets..."
                             />
@@ -505,7 +505,7 @@ export default function SupportAdminPanel() {
                         </div>
                     </>
                 ) : (
-                    <div className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-foreground/[0.01]">
+                    <div data-tour="supportAdmin.support-conversation" className="flex-1 flex flex-col items-center justify-center text-center p-8 bg-foreground/[0.01]">
                         <div className="w-20 h-20 rounded-2xl glass-pane border border-foreground/10 flex items-center justify-center mb-6 shadow-xl relative overflow-hidden">
                             <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent opacity-50" />
                             <MessageSquare className="w-8 h-8 text-muted-foreground relative z-10" />

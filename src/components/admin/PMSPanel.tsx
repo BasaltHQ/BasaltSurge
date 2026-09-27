@@ -103,7 +103,7 @@ export default function PMSPanel() {
       {/* Header */}
       <div className="bg-gray-900/40 backdrop-blur-md border border-gray-700/50 rounded-xl p-4">
         <div className="flex items-center justify-between">
-          <div>
+          <div data-tour="pms.property-management">
             <h2 className="text-xl font-semibold flex items-center gap-2">
               <Hotel className="h-5 w-5" />
               Property Management System
@@ -142,7 +142,7 @@ export default function PMSPanel() {
       {/* PMS Instances List */}
       {instances.length === 0 ? (
         <div className="bg-gray-900/40 backdrop-blur-md border border-gray-700/50 rounded-xl p-12">
-          <div className="text-center">
+          <div data-tour="pms.property-setup" className="text-center">
             <Hotel className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
             <h3 className="text-lg font-medium mb-2">No Properties Yet</h3>
             <p className="text-sm text-muted-foreground mb-4">

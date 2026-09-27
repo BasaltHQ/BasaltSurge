@@ -620,15 +620,15 @@ export default function PartnerPluginsPanel() {
         <div className="flex items-center justify-between mb-2">
           <div className="text-sm font-medium">Available Plugins</div>
           <div className="flex items-center gap-2">
-            <button
+            <button data-tour="plugins.viewMode.grid-full" data-tour-action="activate" data-tour-active={viewMode === 'grid-full'}
               className={`microtext px-2 py-1 rounded-md border ${viewMode === 'grid-full' ? 'bg-background shadow text-foreground border border-foreground/[0.05]' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'}`}
               onClick={() => setViewMode('grid-full')}
             >Full Grid</button>
-            <button
+            <button data-tour="plugins.viewMode.grid-compact" data-tour-action="activate" data-tour-active={viewMode === 'grid-compact'}
               className={`microtext px-2 py-1 rounded-md border ${viewMode === 'grid-compact' ? 'bg-background shadow text-foreground border border-foreground/[0.05]' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'}`}
               onClick={() => setViewMode('grid-compact')}
             >Compact Grid</button>
-            <button
+            <button data-tour="plugins.viewMode.list" data-tour-action="activate" data-tour-active={viewMode === 'list'}
               className={`microtext px-2 py-1 rounded-md border ${isList(viewMode) ? 'bg-background shadow text-foreground border border-foreground/[0.05]' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'}`}
               onClick={() => setViewMode('list')}
             >List</button>

@@ -13,6 +13,13 @@ export interface DocNavSection {
 
 export const docsNavigation: DocNavSection[] = [
   {
+    title: 'Workspace Tour',
+    items: [
+      { title: 'Panel Guides', href: '/developers/docs/tour' },
+      { title: 'Add a Panel Guide', href: '/developers/docs/tour/authoring' },
+    ],
+  },
+  {
     title: 'Getting Started',
     items: [
       { title: 'Introduction', href: '/developers/docs' },

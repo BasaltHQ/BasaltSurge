@@ -63,7 +63,7 @@ export function RoadmapPanel({ brandKey }: { brandKey?: string }) {
           <div className="p-3 bg-foreground/[0.02] rounded-xl border border-foreground/[0.05] shadow-sm">
             <Milestone className="w-8 h-8 text-primary" />
           </div>
-          <div>
+          <div data-tour="roadmap.product-roadmap">
             <h2 className="text-3xl font-bold tracking-tight">Platform Roadmap</h2>
             <p className="text-sm text-muted-foreground mt-1">
               Track the latest features, improvements, and system updates for the BasaltSurge ecosystem.
@@ -85,7 +85,7 @@ export function RoadmapPanel({ brandKey }: { brandKey?: string }) {
           <p>No roadmap updates available yet.</p>
         </div>
       ) : (
-        <div className="relative pl-4 md:pl-8 py-4">
+        <div data-tour="roadmap.timeline" className="relative pl-4 md:pl-8 py-4">
           {/* Vertical glowing timeline line */}
           <div className="absolute left-[15px] md:left-[31px] top-0 bottom-0 w-px bg-gradient-to-b from-primary/40 via-foreground/[0.05] to-transparent" />
 

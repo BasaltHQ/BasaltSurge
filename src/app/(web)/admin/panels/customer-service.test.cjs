@@ -118,6 +118,7 @@ test("expanded, collapsed and mobile Messages navigation select the correct merc
   const h = harness(async url => url.includes("/auth/me") ? { isTeamMember: true, hasOwnShop: false } : { profiles });
   const access = h.load("src/lib/merchant-panel-access.ts");
   const { AdminSidebar } = h.load("src/components/admin/admin-sidebar.tsx", {
+    "@/lib/admin-tour/branding": h.load("src/lib/admin-tour/branding.ts"),
     "react-dom": { createPortal: node => node }, "next/image": empty, "next/link": empty,
     "@/contexts/BrandContext": { useBrand: () => ({ name: "Test" }) },
     "@/contexts/ThemeContext": { useTheme: () => ({ theme: {} }) },
@@ -159,18 +160,24 @@ function loadTeam(h) {
 }
 
 test("a custom partner analyst can open Partner Analytics from every sidebar layout", async () => {
-  const h = harness(async url => url.includes("/auth/me") ? { hasOwnShop: true } : { profiles: [] });
+  const h = harness(async url => url.includes("/auth/me") ? { hasOwnShop: true }
+    : url.includes('/api/platform/brands/') ? { brand: { name: 'Old Name' }, overrides: { name: 'Paynex Partner' } } : { profiles: [] });
   const { AdminSidebar } = h.load("src/components/admin/admin-sidebar.tsx", {
+    "@/lib/admin-tour/branding": h.load("src/lib/admin-tour/branding.ts"),
     "react-dom": { createPortal: node => node }, "next/image": empty, "next/link": empty,
     "@/contexts/BrandContext": { useBrand: () => ({ key: "paynex", name: "Paynex" }) },
-    "@/contexts/ThemeContext": { useTheme: () => ({ theme: {} }) },
+    "@/contexts/ThemeContext": { useTheme: () => ({ theme: { brandName: 'BasaltSurge' } }) },
     "@/lib/client-api-cache": { cachedFetch: async () => ({ containerType: "partner", brandKey: "paynex" }) },
     "@/lib/branding": new Proxy({}, { get: () => () => "" }),
     "@/lib/authz": { canAccessPanel: panel => panel === "partnerAnalytics", isPlatformSuperAdmin: () => false, resolveWalletRole: () => "brand_auditor" },
     "@/lib/merchant-panel-access": h.load("src/lib/merchant-panel-access.ts"),
   });
-  const props = { activeTab: "dashboard", onChangeTab: tab => h.events.push({ tab }), industryPack: null, isSuperadmin: false };
+  let tourNavigation;
+  const props = { activeTab: "dashboard", onChangeTab: tab => h.events.push({ tab }), industryPack: null, isSuperadmin: false,
+    onTourNavigation: navigation => { tourNavigation = navigation; } };
   let tree = await h.render(AdminSidebar, props);
+  assert.equal(tourNavigation.brand.name, 'Paynex Partner');
+  assert.equal(tourNavigation.brand.ready, true);
   const group = nodes(tree).find(node => node.props?.item?.title === "Partner/Admin");
   assert.ok(group);
   assert.deepEqual(Array.from(group.props.item.items, item => item.key), ["partnerAnalytics"]);

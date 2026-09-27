@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { isCandidateSlug, isMainDomainHost } from "@/lib/routing";
+import { isCandidateSlug, isMainDomainHost, isWorkshopPath } from "@/lib/routing";
 import { Navbar } from "@/components/navbar";
 import { LanguageSelectorBar } from "@/components/language-selector-bar";
 import { TerminalViewBar } from "@/components/terminal-view-bar";
@@ -54,6 +54,7 @@ export function HideableNavbar({ isServerCustomDomain = false }: { isServerCusto
   const isTerminalView = viewParam === "terminal" || viewParam === "" || !viewParam;
 
   const shouldHideNavbar =
+    isWorkshopPath(pathname) ||
     (isCustomDomain && !isLanding) ||
     pathname === "/portal" || pathname.startsWith("/portal/") ||
     pathname.startsWith("/shop/") ||

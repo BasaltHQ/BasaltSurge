@@ -32,6 +32,7 @@ export const EXCLUDE_PREFIXES = new Set<string>([
     "pricing",
     "profile",
     "partners",
+    "workshop", // full presentation and focused partner / merchant workshops
     "subscribe",
     "support",
     "u",
@@ -55,6 +56,10 @@ export const EXCLUDE_PREFIXES = new Set<string>([
     "twitter-image",
     ".well-known",
 ]);
+
+export function isWorkshopPath(pathname: string): boolean {
+    return pathname === '/workshop' || pathname.startsWith('/workshop/');
+}
 
 export function isCandidateSlug(pathname: string): string | null {
     try {

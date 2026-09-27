@@ -138,7 +138,7 @@ export default function ModulesPanel() {
             {/* Header */}
             <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
                 <div className="flex items-start justify-between gap-4 flex-wrap">
-                    <div>
+                    <div data-tour="modules.merchant-modules">
                         <h2 className="text-xl font-bold flex items-center gap-2">
                             <Boxes className="h-5 w-5 text-primary" />
                             Merchant Modules
@@ -178,7 +178,7 @@ export default function ModulesPanel() {
 
             {/* Bulk Actions */}
             <div className="flex gap-2">
-                <button
+                <button data-tour="modules.bulk-module-changes"
                     onClick={enableAll}
                     className="h-10 px-4 rounded-lg border border-foreground/[0.05] bg-background text-xs font-semibold hover:bg-foreground/[0.02] transition-colors shadow-sm inline-flex items-center gap-1.5"
                 >

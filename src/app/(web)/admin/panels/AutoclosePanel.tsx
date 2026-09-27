@@ -444,7 +444,7 @@ export default function AutoclosePanel() {
           <div className="p-3 rounded-2xl bg-primary/10 text-primary border border-primary/20 animate-pulse">
             <Clock className="w-6 h-6" />
           </div>
-          <div>
+          <div data-tour="autoclose.settlement-scheduling">
             <h2 className="text-xl font-bold tracking-tight text-white">Autoclose Scheduler</h2>
             <p className="text-sm text-muted-foreground mt-1">
               {isPlatform 
@@ -610,7 +610,7 @@ export default function AutoclosePanel() {
             <div className="p-2.5 rounded-xl bg-primary/10 text-primary border border-primary/20">
               <Activity className="w-5 h-5" />
             </div>
-            <div>
+            <div data-tour="autoclose.stuck-payment-recovery">
               <h3 className="text-base font-bold text-white">Stuck Payments Recovery (Base Outage Protection)</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Scan for and sweep stuck guest EOA wallet payments to splits (runs automatically every 10 minutes in the background).
@@ -718,7 +718,7 @@ export default function AutoclosePanel() {
             <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-500 border border-amber-500/20">
               <Clock className="w-5 h-5 animate-pulse" />
             </div>
-            <div>
+            <div data-tour="autoclose.pending-bank-transfers">
               <h3 className="text-base font-bold text-white">Pending ACH Bank Transfers</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
                 USDC value is temporarily locked in onramp transit and will clear to the merchant's resolved split address within 2-3 business days.

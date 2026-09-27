@@ -382,26 +382,26 @@ export default function PublicationsPanel() {
                         <p className="text-muted-foreground">Approve or reject book submissions and manage contracts</p>
                     </div>
                     <div className="flex gap-1 border-b border-foreground/[0.05] pb-1">
-                        <button
+                        <button data-tour="publications.activeTab.submissions" data-tour-action="activate" data-tour-active={activeTab === "submissions"}
                             onClick={() => setActiveTab("submissions")}
                             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === 'submissions' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'}`}
                         >
                             Submissions ({items.length})
                         </button>
-                        <button
+                        <button data-tour="publications.activeTab.catalog" data-tour-action="activate" data-tour-active={activeTab === "catalog"}
                             onClick={() => setActiveTab("catalog")}
                             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === 'catalog' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'}`}
                         >
                             <Library className="w-4 h-4 inline-block mr-1 -mt-0.5" />
                             Catalog ({approvedItems.length})
                         </button>
-                        <button
+                        <button data-tour="publications.activeTab.contracts" data-tour-action="activate" data-tour-active={activeTab === "contracts"}
                             onClick={() => setActiveTab("contracts")}
                             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === 'contracts' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'}`}
                         >
                             USBN Contracts
                         </button>
-                        <button
+                        <button data-tour="publications.activeTab.revisions" data-tour-action="activate" data-tour-active={activeTab === "revisions"}
                             onClick={() => setActiveTab("revisions")}
                             className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${activeTab === 'revisions' ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'}`}
                         >
@@ -412,7 +412,7 @@ export default function PublicationsPanel() {
             </div>
 
             {activeTab === "revisions" && (
-                <div className="space-y-6">
+                <div data-tour="publications.activeTab.revisions.content" className="space-y-6">
                     {revisionItems.length === 0 ? (
                         <div className="text-center py-24 text-muted-foreground opacity-60">
                             <ShieldCheck className="w-16 h-16 mb-4 stroke-1 mx-auto" />
@@ -597,7 +597,7 @@ export default function PublicationsPanel() {
 
             {
                 activeTab === "catalog" && (
-                    <div className="space-y-6">
+                    <div data-tour="publications.activeTab.catalog.content" className="space-y-6">
                         {/* Controls Bar */}
                         <div className="flex flex-col md:flex-row gap-4 justify-between rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md p-4">
                             {/* Search */}

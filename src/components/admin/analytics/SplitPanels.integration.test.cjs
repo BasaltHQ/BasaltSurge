@@ -246,3 +246,24 @@ test('modal totals match checkout and contract allocations for all four methods'
     runner.dispose();
   }
 });
+
+test('partner modal uses independent ACH and Crypto presented fees in both layouts', async () => {
+  const allocation = { platformBps: 50, partnerBps: 25, agents: [], partnerWallet: ach };
+  const config = { splitDrafts: { credit: allocation, debit: allocation, ach: allocation, crypto: allocation } };
+  global.fetch = async () => ({ ok: true, json: async () => ({ config }) });
+  for (const unifiedFeeEnabled of [false, true]) for (const configured of [false, true]) {
+    const runner = new HookRunner();
+    const Component = () => SplitDeployModal({ wallet: merchant, brandKey: 'partner-test', account: { address: merchant }, defaults, canEditPlatform: false,
+      unifiedFeeEnabled, presentedFeeBps: 400, creditPresentedFeeBps: 500,
+      achPresentedFeeBps: configured ? 160 : null, cryptoPresentedFeeBps: configured ? 80 : null,
+      onClose() {}, onSaved: async () => {} });
+    await runner.settle(Component);
+    for (const [label, rate] of [['ACH', configured ? '1.85' : '1.35'], ['Crypto', configured ? '1.05' : '0.75']]) {
+      find(runner.tree, n => n.props?.role === 'tab' && text(n) === label).props.onClick();
+      await runner.settle(Component);
+      assert.ok(text(runner.tree).includes(`${rate}%`), `${label} ${unifiedFeeEnabled} ${configured}: ${text(runner.tree)}`);
+      if (!unifiedFeeEnabled && label === 'ACH') assert.ok(text(runner.tree).includes('0.60%'));
+    }
+    runner.dispose();
+  }
+});

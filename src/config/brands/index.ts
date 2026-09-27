@@ -59,6 +59,8 @@ export type BrandConfig = {
   unifiedFeeEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
+  achPresentedFeeBps?: number | null;
+  cryptoPresentedFeeBps?: number | null;
   dualSplitEnabled?: boolean;
 
   stripeOnrampEnabled?: boolean;
@@ -409,6 +411,8 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     primaryAgentWallet: raw.primaryAgentWallet,
     presentedFeeBps: typeof raw.presentedFeeBps === "number" ? raw.presentedFeeBps : undefined,
     creditPresentedFeeBps: typeof raw.creditPresentedFeeBps === "number" ? raw.creditPresentedFeeBps : undefined,
+    achPresentedFeeBps: raw.achPresentedFeeBps ?? null,
+    cryptoPresentedFeeBps: raw.cryptoPresentedFeeBps ?? null,
     stripeOnrampEnabled: typeof raw.stripeOnrampEnabled === "boolean" ? raw.stripeOnrampEnabled : true,
     stripeOnrampV2Enabled: typeof raw.stripeOnrampV2Enabled === "boolean" ? raw.stripeOnrampV2Enabled : (typeof raw.v2CheckoutEnabled === "boolean" ? raw.v2CheckoutEnabled : false),
     v2CheckoutEnabled: typeof raw.v2CheckoutEnabled === "boolean" ? raw.v2CheckoutEnabled : (typeof raw.stripeOnrampV2Enabled === "boolean" ? raw.stripeOnrampV2Enabled : false),

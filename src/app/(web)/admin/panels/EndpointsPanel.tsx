@@ -837,7 +837,7 @@ export default function EndpointsPanel({ industryPack, onNavigateToTab }: { indu
 
             {/* Core Touchpoints */}
             <div className="space-y-6">
-                <div className="flex items-center gap-3">
+                <div data-tour="endpoints.core-touchpoints" className="flex items-center gap-3">
                     <h2 className="text-2xl font-bold tracking-tight text-white">Core Touchpoints</h2>
                     <div className="h-px bg-gradient-to-r from-white/10 to-transparent flex-1" />
                 </div>
@@ -848,7 +848,7 @@ export default function EndpointsPanel({ industryPack, onNavigateToTab }: { indu
 
             {/* Logistics & local delivery */}
             <div className="space-y-6">
-                <div className="flex items-center gap-3">
+                <div data-tour="endpoints.logistics-and-fleet" className="flex items-center gap-3">
                     <h2 className="text-2xl font-bold tracking-tight text-white">Logistics & Fleet Management</h2>
                     <div className="h-px bg-gradient-to-r from-white/10 to-transparent flex-1" />
                 </div>
@@ -860,7 +860,7 @@ export default function EndpointsPanel({ industryPack, onNavigateToTab }: { indu
 
             {/* Industry Pack Modules */}
             <div className="space-y-6">
-                <div className="flex items-center gap-3">
+                <div data-tour="endpoints.industry-modules" className="flex items-center gap-3">
                     <h2 className="text-2xl font-bold tracking-tight text-white">Industry Modules</h2>
                     <div className="h-px bg-gradient-to-r from-white/10 to-transparent flex-1" />
                 </div>
