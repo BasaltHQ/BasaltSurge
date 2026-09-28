@@ -63,3 +63,12 @@ test("crypto-only flags and recorded destinations retain their historical attrib
   assert.equal(explicit.kind, "crypto");
   assert.equal(explicit.version, 3);
 });
+
+test("API-enriched checkout routes retain snapshot provenance in the receipt viewer", () => {
+  const raw = { cardFunding: 'us_bank_account', splitRoutingSnapshot: snapshot };
+  const route = analyticsSplitRoute(raw);
+  const enriched = analyticsSplitRoute({ ...raw, settlementSplitAddress: route.address, settlementSplitKind: route.kind,
+    settlementSplitVersion: route.version, splitRouteSource: route.source });
+  assert.deepEqual(enriched, route);
+  assert.equal(enriched.source, 'payment_snapshot');
+});

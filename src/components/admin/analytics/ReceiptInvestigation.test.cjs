@@ -62,6 +62,29 @@ test('platform and partner overview and crypto tabs show the pinned Crypto split
   assert.doesNotMatch(missing, new RegExp(`${credit}|${current}`));
 });
 
+test('R-158570 shows the refreshed ACH target in platform and partner investigation', () => {
+  const credit = '0x' + '1'.repeat(40), ach = '0x' + '2'.repeat(40);
+  const pending = { ...receipt, receiptId: 'R-158570', status: 'paid - ach pending', cardFunding: 'us_bank_account', stripeSessionStatus: 'fulfillment_processing',
+    splitRoutingSnapshot: { splitAddress: credit, splitRevision: 6 },
+    settlementTarget: { address: ach, kind: 'ach', version: 1, inherited: false },
+    settlementSplitAddress: ach, settlementSplitKind: 'ach', splitRouteSource: 'settlement_target' };
+  for (const readOnly of [false, true]) {
+    const html = render({ readOnly, receipt: pending, siteConfig: { splitAddressAch: ach, splitOverrides: { ach: true }, splitConfigAch: { platformBps: 50 } } });
+    assert.match(html, /Intended Split Address/);
+    assert.match(html, /ACH Split/);
+    assert.match(html, /ACH accepted; on-chain settlement is still pending/);
+    assert.match(html, /Current ACH settlement target/);
+    assert.doesNotMatch(html, /Settled Split Address/);
+    assert.match(html, new RegExp(ach));
+    const settled = render({ readOnly, receipt: { ...pending, status: 'paid', transactionHash: '0x' + 'a'.repeat(64), stripeSessionStatus: 'fulfillment_complete', splitRouteSource: 'recorded' } });
+    assert.match(settled, /Settled Split Address/);
+    assert.doesNotMatch(settled, /on-chain settlement is still pending/);
+    const fresh = render({ readOnly, receipt: { ...pending, settlementSplitAddress: ach, settlementSplitKind: 'ach' } });
+    assert.match(fresh, /ACH Split/);
+    assert.match(fresh, new RegExp(ach));
+  }
+});
+
 test('every regular investigation section renders evidence or actions in the shared body', () => {
   const expected = {
     overview: /Card declined/,

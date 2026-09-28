@@ -5,11 +5,31 @@ const {
   resolveSettlementSplitAddress,
   resolveSettlementSplitConfig,
   resolveStripeOnrampFunding,
+  resolveReceiptSettlementTarget,
+  canRefreshAchSettlementTarget,
 } = require("./payment-split-routing.ts") as typeof import("./payment-split-routing");
 
 const primary = "0x1111111111111111111111111111111111111111";
 const debit = "0x2222222222222222222222222222222222222222";
 const merchant = "0x3333333333333333333333333333333333333333";
+
+test("pending ACH refreshes only its target and leaves the checkout snapshot intact", () => {
+  const snapshot = { splitAddress: primary, splitConfig: { platformBps: 50 }, achPresentedFeeBps: 110 };
+  const receipt = { wallet: merchant, status: "paid - ach pending", detectedCardFunding: "us_bank_account", transactionHash: "ecommerce_pending", totalUsd: 1.10, splitRoutingSnapshot: snapshot };
+  const current = { splitAddress: primary, splitAddressAch: debit, splitConfigAch: { platformBps: 80 }, splitVersionAch: 2, splitOverrides: { ach: true }, achPresentedFeeBps: 140 };
+  assert.deepEqual(resolveReceiptSettlementTarget(receipt, current), { address: debit, kind: "ach", version: 2, inherited: false });
+  assert.equal(receipt.splitRoutingSnapshot, snapshot);
+  assert.equal(receipt.splitRoutingSnapshot.achPresentedFeeBps, 110);
+  assert.equal(receipt.totalUsd, 1.10);
+  assert.equal(resolveReceiptSettlementTarget(receipt, { ...current, splitOverrides: { ach: false } }).address, primary);
+  assert.equal(resolveReceiptSettlementTarget(receipt, { ...current, splitConfigAch: null }).address, primary);
+  assert.equal(resolveReceiptSettlementTarget(receipt, null).address, primary);
+  for (const settled of [{ status: "paid" }, { leg2TxHash: "0x" + "a".repeat(64) }, { settlementSubmissionAt: 123 }, { settlementSplitAddress: primary }]) {
+    assert.equal(canRefreshAchSettlementTarget({ ...receipt, ...settled }), false);
+    assert.equal(resolveReceiptSettlementTarget({ ...receipt, ...settled }, current).address, primary);
+  }
+  for (const funding of ["credit", "debit", "crypto"]) assert.equal(canRefreshAchSettlementTarget(receipt, funding), false);
+});
 
 test("settlement destination preserves the inverted debit/credit mapping", () => {
   assert.equal(resolveSettlementSplitAddress({ funding: "credit", splitAddress: primary, splitAddressCredit: debit }), primary);

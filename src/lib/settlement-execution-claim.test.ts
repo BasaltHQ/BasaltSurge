@@ -155,6 +155,7 @@ test("the second-leg hash is journaled before later receipt enrichment", async (
     sessionId: "cos_123",
     transactionHash,
     settlementAmount: 9.15,
+    settlementTarget: { address: wallet, kind: "ach", version: 3 },
     source: "native_reconciler",
   });
 
@@ -162,6 +163,9 @@ test("the second-leg hash is journaled before later receipt enrichment", async (
   assert.equal(stored.transactionHash, transactionHash);
   assert.equal(stored.leg2TxHash, transactionHash);
   assert.equal(stored.settlementAmount, 9.15);
+  assert.equal(stored.settlementSplitAddress, wallet);
+  assert.equal(stored.settlementSplitKind, "ach");
+  assert.equal(stored.settlementSplitVersion, 3);
   assert.equal(stored.status, "paid");
   assert.equal(stored.ttl, -1);
   assert.equal(stored.webhookLastStatus, "paid");

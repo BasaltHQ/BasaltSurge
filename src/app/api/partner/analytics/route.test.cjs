@@ -138,6 +138,23 @@ function harness(options = {}) {
 
 const receipt = (id, fields = {}) => ({ type: "receipt", _id: id, id, receiptId: id, brandKey: "alpha", wallet: merchant, status: "paid", totalUsd: 100, createdAt: "2026-09-06T12:00:00Z", ...fields });
 
+for (const backend of ["mongo", "cosmos"]) test(`${backend}: pending ACH uses the canonical brand config in both analytics panels`, async () => {
+  const ach = '0x' + '4'.repeat(40), foreign = '0x' + '5'.repeat(40);
+  const row = receipt('ach-pending', { status: 'paid - ach pending', detectedCardFunding: 'us_bank_account',
+    splitRoutingSnapshot: { splitAddress: merchant }, totalUsd: 1.10 });
+  const configs = ['beta', 'alpha'].map(brand => ({ type: 'site_config', id: `site:config:${brand}`, wallet: merchant,
+    splitAddress: merchant, splitAddressAch: brand === 'alpha' ? ach : foreign, splitConfigAch: { platformBps: 50 }, splitOverrides: { ach: true } }));
+  const h = harness({ backend, rows: [row], configs, documents: { 'global/admin_roles': { admins: [{ wallet: actor, role: 'platform_admin' }] } } });
+  for (const call of [h.call, h.platform]) {
+    const result = await call({ paymentMethod: 'bank', splitKind: 'ach' });
+    assert.equal(result.status, 200, result.body.error);
+    assert.equal(result.body.recentReceipts.length, 1);
+    assert.equal(result.body.recentReceipts[0].settlementSplitAddress, ach);
+    assert.equal(result.body.stats.splitBreakdown.ach.total, 1);
+    assert.equal(result.body.recentReceipts[0].splitRouteSource, 'settlement_target');
+  }
+});
+
 for (const backend of ["mongo", "cosmos"]) test(`${backend}: crypto-only receipts retain Crypto attribution in partner and platform analytics`, async () => {
   const split = '0x' + '4'.repeat(40);
   const row = receipt('crypto-minimum', { crypto: true, totalUsd: 0.51,

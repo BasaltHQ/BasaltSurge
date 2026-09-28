@@ -82,6 +82,7 @@ Module._resolveFilename = function(request, parent, ...rest) {
 };
 Module._load = function(request, parent, ...rest) {
   if (request === 'react') return hookReact;
+  if (request === 'next/navigation') return { useRouter: () => ({ refresh() {} }) };
   if (request === 'react-dom') return { createPortal: child => child };
   if (request === 'thirdweb/react') return { useActiveAccount: () => ({ address: merchant }) };
   if (request === 'thirdweb') return {};
@@ -98,12 +99,42 @@ for (const extension of ['.ts', '.tsx']) Module._extensions[extension] = (module
 };
 const { SplitDeployModal } = require('../SplitDeployModal.tsx');
 const { ReserveAnalytics } = require('../reserve/ReserveAnalytics.tsx');
+const PlatformSettingsPanel = require('@/app/(web)/admin/panels/PlatformSettingsPanel.tsx').default;
 const walk = node => !node || typeof node !== 'object' ? [] : Array.isArray(node) ? node.flatMap(walk) : [node, ...walk(node.props?.children)];
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : String(node ?? '');
 const find = (tree, predicate) => walk(tree).find(predicate);
 const defaults = { credit: { platformBps: 150, partnerBps: 50, merchantBps: 9800, agents: [], partnerWallet: ach }, debit: { platformBps: 125, partnerBps: 50, merchantBps: 9825, agents: [], partnerWallet: ach } };
 global.window = {};
 global.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+
+test('platform method presented fees load, save zero and custom rates, clear, and reload', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let saved = { achPresentedFeeBps: 110, cryptoPresentedFeeBps: 50 };
+  global.fetch = async (_url, options) => {
+    if (options?.method === 'PATCH') saved = { ...saved, ...JSON.parse(options.body) };
+    return { ok: true, json: async () => ({ brand: saved }) };
+  };
+  const runner = new HookRunner();
+  await runner.settle(PlatformSettingsPanel);
+  const input = key => find(runner.tree, n => n.props?.id === `platform-${key}`);
+  assert.equal(input('achPresentedFeeBps').props.value, 110);
+  assert.equal(input('cryptoPresentedFeeBps').props.value, 50);
+  for (const [achRate, cryptoRate] of [['160', '0'], ['', '']]) {
+    input('achPresentedFeeBps').props.onChange({ target: { value: achRate } });
+    input('cryptoPresentedFeeBps').props.onChange({ target: { value: cryptoRate } });
+    await runner.settle(PlatformSettingsPanel);
+    await find(runner.tree, n => n.type === 'button' && text(n).includes('Save Changes')).props.onClick();
+    await runner.settle(PlatformSettingsPanel);
+    assert.equal(saved.achPresentedFeeBps, achRate === '' ? null : Number(achRate));
+    assert.equal(saved.cryptoPresentedFeeBps, cryptoRate === '' ? null : Number(cryptoRate));
+    const reload = new HookRunner();
+    await reload.settle(PlatformSettingsPanel);
+    assert.equal(find(reload.tree, n => n.props?.id === 'platform-achPresentedFeeBps').props.value, achRate === '' ? '' : Number(achRate));
+    assert.equal(find(reload.tree, n => n.props?.id === 'platform-cryptoPresentedFeeBps').props.value, cryptoRate === '' ? '' : Number(cryptoRate));
+    reload.dispose();
+  }
+  runner.dispose();
+});
 
 test('deployment modal starts dual, adds independent overrides, and saves drafts without activation', async () => {
   const requests = [];

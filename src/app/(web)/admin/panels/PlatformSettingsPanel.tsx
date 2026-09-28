@@ -31,6 +31,8 @@ export default function PlatformSettingsPanel() {
     primaryAgentWallet: "",
     presentedFeeBps: undefined as number | undefined,
     creditPresentedFeeBps: undefined as number | undefined,
+    achPresentedFeeBps: null as number | null,
+    cryptoPresentedFeeBps: null as number | null,
   });
 
   useEffect(() => {
@@ -62,6 +64,8 @@ export default function PlatformSettingsPanel() {
             primaryAgentWallet: String(b.primaryAgentWallet || ""),
             presentedFeeBps: typeof b.presentedFeeBps === "number" ? b.presentedFeeBps : undefined,
             creditPresentedFeeBps: typeof b.creditPresentedFeeBps === "number" ? b.creditPresentedFeeBps : undefined,
+            achPresentedFeeBps: typeof b.achPresentedFeeBps === "number" ? b.achPresentedFeeBps : null,
+            cryptoPresentedFeeBps: typeof b.cryptoPresentedFeeBps === "number" ? b.cryptoPresentedFeeBps : null,
           });
           setSettingsLoaded(true);
         }
@@ -104,6 +108,8 @@ export default function PlatformSettingsPanel() {
       if (config.creditAgentFeeBps !== undefined) payload.creditAgentFeeBps = config.creditAgentFeeBps;
       if (config.presentedFeeBps !== undefined) payload.presentedFeeBps = config.presentedFeeBps;
       if (config.creditPresentedFeeBps !== undefined) payload.creditPresentedFeeBps = config.creditPresentedFeeBps;
+      payload.achPresentedFeeBps = config.achPresentedFeeBps;
+      payload.cryptoPresentedFeeBps = config.cryptoPresentedFeeBps;
 
       const res = await fetch("/api/platform/brands/basaltsurge/config", {
         method: "PATCH",
@@ -598,10 +604,29 @@ export default function PlatformSettingsPanel() {
                   }}
                 />
                 <div className="text-[10px] text-muted-foreground">
-                  Top-line fee presented to credit card & crypto merchants (optional).
+                  Top-line fee presented to credit card merchants (optional).
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {([['achPresentedFeeBps', 'ACH'], ['cryptoPresentedFeeBps', 'Crypto']] as const).map(([key, label]) => (
+              <div key={key} className="p-4 rounded-xl border border-white/5 bg-white/[0.02] space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label htmlFor={`platform-${key}`} className="text-xs font-medium text-zinc-300">Presented Fee {label} (bps)</label>
+                  <span className="text-[11px] font-mono text-emerald-400">{config[key] === null ? 'Automatic' : formatBpsPercent(config[key])}</span>
+                </div>
+                <input id={`platform-${key}`} type="number" min={0} max={10000} step={1}
+                  className="w-full h-9 px-3 rounded-lg border border-white/10 bg-zinc-950 text-sm text-white focus:outline-none focus:border-emerald-400 transition"
+                  value={config[key] ?? ''} placeholder="Automatic from split"
+                  onChange={e => setConfig(prev => ({ ...prev, [key]: e.target.value === '' ? null : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value)))) }))} />
+                <div className="text-[10px] text-muted-foreground">
+                  {label === 'ACH' ? 'Includes Stripe’s 0.60% charge. ' : 'No Stripe charge. '}
+                  Base presented fee; partner share is added. Blank uses the routed split allocations{label === 'ACH' ? ' plus 0.60% Stripe' : ''}. 100 bps = 1%.
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Primary Agent Wallet Section */}

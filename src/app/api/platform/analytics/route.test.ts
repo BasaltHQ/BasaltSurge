@@ -13,6 +13,8 @@ import * as aggregation from "../../../../lib/platform-analytics-aggregation.ts"
 import * as fees from "../../../../lib/platform-analytics-fees.ts";
 // @ts-expect-error Native TypeScript test imports.
 import * as failures from "../../../../lib/platform-analytics-failures.ts";
+// @ts-expect-error Native TypeScript test imports.
+import * as routing from "../../../../lib/payment-split-routing.ts";
 
 const nativeRequire = createRequire(import.meta.url);
 const compiled = ts.transpileModule(readFileSync(new URL("./route.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
@@ -29,8 +31,7 @@ function project(row: Record<string, any>, projection: Record<string, number>) {
   return result;
 }
 
-function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?: any[]) {
-  const configRows = [{ type: "wallet_config", wallet: "merchant", brandKey: "legacy", merchantName: "O'Brien Shop" }];
+function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?: any[], configRows: any[] = [{ type: "wallet_config", wallet: "merchant", brandKey: "legacy", merchantName: "O'Brien Shop" }]) {
   const collection = {
     find: (filter: any, options: any) => ({ toArray: async () => filter._id
       ? rows.filter(row => filter._id.$in.includes(row._id))
@@ -48,6 +49,7 @@ function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?
       : container },
     "@/lib/platform-analytics-metrics": metrics,
     "@/lib/platform-analytics-query": query,
+    "@/lib/payment-split-routing": routing,
     "@/lib/platform-analytics-aggregation": aggregation,
     "@/lib/platform-analytics-fees": fees,
     "@/lib/platform-analytics-failures": failures,
@@ -66,6 +68,22 @@ function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?
     return result.body;
   };
 }
+
+test("pending ACH target drives the ledger and split filter using the correct brand's configuration", async () => {
+  const credit = "0x" + "1".repeat(40), ach = "0x" + "2".repeat(40), foreign = "0x" + "3".repeat(40);
+  const rows = [{ _id: "ach", id: "receipt:ach", receiptId: "ach", wallet: "merchant", brandKey: "alpha", status: "paid - ach pending", transactionHash: "ecommerce_pending", detectedCardFunding: "us_bank_account", totalUsd: 1.10, createdAt: "2026-09-06T12:00:00Z", splitRoutingSnapshot: { splitAddress: credit, achPresentedFeeBps: 110 } }];
+  const configs = [
+    { type: "site_config", id: "site:config:beta", wallet: "merchant", splitAddress: credit, splitAddressAch: foreign, splitConfigAch: {}, splitOverrides: { ach: true } },
+    { type: "site_config", id: "site:config:alpha", wallet: "merchant", splitAddress: credit, splitAddressAch: ach, splitConfigAch: {}, splitVersionAch: 1, splitOverrides: { ach: true } },
+  ];
+  for (const backend of ["mongo", "cosmos"] as const) {
+    const result = await routeFor(rows, backend, undefined, configs)(new URLSearchParams({ snapshotEnd: "2026-09-06T18:00:00Z", splitKind: "ach" }));
+    assert.equal(result.recentReceipts.length, 1);
+    assert.equal(result.recentReceipts[0].settlementSplitAddress, ach);
+    assert.equal(result.recentReceipts[0].splitRouteSource, "settlement_target");
+    assert.equal(result.recentReceipts[0].splitRoutingSnapshot.achPresentedFeeBps, 110);
+  }
+});
 
 test("API reason evidence traverses the complete population beyond the first 500 records", async () => {
   const rows = Array.from({ length: 650 }, (_, index) => ({ _id: String(index).padStart(4, "0"), id: `receipt-${index}`, wallet: "merchant", status: index % 2 ? "paid" : "failed", failureReason: "Card declined", totalUsd: 100, createdAt: "2026-09-01T12:00:00Z" }));

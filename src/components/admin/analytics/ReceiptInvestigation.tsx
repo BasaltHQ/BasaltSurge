@@ -253,6 +253,10 @@ export default function ReceiptInvestigation({
 
   const recordedRoute = analyticsSplitRoute(r);
   const actualSplitAddress = recordedRoute.address;
+  const settlementPending = ["paid - ach pending", "ach_pending"].includes(String(r.status || "").toLowerCase())
+    || String(r.stripeSessionStatus || "").toLowerCase() === "fulfillment_processing";
+  const splitAddressLabel = settlementPending || !isSettled ? "Intended Split Address"
+    : recordedRoute.source === "recorded" ? "Settled Split Address" : "Checkout Split Address";
   const isDebit = recordedRoute.kind === "debit";
   const splitBadgeLabel = ({ credit: "Credit Split", debit: "Debit Split", ach: "ACH Split", crypto: "Crypto Split" } as Record<string, string>)[recordedRoute.kind] || "Recorded Split";
 
@@ -1231,7 +1235,7 @@ export default function ReceiptInvestigation({
         {/* Intended / Actual Split Address */}
         <div className="bg-white/[0.02] border border-white/10 rounded-2xl p-4">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground font-bold mb-2">
-            {isSettled ? "Settled Split Address" : "Intended Split Address"}
+            {splitAddressLabel}
           </div>
           {(
             <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
@@ -1254,6 +1258,9 @@ export default function ReceiptInvestigation({
               {copySuccess[`split-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
             </div>
           )}
+          {settlementPending && <p className="mt-2 text-xs text-amber-300">ACH accepted; on-chain settlement is still pending.</p>}
+          {recordedRoute.source === "payment_snapshot" && <p className="mt-2 text-xs text-muted-foreground">Route saved at checkout.</p>}
+          {recordedRoute.source === "settlement_target" && <p className="mt-2 text-xs text-muted-foreground">Current ACH settlement target. The checkout amount and fees remain unchanged.</p>}
         </div>
 
         {r.status === "failed" && (

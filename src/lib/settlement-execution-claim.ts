@@ -25,6 +25,7 @@ type RecordSettlementSubmissionParams = {
   transactionHash: string;
   settlementAmount?: number;
   source: string;
+  settlementTarget?: { address: string; kind: string; version: number | null };
 };
 
 type ReceiptSettlementCheckParams = {
@@ -298,6 +299,11 @@ export async function recordReceiptSettlementSubmission(
     { op: "set", path: "/settlementSubmissionSource", value: params.source },
     { op: "set", path: "/lastUpdatedAt", value: now },
     { op: "set", path: "/ttl", value: -1 },
+    ...(params.settlementTarget ? [
+      { op: "set", path: "/settlementSplitAddress", value: params.settlementTarget.address },
+      { op: "set", path: "/settlementSplitKind", value: params.settlementTarget.kind },
+      { op: "set", path: "/settlementSplitVersion", value: params.settlementTarget.version },
+    ] : []),
     ...(receipt.webhookUrl
       ? [
           { op: "set", path: "/webhookLastStatus", value: "paid" },

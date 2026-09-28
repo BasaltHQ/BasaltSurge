@@ -1,5 +1,5 @@
 import { recordStripeReceiptFailure } from "@/lib/stripe-receipt-failure";
-import { receiptRoutingFields, settlementRoutingFields } from "@/lib/payment-split-routing";
+import { receiptRoutingFields, settlementRoutingFields, resolveReceiptSettlementTarget } from "@/lib/payment-split-routing";
 import { after, NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { recoverStripeReceiptSession, stripeReceiptWriteCondition, persistStripeReceiptUpdate } from "@/lib/stripe-receipt-session";
@@ -23,7 +23,6 @@ import {
 } from "@/lib/stripe-onramp-status";
 import {
   normalizeSettlementFunding,
-  resolveSettlementSplitAddress,
   resolveStripeOnrampFunding,
 } from "@/lib/payment-split-routing";
 import { deriveStripeKycSnapshot, highestKycTier, normalizeKycTier, type StripeKycSnapshot } from "@/lib/stripe-kyc-tracking";
@@ -717,13 +716,13 @@ async function runBackgroundPoll(params: {
       }
     }
 
-    const targetSplitAddress = resolveSettlementSplitAddress({
-      funding: finalFunding,
-      splitAddress,
-      splitAddressCredit,
-      ...params.routingSnapshot,
-      fallbackAddress: merchantWallet,
-    });
+    const targetConfig = finalFunding === "us_bank_account"
+      ? await getSiteConfigForWallet(merchantWallet, brandKey) : undefined;
+    const settlementTarget = resolveReceiptSettlementTarget({
+      wallet: merchantWallet, splitAddress, splitAddressCredit,
+      splitRoutingSnapshot: params.routingSnapshot,
+    }, targetConfig, finalFunding);
+    const targetSplitAddress = settlementTarget.address;
 
     // Execute transfer
     // Transfer only the USDC Stripe says it delivered for this session. Never
@@ -770,6 +769,7 @@ async function runBackgroundPoll(params: {
                 transactionHash,
                 settlementAmount,
                 source: "stripe_background_poll",
+                settlementTarget,
               });
             },
           }
@@ -856,6 +856,8 @@ async function runBackgroundPoll(params: {
           receipt.isCreditCard = isCreditCard;
           receipt.detectedCardFunding = finalFunding;
           receipt.settlementSplitAddress = targetSplitAddress;
+          receipt.settlementSplitKind = settlementTarget.kind;
+          receipt.settlementSplitVersion = settlementTarget.version;
           if (finalKycSnapshot && cryptoCustomerId) {
             receipt = applyStripeKycSnapshotToReceipt({
               receipt,
@@ -1228,6 +1230,7 @@ export async function POST(req: NextRequest) {
       receipt.splitAddress = splitAddress;
       receipt.splitAddressCredit = splitAddressCredit || null;
       receipt.detectedCardFunding = detectedCardFunding || null;
+      receipt.settlementTarget = resolveReceiptSettlementTarget(receipt, siteConfig, detectedCardFunding);
       receipt.isCreditCard = detectedCardFunding === "credit";
       receipt.stripeSessionStatus = String(stripeSession.status || receipt.stripeSessionStatus || "");
       receipt.checkoutStatus = String(stripeSession.status || receipt.checkoutStatus || "");

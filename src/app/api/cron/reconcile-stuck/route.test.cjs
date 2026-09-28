@@ -40,7 +40,7 @@ function matches(document, filter) {
   });
 }
 
-function createHarness({ receipts = [], sessions = {}, balance = 100, balanceError = false, readOverrides = {}, partner = "" } = {}) {
+function createHarness({ receipts = [], sessions = {}, balance = 100, balanceError = false, readOverrides = {}, partner = "", siteConfig = null } = {}) {
   const documents = new Map(receipts.map(value => [value.id, structuredClone(value)]));
   const requests = [];
   const transfers = [];
@@ -73,7 +73,7 @@ function createHarness({ receipts = [], sessions = {}, balance = 100, balanceErr
     "next/server": { NextResponse: { json: (value, init = {}) => jsonResponse(value, init.status || 200) } },
     "@/lib/cosmos": { getContainer: async () => container },
     "@/lib/aws/ses": { sendEmail: async () => {} },
-    "@/lib/site-config": { getSiteConfigForWallet: async () => null },
+    "@/lib/site-config": { getSiteConfigForWallet: async () => siteConfig },
     "@/lib/notifications/email-template": { generateHtmlEmailTemplate: () => "" },
     "@/lib/auth": { requireThirdwebAuth: async () => { throw new Error("unauthorized"); } },
     "@/config/brands": { getBrandKey: () => partner || "basaltsurge" },
@@ -138,6 +138,24 @@ function createHarness({ receipts = [], sessions = {}, balance = 100, balanceErr
 function completed(id, amount) {
   return { status: "fulfillment_complete", metadata: { receiptId: id }, transaction_details: { destination_amount: String(amount), destination_currency: "usdc", source_amount: String(amount), wallet_address: BUYER } };
 }
+
+test("ACH recovery uses the current ACH target and journals it without changing checkout terms", async () => {
+  const ach = "0x" + "7".repeat(40);
+  const snapshot = { splitAddress: SPLIT, achPresentedFeeBps: 110 };
+  const harness = createHarness({
+    receipts: [receipt("ach-target", { status: "paid - ach pending", detectedCardFunding: "us_bank_account", splitRoutingSnapshot: snapshot, totalUsd: 10 })],
+    sessions: { "cos_ach-target": { ...completed("ach-target", 10), payment_method: "us_bank_account" } },
+    siteConfig: { splitAddress: SPLIT, splitAddressAch: ach, splitConfigAch: { platformBps: 50 }, splitVersionAch: 1, splitOverrides: { ach: true } },
+    balance: 10,
+  });
+  await harness.post("ach-target");
+  assert.equal(harness.transfers[0].address, ach);
+  assert.equal(harness.transfers[0].amount, 10);
+  const stored = harness.documents.get("receipt:ach-target");
+  assert.equal(stored.settlementSplitAddress, ach);
+  assert.equal(stored.settlementSplitKind, "ach");
+  assert.deepEqual(stored.splitRoutingSnapshot, snapshot);
+});
 
 test("automatic sweep settles a funded receipt even when another candidate was already journaled", async () => {
   const harness = createHarness({
