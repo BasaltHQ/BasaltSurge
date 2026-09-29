@@ -161,7 +161,7 @@ export default function EmailConfigPanel() {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Setup / Edit Panel */}
-          <div className="lg:col-span-1 glass-pane rounded-xl border p-5 bg-foreground/[0.02] space-y-4">
+          <div data-tour="emailConfig.sender-configuration" className="lg:col-span-1 glass-pane rounded-xl border p-5 bg-foreground/[0.02] space-y-4">
             <h3 className="text-sm font-semibold">Sender Configuration</h3>
             <form onSubmit={handleVerify} className="space-y-4">
               <div>
@@ -208,7 +208,7 @@ export default function EmailConfigPanel() {
           <div className="lg:col-span-2 space-y-4">
             {emailConfig ? (
               <div className="glass-pane rounded-xl border p-5 bg-foreground/[0.02] space-y-4">
-                <div className="flex items-center justify-between">
+                <div data-tour="emailConfig.sender-verification" className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold">Verification Attributes</h3>
                   <button
                     onClick={handleCheckStatus}
@@ -243,7 +243,7 @@ export default function EmailConfigPanel() {
 
                 {emailConfig.verificationType === "domain" && (
                   <div className="space-y-4 pt-2">
-                    <div className="border-t border-foreground/5 pt-4">
+                    <div data-tour="emailConfig.dns-records" className="border-t border-foreground/5 pt-4">
                       <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Required DNS TXT Record</h4>
                       <p className="text-xs text-muted-foreground/80 mb-2">
                         Add the following TXT record to your domain's DNS configuration to verify ownership:

@@ -1,0 +1,41 @@
+.partnerNetwork { margin: 0; position: relative; min-width: 0; color: #efe7ff; }
+.networkViewport { height: 470px; position: relative; perspective: 1000px; }
+.networkWorld { position: absolute; left: 50%; top: 46%; width: 440px; height: 420px; transform-style: preserve-3d; transform: translate(-50%, -50%) rotateX(32deg) rotateZ(-19deg); animation: networkSway 16s ease-in-out infinite; }
+.networkFloor { position: absolute; inset: 0; border-radius: 50%; border: 1px solid #c3a9fa29; background: radial-gradient(ellipse, #775dae25, transparent 65%); transform: translateZ(-20px); }
+.networkLinks { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.networkLinks path { fill: none; stroke: #b69ae9; stroke-width: 1.5; stroke-dasharray: 4 9; animation: networkTraffic 5s linear infinite; }
+.brandTower { position: absolute; left: 150px; top: 153px; width: 140px; height: 110px; transform-style: preserve-3d; transform: translateZ(40px); }
+.towerFace { position: absolute; inset: 0; padding: 24px 13px; display: flex; flex-direction: column; gap: 10px; justify-content: center; background: linear-gradient(130deg, #bda6ed, #785eaa); border: 1px solid #e3d5fa; border-radius: 4px; color: #221335; box-shadow: 0 25px 50px #0007; }
+.towerFace span { font: 7px monospace; letter-spacing: .14em; }
+.towerFace strong { display: block; min-width: 0; font-size: 21px; font-weight: 500; line-height: 1.2; letter-spacing: -.03em; white-space: nowrap; overflow: hidden; }
+.towerFace small { font: 5px monospace; letter-spacing: .04em; }
+.towerTop { position: absolute; width: 140px; height: 64px; display: grid; place-items: center; color: #d5bffa; border: 1px solid #b49ce4; background: #493464; transform-origin: top; transform: rotateX(90deg); }
+.towerSide { position: absolute; right: 0; width: 64px; height: 110px; background: #493162; border: 1px solid #b49ce466; transform-origin: right; transform: rotateY(-90deg); }
+.networkNode { position: absolute; width: 96px; height: 88px; left: 17px; top: 36px; transform-style: preserve-3d; animation: nodeLift 7s ease-in-out infinite; animation-delay: calc(var(--node) * -.85s); }
+.networkNode:nth-of-type(4) { left: 295px; top: 16px; }
+.networkNode:nth-of-type(5) { left: 345px; top: 186px; }
+.networkNode:nth-of-type(6) { left: 272px; top: 322px; }
+.networkNode:nth-of-type(7) { left: 32px; top: 296px; }
+.networkNode:nth-of-type(8) { left: -13px; top: 151px; }
+.networkNode > div { position: absolute; inset: 0; padding: 14px; display: flex; flex-direction: column; gap: 7px; border: 1px solid #bb9eee88; border-radius: 9px; background: linear-gradient(130deg, #433457, #21192f); box-shadow: 0 5px 0 #100d1b, 0 6px 0 #9a76c855, 0 15px 28px #0005; }
+.networkNode svg { color: #d8baf7; }
+.networkNode span { font: 7px monospace; white-space: nowrap; }
+.networkNode small { font: 5px monospace; color: #af93cf; }
+.networkPulse, .networkPulseTwo { position: absolute; width: 135px; height: 135px; border: 1px solid #d5b4ff60; border-radius: 50%; top: 142px; left: 152px; transform: translateZ(-5px); animation: networkRipple 6s ease-out infinite; pointer-events: none; }
+.networkPulseTwo { animation-delay: -3s; }
+.partnerNetwork figcaption { position: relative; padding-left: 20px; border-left: 1px solid #ad8fc95e; margin: 5px 20px 0 55px; }
+.partnerNetwork figcaption > span { font: 8px monospace; letter-spacing: .12em; color: #b695d6; }
+.partnerNetwork figcaption h3 { font-size: 25px; margin: 12px 0 !important; }
+.partnerNetwork figcaption p { font-size: 12px; line-height: 1.8; color: #af9dbf; }
+.compactNetwork .networkViewport { height: 350px; }
+.compactNetwork .networkWorld { scale: .8; }
+.compactNetwork figcaption { display: none; }
+@keyframes networkSway { 0%,100% { transform: translate(-50%, -50%) rotateX(32deg) rotateZ(-19deg); } 50% { transform: translate(-50%, -50%) rotateX(40deg) rotateZ(-12deg); } }
+@keyframes nodeLift { 0%,100% { transform: translateZ(10px); } 50% { transform: translateZ(35px); } }
+@keyframes networkTraffic { to { stroke-dashoffset: -52; } }
+@keyframes networkRipple { from { opacity: .6; transform: translateZ(-5px) scale(.5); } to { opacity: 0; transform: translateZ(-5px) scale(2.9); } }
+:global([data-workshop-motion='paused']) .partnerNetwork * { animation-play-state: paused !important; transition: none !important; }
+@media (max-width: 1199px) { .networkWorld { scale: .85; } }
+@media (max-width: 760px) { .networkViewport { height: 360px; }.networkWorld { scale: .73; }.partnerNetwork figcaption { margin: 0 0 30px; } }
+@media (prefers-reduced-motion: reduce) { .partnerNetwork * { animation: none !important; transition: none !important; } }
+@media print { .partnerNetwork * { animation: none !important; } }

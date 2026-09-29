@@ -171,7 +171,7 @@ export default function AgentUniversityPanelExt() {
         <div className="w-full space-y-6 pb-24 px-4 sm:px-6 lg:px-8">
             {/* Header Toolbar */}
             <div className="glass-pane rounded-xl border p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
+                <div data-tour="agentUniversity.training-library">
                     <h2 className="text-xl font-semibold tracking-tight">Agent University</h2>
                     <p className="text-xs text-muted-foreground/70 mt-1 max-w-2xl">
                         S3-backed global training pipelines. Videos uploaded here instantly syndicate out to all active agent dashboards over the platform namespace.
@@ -185,7 +185,7 @@ export default function AgentUniversityPanelExt() {
                     >
                         <RefreshCcw className="h-4 w-4 text-muted-foreground" />
                     </button>
-                    <button 
+                    <button data-tour="agentUniversity.training-uploads"
                         onClick={() => setIsUploadModalOpen(true)}
                         className="px-4 py-2.5 rounded-lg bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 shadow-lg shadow-primary/20 transition flex items-center gap-2"
                     >

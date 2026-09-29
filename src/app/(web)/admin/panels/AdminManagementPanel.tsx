@@ -530,19 +530,19 @@ export default function AdminManagementPanel() {
                     </p>
                 </div>
                 <div className="flex bg-muted rounded-lg p-1 self-start sm:self-center">
-                    <button
+                    <button data-tour="admins.activeTab.users" data-tour-action="activate" data-tour-active={activeTab === "users"}
                         onClick={() => setActiveTab("users")}
                         className={`px-3 py-1 rounded-md text-sm font-medium transition-all ${activeTab === "users" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                     >
                         Users
                     </button>
-                    <button
+                    <button data-tour="admins.activeTab.roles" data-tour-action="activate" data-tour-active={activeTab === "roles"}
                         onClick={() => setActiveTab("roles")}
                         className={`px-3 py-1 rounded-md text-sm font-medium transition-all ${activeTab === "roles" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                     >
                         Roles & Permissions
                     </button>
-                    <button
+                    <button data-tour="admins.activeTab.activity" data-tour-action="activate" data-tour-active={activeTab === "activity"}
                         onClick={() => setActiveTab("activity")}
                         className={`px-3 py-1 rounded-md text-sm font-medium transition-all ${activeTab === "activity" ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"}`}
                     >
@@ -726,7 +726,7 @@ export default function AdminManagementPanel() {
             )}
 
             {activeTab === "roles" && (
-                <div className="space-y-6">
+                <div data-tour="admins.activeTab.roles.content" className="space-y-6">
                     {/* Role Permissions Matrix Card */}
                     <div className="glass-pane rounded-xl border overflow-hidden">
                         <div className="px-5 py-4 border-b border-foreground/5 flex flex-col md:flex-row md:items-center justify-between gap-4 bg-foreground/[0.01]">

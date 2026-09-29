@@ -17,6 +17,8 @@ import { dePortalContent } from "@/lib/brand-content";
 import { DocsSidebarProvider } from "@/contexts/DocsSidebarContext";
 import { DocsContentWrapper } from "@/components/docs/docs-content-wrapper";
 import { CopyForLlmButton } from '@/components/docs/copy-for-llm-button';
+import { loadTourCatalog } from '@/lib/admin-tour/documents.server';
+import { renderTourText, resolveTourBrand } from '@/lib/admin-tour/branding';
 
 export async function generateStaticParams() {
   return [
@@ -175,11 +177,12 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
   const baseUrl = getBaseUrl();
   let brand = getBrandConfig();
   try {
-    const ciRes = await fetch(`/api/site/container`, { cache: "no-store" });
+    const docsBase = getBaseUrl();
+    const ciRes = await fetch(`${docsBase}/api/site/container`, { cache: "no-store" });
     const ci = await ciRes.json().catch(() => ({} as any));
     const key = String(ci?.brandKey || brand?.key || "").toLowerCase();
     brand = getBrandConfig(key);
-    const pbRes = await fetch(`/api/platform/brands/${encodeURIComponent(key || brand.key)}/config`, { cache: "no-store" });
+    const pbRes = await fetch(`${docsBase}/api/platform/brands/${encodeURIComponent(key || brand.key)}/config`, { cache: "no-store" });
     const pb = await pbRes.json().catch(() => ({} as any));
     const b = pb?.brand || null;
     const ov = pb?.overrides || null;
@@ -206,6 +209,14 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
     notFound();
   }
   let processedContent: string = content;
+  const isTourPanel = slug[0] === 'tour' && slug[1] === 'panels';
+  if (isTourPanel) processedContent = processedContent.replace(/^\s*<!--\s*tour\s+[\s\S]*?-->\s*/, '');
+  if (slug.length === 1 && slug[0] === 'tour') {
+    const lessons = await loadTourCatalog();
+    processedContent += '\n\n## Panel guides\n\n' + Object.values(lessons)
+      .sort((a, b) => (a.order ?? 1000) - (b.order ?? 1000))
+      .map(lesson => `- [${lesson.title}](${lesson.documentationHref})`).join('\n');
+  }
   try {
     // Always apply platform branding to replace hardcoded portalpay/PortalPay references
     // with the current brand (basaltsurge for platform, partner brand for partner containers)
@@ -216,7 +227,7 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
   } catch { }
 
   const currentPath = slug.length === 0 ? '/developers/docs' : `/developers/docs/${slug.join('/')}`;
-  const pageTitle = slug.length > 0
+  const pageTitle = isTourPanel ? processedContent.match(/^# (.+)$/m)?.[1] || 'Panel Guide' : slug.length > 0
     ? slug[slug.length - 1].split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
     : 'Introduction';
 
@@ -229,6 +240,10 @@ export default async function DocsPage({ params }: { params: Promise<{ slug?: st
   const keyForDisplay = String((brand as any)?.key || "").trim();
   // Use normalizeBrandName for proper capitalization (e.g., "BasaltSurge" not "Basaltsurge")
   const displayBrandName = (!rawName || isGenericName) ? normalizeBrandName(rawName, keyForDisplay) : normalizeBrandName(rawName, keyForDisplay);
+  if (isTourPanel) processedContent = renderTourText(processedContent, resolveTourBrand({
+    key: brand.key, isPartner: !['portalpay', 'basaltsurge'].includes(brand.key.toLowerCase()),
+    partnerName: brand.name, contextKey: brand.key, contextName: brand.name, platformName: displayBrandName, ready: true,
+  }), pageTitle);
 
   return (
     <div className="min-h-screen bg-background">

@@ -385,7 +385,7 @@ export default function IntegrationsPanel() {
       <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 mb-6">
         <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-foreground/[0.05] to-transparent"></div>
         <div className="flex items-center justify-between relative z-10">
-          <div>
+          <div data-tour="integrations.connected-integrations">
             <h2 className="text-2xl font-bold text-foreground">Integrations</h2>
             <p className="text-sm text-muted-foreground mt-1">
               Connect your store and channels. Browse available plugins and manage external connections.
@@ -401,7 +401,7 @@ export default function IntegrationsPanel() {
       {error && <div className="text-sm font-medium text-rose-500 bg-rose-500/10 px-4 py-3 rounded-lg border border-rose-500/20">{error}</div>}
 
       {/* Catalog of all available plugins */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div data-tour="integrations.provider-configuration" className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {[...catalog]
           .sort((a, b) => {
             const statusLower = String(tile?.status || "").toLowerCase();

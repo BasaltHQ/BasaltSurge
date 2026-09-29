@@ -39,7 +39,7 @@ export default function LoyaltyPanelPartner() {
                             { id: 'compliance', label: 'Rules & Limits' },
                             { id: 'analytics', label: 'Brand Analytics' },
                         ].map((tab) => (
-                            <button
+                            <button data-tour={`partner-loyalty.activeTab.${tab.id}`} data-tour-action="activate" data-tour-active={activeTab === tab.id}
                                 key={tab.id}
                                 onClick={() => setActiveTab(tab.id as any)}
                                 className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === tab.id ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'}`}
@@ -54,7 +54,7 @@ export default function LoyaltyPanelPartner() {
             {/* Content Area */}
             <div className="min-h-[400px]">
                 {activeTab === 'config' && (
-                    <div className="space-y-6">
+                    <div data-tour="partner-loyalty.activeTab.config.content" className="space-y-6">
                         <div className="p-4 border border-indigo-500/20 bg-indigo-500/5 rounded-lg">
                             <div className="font-semibold text-indigo-500 mb-1">Partner Override Active</div>
                             <div className="text-sm text-muted-foreground">
@@ -72,7 +72,7 @@ export default function LoyaltyPanelPartner() {
                 {activeTab === 'art' && <LevelArtTab />}
 
                 {activeTab === 'compliance' && (
-                    <div className="glass-pane rounded-xl border p-6 space-y-6">
+                    <div data-tour="partner-loyalty.activeTab.compliance.content" className="glass-pane rounded-xl border p-6 space-y-6">
                         <h3 className="text-lg font-semibold">Partner Governance</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-2">
@@ -94,7 +94,7 @@ export default function LoyaltyPanelPartner() {
                 )}
 
                 {activeTab === 'analytics' && (
-                    <div className="glass-pane rounded-xl border p-12 text-center text-muted-foreground">
+                    <div data-tour="partner-loyalty.activeTab.analytics.content" className="glass-pane rounded-xl border p-12 text-center text-muted-foreground">
                         Brand-wide loyalty analytics coming soon.
                     </div>
                 )}

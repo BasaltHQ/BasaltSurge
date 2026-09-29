@@ -28,7 +28,7 @@ import { isValidIsoCountryCode, micaIdentifierLabel, normalizeMicaIdentifier, va
 import { isStripeEmbeddedCheckoutEnabled, isUnsupportedStripeCheckoutRegion } from "@/lib/stripe-checkout-eligibility";
 import { isStripeOnrampPreflightErrorCode } from "@/lib/stripe-onramp-preflight";
 import { resolvePortalCheckoutMode } from "@/lib/stripe-onramp-status";
-import { calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps } from "@/lib/portal-checkout-pricing";
 import { resolveReceiptCustomerEmail } from "@/lib/receipt-customer-email";
 
 // Live QR Payment Portal: supports compact (default) and wide layout variants.
@@ -2834,12 +2834,12 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   }, [detectedCardFunding, debitStripeFeePct, creditStripeFeePct]);
 
   const activeFeePct = useMemo(() => {
-    const hasPresentedBps = detectedCardFunding === "us_bank_account" ? false : detectedCardFunding === "credit"
+    const hasPresentedBps = detectedCardFunding === "us_bank_account" ? resolveFundingPresentedFeeBps("us_bank_account", methodSplits) !== undefined : detectedCardFunding === "credit"
       ? (creditPresentedFeeBps ?? presentedFeeBps) !== undefined
       : presentedFeeBps !== undefined;
     const stripePct = (isCryptoDirect || feeMinusEnabled || hasPresentedBps) ? 0 : stripeFeePct;
     return Math.max(0, effectiveBasePlatformFeePct + Number(processingFeePct || 0) + stripePct);
-  }, [isCryptoDirect, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps, detectedCardFunding]);
+  }, [isCryptoDirect, effectiveBasePlatformFeePct, processingFeePct, stripeFeePct, feeMinusEnabled, presentedFeeBps, creditPresentedFeeBps, detectedCardFunding, methodSplits]);
 
   const processingFeeUsd = useMemo(() => {
     const baseUsd = itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd;
@@ -2862,6 +2862,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     const creditFeeUsd = +((itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd) * (creditPct / 100)).toFixed(2);
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + creditFeeUsd).toFixed(2);
   }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, creditFeePct, feeMinusEnabled, totalUsd]);
+
+  const achFeeQuote = useMemo(() => {
+    const config = { ...methodSplits, splitConfig, splitConfigCredit };
+    const presented = resolveFundingPresentedFeeBps("us_bank_account", config);
+    const feePct = Math.max(0, resolveFundingPlatformFeePct("us_bank_account", config) + Number(processingFeePct || 0) + (presented !== undefined ? 0 : 0.6));
+    const baseUsd = itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd;
+    const feeUsd = +(baseUsd * feePct / 100).toFixed(2);
+    return { feePct, totalUsd: +(baseUsd + feeUsd).toFixed(2) };
+  }, [methodSplits, splitConfig, splitConfigCredit, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd]);
 
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
@@ -3094,7 +3103,8 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     getSiteConfigOnce(String(targetWallet).toLowerCase(), String(targetWallet))
       .then((j: SiteConfigResponse) => {
         if (cancelled) return;
-        const cfg = { ...(j?.config || {}), ...((receipt as any)?.splitRoutingSnapshot || {}) };
+        const snapshot = (receipt as any)?.splitRoutingSnapshot;
+        const cfg = { ...(j?.config || {}), ...(snapshot || {}), ...(snapshot ? { achPresentedFeeBps: snapshot.achPresentedFeeBps ?? null, cryptoPresentedFeeBps: snapshot.cryptoPresentedFeeBps ?? null } : {}) };
 
         // Merge runtime tokens if present (preserves ETH, adds/updates others)
         if (cfg?.tokens && Array.isArray(cfg.tokens) && cfg.tokens.length > 0) {
@@ -7320,6 +7330,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               const converted = convertReceiptDisplayAmount(creditTotalUsd);
                               const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
                               return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(creditTotalUsd, "USD");
+                            })()})
+                          </div>
+                        )}
+
+                        {!feeMinusEnabled && partnerAchEnabled && merchantAchEnabled && detectedCardFunding !== "us_bank_account" && (
+                          <div className="microtext text-muted-foreground opacity-70 text-right mt-1.5 animate-in fade-in duration-500">
+                            * ACH payments subject to a {achFeeQuote.feePct.toFixed(2)}% fee (Total: {(() => {
+                              if (currency === "USD") return formatCurrency(achFeeQuote.totalUsd, "USD");
+                              const converted = convertReceiptDisplayAmount(achFeeQuote.totalUsd);
+                              const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(achFeeQuote.totalUsd, "USD");
                             })()})
                           </div>
                         )}

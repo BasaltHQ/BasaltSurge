@@ -169,6 +169,9 @@ export default function PartnerManagementPanel() {
       if (typeof config?.creditPresentedFeeBps === "number") {
         body.creditPresentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.creditPresentedFeeBps))));
       }
+      for (const key of ["achPresentedFeeBps", "cryptoPresentedFeeBps"]) {
+        if (config?.[key] === null || typeof config?.[key] === "number") body[key] = config[key] === null ? null : Math.max(0, Math.min(10000, Math.floor(config[key])));
+      }
       if (typeof config?.name === "string") body.name = config.name;
       if (config?.colors) body.colors = config.colors;
       if (config?.logos) body.logos = config.logos;
@@ -180,7 +183,7 @@ export default function PartnerManagementPanel() {
       }
 
       // If nothing to persist, skip
-      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.microsoftClarityId && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined && body.feeMinusEnabled === undefined && body.achEnabled === undefined) {
+      if (!body.appUrl && !body.partnerFeeBps && !body.defaultMerchantFeeBps && !body.partnerWallet && !body.name && !body.colors && !body.logos && !body.thirdwebClientId && !body.thirdwebSecretKey && !body.thirdwebAuthEndpointSecret && !body.microsoftClarityId && !body.agents && body.unifiedFeeEnabled === undefined && !body.primaryAgentWallet && body.creditPlatformFeeBps === undefined && body.agentFeeBps === undefined && body.creditAgentFeeBps === undefined && body.presentedFeeBps === undefined && body.creditPresentedFeeBps === undefined && body.feeMinusEnabled === undefined && body.achEnabled === undefined && body.achPresentedFeeBps === undefined && body.cryptoPresentedFeeBps === undefined) {
         return true;
       }
 
@@ -913,6 +916,9 @@ export default function PartnerManagementPanel() {
         body.presentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.presentedFeeBps))));
       if (typeof config?.creditPresentedFeeBps === "number")
         body.creditPresentedFeeBps = Math.max(0, Math.min(10000, Math.floor(Number(config.creditPresentedFeeBps))));
+      for (const key of ["achPresentedFeeBps", "cryptoPresentedFeeBps"]) {
+        if (config?.[key] === null || typeof config?.[key] === "number") body[key] = config[key] === null ? null : Math.max(0, Math.min(10000, Math.floor(config[key])));
+      }
 
       // Email Config
       if (config?.email) {
@@ -1600,7 +1606,7 @@ export default function PartnerManagementPanel() {
   return (
     <div className="space-y-6">
       <div className="glass-pane rounded-xl border p-5">
-        <div className="flex items-center justify-between">
+        <div data-tour="partners.partner-management" className="flex items-center justify-between">
           <h2 className="text-xl font-semibold">Partner Management</h2>
           <div className="flex items-center gap-2 flex-wrap">
             {/* Clean selector: exclude 'portalpay' */}
@@ -1625,7 +1631,7 @@ export default function PartnerManagementPanel() {
             </button>
 
             {/* Add new partner brand inline */}
-            <input
+            <input data-tour="partners.new-partner-identity"
               className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors font-mono"
               placeholder="new brand key…"
               value={newBrandKey}
@@ -1776,7 +1782,7 @@ export default function PartnerManagementPanel() {
         <>
           {/* Brand config controls */}
           <div className="glass-pane rounded-xl border overflow-hidden">
-            <div className="px-5 py-4 border-b border-foreground/5 flex items-center justify-between">
+            <div data-tour="partners.partner-configuration" className="px-5 py-4 border-b border-foreground/5 flex items-center justify-between">
               <h4 className="text-sm font-semibold">Brand Settings — {brandKey}</h4>
             </div>
             <div className="p-5 space-y-4">
@@ -1918,10 +1924,23 @@ export default function PartnerManagementPanel() {
                   }}
                 />
                 <div className="text-[11px] text-muted-foreground/70 mt-1.5">
-                  Top-line fee presented to Credit/Crypto merchants (e.g. 295 = 2.95%).
+                  Top-line fee presented to Credit card merchants (e.g. 295 = 2.95%).
                 </div>
               </div>
               <div>
+                {([['achPresentedFeeBps', 'ACH'], ['cryptoPresentedFeeBps', 'Crypto']] as const).map(([key, label]) => (
+                  <div key={key} className="mb-4">
+                    <label htmlFor={key} className="text-xs font-medium text-muted-foreground block mb-1.5">Presented Fee {label} (bps)</label>
+                    <input id={key} type="number" min={0} max={10000} step={1}
+                      className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"
+                      value={config?.[key] ?? ""} placeholder="Automatic from split"
+                      onChange={e => setConfig((prev: any) => ({ ...prev, [key]: e.target.value === "" ? null : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value)))) }))} />
+                    <div className="text-[11px] text-muted-foreground/70 mt-1.5">
+                      {label === 'ACH' ? 'Includes Stripe’s 0.60% charge. ' : 'No Stripe charge. '}
+                      Base presented fee; partner share is added. Blank uses the routed split allocations{label === 'ACH' ? ' plus 0.60% Stripe' : ''}. 100 bps = 1%.
+                    </div>
+                  </div>
+                ))}
                 <label className="text-xs font-medium text-muted-foreground block mb-1.5">App URL</label>
                 <input
                   className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-foreground/[0.03] text-sm focus:outline-none focus:ring-1 focus:ring-foreground/20 transition-colors"

@@ -11,7 +11,7 @@ function load(name) {
   vm.runInNewContext(output, { module, exports: module.exports, require: id => load(id.replace(/^@\/lib\//, "").replace(/^\.\//, "")) }, { filename: file });
   return module.exports;
 }
-const { calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct } = load("portal-checkout-pricing");
+const { calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps } = load("portal-checkout-pricing");
 const { recalculateReceiptForCardFunding, resolveFeeMinusBaseCents } = load("receipts");
 const { receiptAmountFromUsd } = load("receipt-currency");
 const config = {
@@ -35,7 +35,7 @@ function portalCalculation(name, values) {
   assert.ok(callback, `Portal calculation ${name} must exist`);
   const compiled = ts.transpileModule(`module.exports = (${callback.getText(source)});`, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } }).outputText;
   const module = { exports: {} };
-  vm.runInNewContext(compiled, { module, isCryptoDirect: false, feeMinusEnabled: false, ...values, calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct });
+  vm.runInNewContext(compiled, { module, isCryptoDirect: false, feeMinusEnabled: false, methodSplits: {}, ...values, calculateCryptoFeeUsd, resolveFundingOnrampAmount, resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps });
   return module.exports;
 }
 
@@ -253,5 +253,32 @@ test("crypto minimum rounds positive fees to cents without inventing a fee for z
     const once = recalculateReceiptForCardFunding(receipt, "crypto", cfg);
     assert.equal(once.totalUsd, +(base + fee).toFixed(2));
     assert.equal(recalculateReceiptForCardFunding(once, "crypto", cfg).totalUsd, once.totalUsd);
+  }
+});
+
+test("method presented fees agree across portal, receipt, and ACH onramp without adding Stripe twice", () => {
+  for (const funding of ['us_bank_account', 'crypto']) for (const presented of [0, 110, null]) {
+    const cfg = { splitConfig: { platformBps: 50, partnerBps: 25, agents: [] }, processingFeePct: 0,
+      presentedFeeBps: 400, creditPresentedFeeBps: 500, achPresentedFeeBps: presented, cryptoPresentedFeeBps: presented };
+    const expectedPct = presented === null ? (funding === 'crypto' ? 0.75 : 1.35) : presented / 100 + 0.25;
+    const values = { ...cfg, splitConfigCredit: undefined, methodSplits: cfg, receipt: {}, isCryptoDirect: funding === 'crypto', detectedCardFunding: funding === 'crypto' ? null : funding,
+      stripeFeePct: 0.6, itemsSubtotalUsd: 100, taxUsd: 0, tipUsd: 0, shippingCostUsd: 0, storedProcessingFeeUsd: 0 };
+    const effectiveBasePlatformFeePct = portalCalculation('effectiveBasePlatformFeePct', values)();
+    const activeFeePct = portalCalculation('activeFeePct', { ...values, effectiveBasePlatformFeePct })();
+    assert.equal(+activeFeePct.toFixed(2), expectedPct);
+    const receipt = recalculateReceiptForCardFunding({ totalUsd: 100, lineItems: [{ label: 'Order', priceUsd: 100 }] }, funding, cfg);
+    assert.equal(receipt.totalUsd, +(100 + expectedPct).toFixed(2));
+    if (funding === 'us_bank_account') assert.equal(quote(funding, cfg), +(receipt.totalUsd / 1.006).toFixed(2));
+    const pinned = { ...receipt, splitRoutingSnapshot: cfg };
+    assert.equal(recalculateReceiptForCardFunding(pinned, funding, { ...cfg, achPresentedFeeBps: 999, cryptoPresentedFeeBps: 999 }).totalUsd, receipt.totalUsd);
+  }
+});
+
+test("historical snapshots without method overrides keep their original pricing", () => {
+  const snapshot = { splitConfig: { platformBps: 50, partnerBps: 0, agents: [] }, processingFeePct: 0 };
+  for (const funding of ['us_bank_account', 'crypto']) {
+    const receipt = { totalUsd: 100, lineItems: [{ label: 'Order', priceUsd: 100 }], splitRoutingSnapshot: snapshot };
+    const result = recalculateReceiptForCardFunding(receipt, funding, { ...snapshot, achPresentedFeeBps: 900, cryptoPresentedFeeBps: 900 });
+    assert.equal(result.totalUsd, funding === 'crypto' ? 100.5 : 101.1);
   }
 });

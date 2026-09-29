@@ -235,7 +235,7 @@ export default function SandboxPanel() {
 
       {/* Brand Selection Card (First) */}
       <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
-        <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+        <div data-tour="sandbox.sandbox-brand-context" className="flex items-center gap-2 border-b border-white/5 pb-3">
           <Globe className="w-4 h-4 text-sky-400" />
           <h3 className="text-sm font-semibold text-white">Brand Container Selection</h3>
         </div>
@@ -271,7 +271,7 @@ export default function SandboxPanel() {
 
       {/* Merchant Wallet Override Card (Second) */}
       <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
-        <div className="flex items-center gap-2 border-b border-white/5 pb-3">
+        <div data-tour="sandbox.merchant-override" className="flex items-center gap-2 border-b border-white/5 pb-3">
           <User className="w-4 h-4 text-emerald-400" />
           <h3 className="text-sm font-semibold text-white">Merchant Wallet Address Override</h3>
         </div>
@@ -319,7 +319,7 @@ export default function SandboxPanel() {
       {selectedMerchant && (
         <div className="p-6 rounded-xl border border-white/5 bg-black/45 glass-pane space-y-4">
           <div className="flex items-center justify-between border-b border-white/5 pb-3">
-            <div className="flex items-center gap-2">
+            <div data-tour="sandbox.diagnostics" className="flex items-center gap-2">
               <Sliders className="w-4 h-4 text-amber-500 animate-pulse" />
               <h3 className="text-sm font-semibold text-white">Diagnostics & Health Check</h3>
             </div>

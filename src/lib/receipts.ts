@@ -1,4 +1,4 @@
-import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps } from "@/lib/portal-checkout-pricing";
 // Shared helpers for constructing receipt endpoints and fetch options
 // Ensures TEST receipts include merchant context so branding/themes load consistently.
 
@@ -92,7 +92,8 @@ export function recalculateReceiptForCardFunding(
   });
 
   // Resolve basePresentedBps to determine the presented fee component
-  const basePresentedBps = detectedCardFunding === "crypto" || detectedCardFunding === "us_bank_account" ? undefined : isCredit
+  const basePresentedBps = detectedCardFunding === "crypto" || detectedCardFunding === "us_bank_account"
+    ? resolveFundingPresentedFeeBps(detectedCardFunding, receiptRoutingFields(receipt, siteConfig)) : isCredit
     ? (brandConfigDoc?.creditPresentedFeeBps ?? siteConfig.creditPresentedFeeBps ?? brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps)
     : (brandConfigDoc?.presentedFeeBps ?? siteConfig.presentedFeeBps);
 

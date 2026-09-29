@@ -111,7 +111,7 @@ export default function OnrampsPanel() {
             <div className="p-2 rounded-xl bg-primary/10 text-primary">
               <Plug className="w-5 h-5" />
             </div>
-            <div>
+            <div data-tour="onramps.onramp-providers">
               <h2 className="text-xl font-semibold tracking-tight">Onramp Providers</h2>
               <p className="text-sm text-muted-foreground mt-1">
                 Select which fiat-to-crypto payment gateways are available to customers in checkout portals.
@@ -166,7 +166,7 @@ export default function OnrampsPanel() {
                 <div className="shrink-0 h-12 w-12 rounded-xl border border-foreground/[0.05] bg-white grid place-items-center overflow-hidden p-2">
                   <img src="/logos/stripe.svg" alt="Stripe" className="w-full h-full object-contain" />
                 </div>
-                <div>
+                <div data-tour="onramps.stripe-and-stripe-link">
                   <h3 className="text-base font-bold text-foreground flex items-center gap-1.5">
                     Stripe / Stripe Link
                   </h3>
@@ -196,7 +196,7 @@ export default function OnrampsPanel() {
                 <div className="shrink-0 h-12 w-12 rounded-xl border border-foreground/[0.05] bg-white grid place-items-center overflow-hidden p-2">
                   <img src="/logos/coinbase.svg" alt="Coinbase" className="w-full h-full object-contain" />
                 </div>
-                <div>
+                <div data-tour="onramps.coinbase-pay">
                   <h3 className="text-base font-bold text-foreground">Coinbase Pay</h3>
                   <p className="text-xs text-muted-foreground mt-1 max-w-xs leading-normal">
                     Allows users to pay with their Coinbase accounts or connected wallets seamlessly.
@@ -225,7 +225,7 @@ export default function OnrampsPanel() {
                 <div className="shrink-0 h-12 w-12 rounded-xl border border-foreground/[0.05] bg-white grid place-items-center overflow-hidden p-2">
                   <img src="/logos/transak.svg" alt="Transak" className="w-full h-full object-contain" onError={(e)=>{e.currentTarget.src="/logos/transak.png"}} />
                 </div>
-                <div>
+                <div data-tour="onramps.transak">
                   <h3 className="text-base font-bold text-foreground">Transak</h3>
                   <p className="text-xs text-muted-foreground mt-1 max-w-xs leading-normal">
                     Global web3 onboarding infrastructure. Supports cards, Apple Pay, and local bank transfers.
@@ -254,7 +254,7 @@ export default function OnrampsPanel() {
                 <div className="shrink-0 h-12 w-12 rounded-xl border border-foreground/[0.05] bg-white grid place-items-center overflow-hidden p-2">
                   <img src="/logos/ramp-network.svg" alt="Ramp" className="w-full h-full object-contain" onError={(e)=>{e.currentTarget.src="/logos/worldpay.svg"}} />
                 </div>
-                <div>
+                <div data-tour="onramps.rampnow-and-ramp">
                   <h3 className="text-base font-bold text-foreground">Rampnow / Ramp</h3>
                   <p className="text-xs text-muted-foreground mt-1 max-w-xs leading-normal">
                     High-speed fiat-to-crypto gateway with support for Apple Pay, cards, and open banking globally.

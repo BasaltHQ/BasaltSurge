@@ -1229,7 +1229,7 @@ export default function TeamPanel({ overrideWallet, permissions }: { overrideWal
 
                 {/* Main Tabs Navigation */}
                 <div className="flex items-center border-b border-foreground/10 gap-6">
-                    {canManageTeam && <button
+                    {canManageTeam && <button data-tour="team.mainTab.roster" data-tour-action="activate" data-tour-active={mainTab === "roster"}
                         onClick={() => setMainTab("roster")}
                         className={`flex items-center gap-2 py-3 text-sm font-medium transition-colors -mb-px border-b-2 ${mainTab === "roster"
                             ? "text-foreground border-purple-500 font-semibold"
@@ -1241,7 +1241,7 @@ export default function TeamPanel({ overrideWallet, permissions }: { overrideWal
                         <span className="ml-1 px-2 py-0.5 rounded-full text-[11px] bg-foreground/10 font-mono">{members.length}</span>
                     </button>}
 
-                    {canReadRoles && <button
+                    {canReadRoles && <button data-tour="team.mainTab.roles" data-tour-action="activate" data-tour-active={mainTab === "roles"}
                         onClick={() => setMainTab("roles")}
                         className={`flex items-center gap-2 py-3 text-sm font-medium transition-colors -mb-px border-b-2 ${mainTab === "roles"
                             ? "text-foreground border-purple-500 font-semibold"
@@ -1255,7 +1255,7 @@ export default function TeamPanel({ overrideWallet, permissions }: { overrideWal
                         </span>
                     </button>}
 
-                    {canManageTeam && <button
+                    {canManageTeam && <button data-tour="team.mainTab.sessions_payouts" data-tour-action="activate" data-tour-active={mainTab === "sessions_payouts"}
                         onClick={() => setMainTab("sessions_payouts")}
                         className={`flex items-center gap-2 py-3 text-sm font-medium transition-colors -mb-px border-b-2 ${mainTab === "sessions_payouts"
                             ? "text-foreground border-purple-500 font-semibold"

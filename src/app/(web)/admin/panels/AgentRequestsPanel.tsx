@@ -253,7 +253,7 @@ export default function AgentRequestsPanel() {
         <div className="w-full space-y-6 pb-24 admin-panel-enter">
             <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6">
                 <div className="flex items-center justify-between">
-                    <div>
+                    <div data-tour="agentRequests.agent-requests">
                         <h1 className="text-2xl font-semibold tracking-tight">Agent Requests</h1>
                         <p className="text-sm text-muted-foreground mt-1">
                             Manage agent applications and profiles for <span className="font-mono text-emerald-400">{brand?.key || "this brand"}</span>.
@@ -287,7 +287,7 @@ export default function AgentRequestsPanel() {
                 <div className="flex flex-col md:flex-row gap-3 items-center">
                     <div className="relative w-full md:w-72">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                        <input
+                        <input data-tour="agentRequests.agent-search"
                             type="text"
                             placeholder="Search by name, email, wallet…"
                             className="pl-9 pr-4 h-10 w-full text-sm rounded-lg border border-foreground/[0.05] bg-background focus:outline-none focus:border-foreground/30 transition-colors"

@@ -368,7 +368,7 @@ export default function DeliveryPanel() {
             // Not connected - show onboarding view
             return (
                 <div className="space-y-8 animate-in fade-in">
-                    <div className="text-center max-w-2xl mx-auto py-12">
+                    <div data-tour="delivery.connect-a-delivery-store" className="text-center max-w-2xl mx-auto py-12">
                         <div className="mx-auto w-20 h-20 bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-3xl flex items-center justify-center mb-6">
                             <Truck className="w-10 h-10 text-green-600" />
                         </div>
@@ -410,7 +410,7 @@ export default function DeliveryPanel() {
             <div className="space-y-6 animate-in fade-in">
                 {/* Header */}
                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                    <div>
+                    <div data-tour="delivery.delivery-dashboard">
                         <h1 className="text-3xl font-bold tracking-tight flex items-center gap-3">
                             Delivery
                             {isConnected && (
@@ -522,7 +522,7 @@ export default function DeliveryPanel() {
 
                 {/* Recent Orders */}
                 <div className="border rounded-2xl overflow-hidden">
-                    <div className="px-5 py-4 border-b bg-muted/30 flex items-center justify-between">
+                    <div data-tour="delivery.recent-delivery-orders" className="px-5 py-4 border-b bg-muted/30 flex items-center justify-between">
                         <h3 className="font-semibold flex items-center gap-2">
                             <Package className="w-4 h-4" /> Recent Orders
                         </h3>
@@ -590,7 +590,7 @@ export default function DeliveryPanel() {
                         </div>
                     </div>
 
-                    <div className="border rounded-2xl p-6">
+                    <div data-tour="delivery.integration-health" className="border rounded-2xl p-6">
                         <h3 className="font-semibold mb-4 flex items-center gap-2">
                             <Activity className="w-4 h-4" /> Integration Health
                         </h3>

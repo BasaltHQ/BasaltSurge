@@ -151,7 +151,7 @@ export default function CustomAuthWalletsPanel() {
     <div className="w-full space-y-6 pb-24 admin-panel-enter">
       {/* Header Area */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-white/5 pb-4">
-        <div>
+        <div data-tour="customAuthWallets.authentication-wallet-links">
           <h2 className="text-xl font-bold tracking-tight text-white/90">Custom Auth Wallets</h2>
           <p className="text-xs text-white/40 tracking-wide mt-1">
             Deterministic buyer wallets generated on Base via email authentication. Zero Thirdweb auth cost balance tracking.
@@ -200,7 +200,7 @@ export default function CustomAuthWalletsPanel() {
       <div className="flex flex-col md:flex-row md:items-center gap-3">
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-          <input
+          <input data-tour="customAuthWallets.locate-a-wallet-link"
             type="text"
             placeholder="Search by email or wallet address..."
             value={searchQuery}

@@ -1,5 +1,5 @@
 import { recordStripeReceiptFailure } from "@/lib/stripe-receipt-failure";
-import { receiptRoutingFields } from "@/lib/payment-split-routing";
+import { receiptRoutingFields, resolveReceiptSettlementTarget } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { recoverStripeReceiptSession, stripeReceiptWriteCondition } from "@/lib/stripe-receipt-session";
@@ -204,13 +204,18 @@ async function resolveMerchantContext(
           cardFunding || foundReceipt?.detectedCardFunding,
           foundReceipt?.isCreditCard === true
         );
-        const splitAddress = resolveSettlementSplitAddress({
+        let splitAddress = resolveSettlementSplitAddress({
           funding: fundingType,
           splitAddress: splitAddressResolved,
           splitAddressCredit: splitAddressCreditResolved,
           ...receiptRoutingFields(foundReceipt, match),
           fallbackAddress: mw,
         });
+        if (fundingType === "us_bank_account") {
+          const { getSiteConfigForWallet } = await import("@/lib/site-config");
+          const currentConfig = await getSiteConfigForWallet(mw, foundReceipt?.brandKey || brandKey);
+          splitAddress = resolveReceiptSettlementTarget({ ...foundReceipt, wallet: mw }, currentConfig, fundingType).address;
+        }
 
         return {
           merchantWallet: mw,
@@ -570,6 +575,7 @@ export async function POST(req: NextRequest) {
             const brandConfigDoc = (r.brandKey || brandKey) ? await readBrandOverridesCached(r.brandKey || brandKey) : null;
             if (siteConfig) {
               finalDoc = recalculateReceiptForCardFunding(r, receiptFunding, siteConfig, brandConfigDoc);
+              if (receiptFunding === "us_bank_account") finalDoc.settlementTarget = resolveReceiptSettlementTarget(r, siteConfig, receiptFunding);
             }
           } catch {}
 
@@ -598,6 +604,7 @@ export async function POST(req: NextRequest) {
               checkoutStatusSource: finalDoc.checkoutStatusSource,
               checkoutStatusHistory: finalDoc.checkoutStatusHistory,
               detectedCardFunding: finalDoc.detectedCardFunding,
+              settlementTarget: finalDoc.settlementTarget,
               isCreditCard: finalDoc.isCreditCard,
               ttl: finalDoc.ttl,
               stripeSessionStatus: finalDoc.stripeSessionStatus,

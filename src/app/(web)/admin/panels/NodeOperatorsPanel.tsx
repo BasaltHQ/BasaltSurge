@@ -129,7 +129,7 @@ export function NodeOperatorsPanel() {
       {/* Tab Navigation */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {tabs.map(([key, label]) => (
-          <button
+          <button data-tour={`nodeOperators.tab.${key}`} data-tour-action="activate" data-tour-active={tab === key}
             key={key}
             onClick={() => setTab(key)}
             className={`px-4 py-2 rounded-lg text-[13px] font-medium transition ${

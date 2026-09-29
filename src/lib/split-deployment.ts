@@ -33,7 +33,7 @@ export async function updateSplitDeployment(args: {
     if (!isPartner && allocation.partnerBps) throw Object.assign(new Error("Platform merchants cannot allocate a partner fee."), { status: 400 });
     if (!platformAdmin) {
       const primary = previous.splitConfig || {};
-      const expectedPlatform = previous[f.config]?.platformBps ?? (kind === "debit" ? (brand.platformFeeBps ?? 125) : (brand.creditPlatformFeeBps ?? primary.platformBps ?? 150));
+      const expectedPlatform = previous[f.config]?.platformBps ?? ((kind === "ach" || kind === "crypto") ? brand[`${kind}PlatformFeeBps`] : undefined) ?? (kind === "debit" ? (brand.platformFeeBps ?? 125) : (brand.creditPlatformFeeBps ?? primary.platformBps ?? 150));
       if (allocation.platformBps !== expectedPlatform) throw Object.assign(new Error("Only platform administrators can change the platform allocation."), { status: 403 });
       if (allocation.partnerBps && partnerWallet !== String(brand.partnerWallet || previous.partnerWallet || "").toLowerCase()) throw Object.assign(new Error("Partner wallet must match this brand."), { status: 403 });
       const requiredAgents = Array.isArray(brand.agents) ? brand.agents : [];

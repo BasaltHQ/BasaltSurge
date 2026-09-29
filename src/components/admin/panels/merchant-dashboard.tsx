@@ -114,7 +114,7 @@ export function MerchantDashboardOverview({ data, loading, onOpenReserveAnalytic
   return (
     <section aria-labelledby="merchant-overview-title" className="space-y-4" aria-busy={loading}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+        <div data-tour="dashboard.at-a-glance">
           <h2 id="merchant-overview-title" className="text-lg font-semibold">At a glance</h2>
           <p className="mt-1 text-sm text-muted-foreground">Your reserve balance and lifetime payment activity.</p>
         </div>
@@ -261,7 +261,7 @@ export function MerchantDashboard({ merchantWallet, merchantName, canViewAnalyti
       <header className="glass-pane relative overflow-hidden rounded-2xl border p-5 sm:p-7">
         <div aria-hidden="true" className="pointer-events-none absolute -right-20 -top-24 h-72 w-72 rounded-full opacity-[0.07] blur-3xl" style={{ background: "var(--pp-primary)" }} />
         <div className="relative flex flex-wrap items-start justify-between gap-5">
-          <div className="min-w-0">
+          <div data-tour="dashboard.merchant-overview" className="min-w-0">
             <div className="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-widest text-muted-foreground">
               <LayoutDashboard aria-hidden="true" className="h-3.5 w-3.5" /> Merchant workspace
             </div>
@@ -295,7 +295,7 @@ export function MerchantDashboard({ merchantWallet, merchantName, canViewAnalyti
       )}
 
       <section aria-labelledby="merchant-tools-title" className="space-y-4">
-        <div>
+        <div data-tour="dashboard.merchant-tools">
           <h2 id="merchant-tools-title" className="text-lg font-semibold">Your merchant tools</h2>
           <p className="mt-1 text-sm text-muted-foreground">Jump into the work that needs your attention.</p>
         </div>

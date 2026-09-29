@@ -301,43 +301,43 @@ export default function LoyaltyPanel() {
                 {/* Tab Navigation */}
                 <div className="border-b">
                     <nav className="-mb-px flex space-x-6 overflow-x-auto" aria-label="Tabs">
-                        <button
+                        <button data-tour="loyalty.activeTab.config" data-tour-action="activate" data-tour-active={activeTab === 'config'}
                             onClick={() => setActiveTab('config')}
                             className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'config' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'}`}
                         >
                             Configuration
                         </button>
-                        <button
+                        <button data-tour="loyalty.activeTab.leaderboard" data-tour-action="activate" data-tour-active={activeTab === 'leaderboard'}
                             onClick={() => setActiveTab('leaderboard')}
                             className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'leaderboard' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'}`}
                         >
                             Leaderboard
                         </button>
-                        <button
+                        <button data-tour="loyalty.activeTab.discounts" data-tour-action="activate" data-tour-active={activeTab === 'discounts'}
                             onClick={() => setActiveTab('discounts')}
                             className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'discounts' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'}`}
                         >
                             Discounts
                         </button>
-                        <button
+                        <button data-tour="loyalty.activeTab.coupons" data-tour-action="activate" data-tour-active={activeTab === 'coupons'}
                             onClick={() => setActiveTab('coupons')}
                             className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'coupons' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'}`}
                         >
                             Coupons
                         </button>
-                        <button
+                        <button data-tour="loyalty.activeTab.rewards" data-tour-action="activate" data-tour-active={activeTab === 'rewards'}
                             onClick={() => setActiveTab('rewards')}
                             className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'rewards' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'}`}
                         >
                             Level Rewards
                         </button>
-                        <button
+                        <button data-tour="loyalty.activeTab.art" data-tour-action="activate" data-tour-active={activeTab === 'art'}
                             onClick={() => setActiveTab('art')}
                             className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'art' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'}`}
                         >
                             Level Art
                         </button>
-                        <button
+                        <button data-tour="loyalty.activeTab.roles" data-tour-action="activate" data-tour-active={activeTab === 'roles'}
                             onClick={() => setActiveTab('roles')}
                             className={`whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'roles' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30'}`}
                         >

@@ -386,14 +386,14 @@ export default function MyPurchasesPanel() {
     <div className="w-full h-[calc(100vh-140px)] p-6 md:p-8 flex flex-col gap-6 pb-24">
       <div className="flex items-center justify-between border-b border-foreground/10 pb-4 shrink-0">
         <div className="flex items-center gap-6">
-          <button
+          <button data-tour="purchases.activeTab.purchases" data-tour-action="activate" data-tour-active={activeTab === "purchases"}
             onClick={() => setActiveTab("purchases")}
             className={`text-lg font-semibold transition-colors relative ${activeTab === "purchases" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
           >
             My Purchases
             {activeTab === "purchases" && <motion.div layoutId="tab-underline" className="absolute -bottom-[17px] left-0 right-0 h-0.5 bg-primary" />}
           </button>
-          <button
+          <button data-tour="purchases.activeTab.bookshelf" data-tour-action="activate" data-tour-active={activeTab === "bookshelf"}
             onClick={() => setActiveTab("bookshelf")}
             className={`text-lg font-semibold transition-colors relative flex items-center gap-2 ${activeTab === "bookshelf" ? "text-foreground" : "text-muted-foreground hover:text-foreground"}`}
           >
@@ -404,7 +404,7 @@ export default function MyPurchasesPanel() {
         </div>
 
         {activeTab === "purchases" && (
-          <div className="flex items-center gap-2">
+          <div data-tour="purchases.activeTab.purchases.content" className="flex items-center gap-2">
             <button
               className="px-4 py-2 rounded-lg border border-foreground/[0.1] bg-foreground/[0.02] hover:bg-foreground/[0.05] text-[10px] uppercase font-bold tracking-wider transition-all"
               onClick={reindex}

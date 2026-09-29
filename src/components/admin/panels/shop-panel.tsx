@@ -941,7 +941,7 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
           </div>
           {/* Basic / Advanced / Portal Toggle */}
           <div className="flex gap-0.5 bg-black/20 p-0.5 rounded-lg">
-            <button
+            <button data-tour="shopSetup.shopMode.basic" data-tour-action="activate" data-tour-active={shopMode === 'basic'}
               onClick={() => setShopMode('basic')}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                 shopMode === 'basic'
@@ -952,7 +952,7 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
               Basic
             </button>
             {process.env.NEXT_PUBLIC_SURGE_PLUS === 'true' && (
-              <button
+              <button data-tour="shopSetup.shopMode.advanced" data-tour-action="activate" data-tour-active={shopMode === 'advanced'}
                 onClick={() => setShopMode('advanced')}
                 className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                   shopMode === 'advanced'
@@ -963,7 +963,7 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
                 Advanced
               </button>
             )}
-            <button
+            <button data-tour="shopSetup.shopMode.portal" data-tour-action="activate" data-tour-active={shopMode === 'portal'}
               onClick={() => setShopMode('portal')}
               className={`px-3 py-1.5 rounded-md text-xs font-semibold transition-all ${
                 shopMode === 'portal'
@@ -986,7 +986,7 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
       </div>
 
       {shopMode === 'advanced' && (
-        <div className="flex-1 min-h-0">
+        <div data-tour="shopSetup.shopMode.advanced.content" className="flex-1 min-h-0">
           <AdvancedShopTab
             config={{
               name: cfg.name,
@@ -1049,7 +1049,7 @@ export function ShopPanel({ overrideWallet }: { overrideWallet?: string } = {}) 
       )}
 
       {shopMode === 'portal' && (
-        <div className="flex-1 min-h-0">
+        <div data-tour="shopSetup.shopMode.portal.content" className="flex-1 min-h-0">
           <PortalThemePlayground
             wallet={account?.address || ''}
             brandKey={brand?.key || ''}

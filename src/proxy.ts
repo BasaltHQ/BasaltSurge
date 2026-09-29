@@ -214,7 +214,9 @@ function applySecurityHeaders(req: NextRequest, res: NextResponse) {
     const isMainDomainHeader = isMainDomainHost(headerHostname);
 
     const isShopLike = req.nextUrl.pathname.startsWith("/shop/") || (!isMainDomainHeader && req.nextUrl.pathname === "/");
-    const micPolicy = isShopLike ? "microphone=(self)" : "microphone=()";
+    // The tour runs inside /admin, including while switching between panels.
+    const isAdmin = req.nextUrl.pathname === "/admin" || req.nextUrl.pathname.startsWith("/admin/");
+    const micPolicy = isShopLike || isAdmin ? "microphone=(self)" : "microphone=()";
     // Explicitly allow WebUSB prompts in top-level contexts
     res.headers.set(
         "Permissions-Policy",

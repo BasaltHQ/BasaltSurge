@@ -1013,7 +1013,7 @@ export default function ClientRequestsPanel() {
         <div className="w-full space-y-6 pb-24 admin-panel-enter">
             <div className="rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 space-y-6 min-h-[calc(100vh-220px)]">
                 <div className="flex items-center justify-between">
-                    <div>
+                    <div data-tour="clientRequests.client-requests">
                         <h2 className="text-xl font-semibold">Client Requests</h2>
                         <p className="microtext text-muted-foreground mt-1">
                             Manage access requests for <span className="font-mono text-emerald-400">{brandKey}</span>.
@@ -1058,7 +1058,7 @@ export default function ClientRequestsPanel() {
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                                 </svg>
                             </div>
-                            <input
+                            <input data-tour="clientRequests.request-search"
                                 type="text"
                                 placeholder="Search requests..."
                                 className="pl-9 pr-4 h-10 w-full text-sm rounded-lg border border-foreground/[0.05] bg-background focus:outline-none focus:border-foreground/30 transition-colors"
@@ -1703,6 +1703,15 @@ export default function ClientRequestsPanel() {
                     unifiedFeeEnabled={unifiedFeeEnabled}
                     presentedFeeBps={presentedFeeBps}
                     creditPresentedFeeBps={creditPresentedFeeBps}
+                    achPresentedFeeBps={fetchedBrand?.achPresentedFeeBps !== undefined ? fetchedBrand.achPresentedFeeBps : (brand as any)?.achPresentedFeeBps}
+                    cryptoPresentedFeeBps={fetchedBrand?.cryptoPresentedFeeBps !== undefined ? fetchedBrand.cryptoPresentedFeeBps : (brand as any)?.cryptoPresentedFeeBps}
+                    optionalFeeDefaults={{
+                        achPlatformFeeBps: fetchedBrand?.achPlatformFeeBps !== undefined ? fetchedBrand.achPlatformFeeBps : (brand as any)?.achPlatformFeeBps,
+                        cryptoPlatformFeeBps: fetchedBrand?.cryptoPlatformFeeBps !== undefined ? fetchedBrand.cryptoPlatformFeeBps : (brand as any)?.cryptoPlatformFeeBps,
+                        achAgentFeeBps: fetchedBrand?.achAgentFeeBps !== undefined ? fetchedBrand.achAgentFeeBps : (brand as any)?.achAgentFeeBps,
+                        cryptoAgentFeeBps: fetchedBrand?.cryptoAgentFeeBps !== undefined ? fetchedBrand.cryptoAgentFeeBps : (brand as any)?.cryptoAgentFeeBps,
+                        primaryAgentWallet: fetchedBrand?.primaryAgentWallet || (brand as any)?.primaryAgentWallet || process.env.NEXT_PUBLIC_AGENT_WALLET || "",
+                    }}
                     requiredAgents={{ credit: getEnvAgents(false), debit: getEnvAgents(true) }}
                     processorFeeBps={{ credit: fetchedBrand?.creditStripeFeeBps ?? (brand as any)?.creditStripeFeeBps ?? 350, debit: fetchedBrand?.debitStripeFeeBps ?? (brand as any)?.debitStripeFeeBps ?? 225 }}
                     defaults={{

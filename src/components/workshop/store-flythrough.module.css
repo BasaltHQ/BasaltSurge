@@ -1,0 +1,81 @@
+.flythrough { position: relative; height: 650svh; background: #122c28; color: #f8f4e8; }
+.stage { position: sticky; top: 0; width: 100%; height: 100svh; min-height: 620px; overflow: hidden; isolation: isolate; }
+.canvas { width: 100%; height: 100%; display: block; }
+.hiddenQr { display: none !important; }
+.shade { pointer-events: none; position: absolute; inset: 0; background: linear-gradient(180deg, #0a252ad9, transparent 44%, transparent 65%, #071e22ed), radial-gradient(ellipse at 8% 20%, #0b2926c9, transparent 62%); }
+.topline { position: absolute; top: 25px; left: 4vw; right: 4vw; display: flex; align-items: center; justify-content: space-between; gap: 20px; font: 9px/1.6 monospace; letter-spacing: .1em; color: #d4e6dc; }
+.topline > span { display: flex; align-items: center; gap: 9px; }
+.topline i { width: 6px; height: 6px; border-radius: 50%; background: #efb58b; box-shadow: 0 0 15px #efb58b77; }
+.topline > span:last-child { opacity: .6; font-size: 8px; }
+.storyCopy { pointer-events: none; position: absolute; left: 4vw; top: 85px; width: min(490px, 47vw); }
+.storyCopy > span { font: 9px monospace; letter-spacing: .13em; color: #f0cda5; }
+.storyCopy h2 { font-size: clamp(32px, 4.2vw, 64px) !important; line-height: 1.04 !important; letter-spacing: -.055em; font-weight: 500; margin: 18px 0 !important; text-shadow: 0 2px 24px #0a292477; }
+.storyCopy > p { max-width: 430px; font-size: 14px; line-height: 1.75; color: #e0e9df; text-shadow: 0 1px 12px #092f27; }
+.loading { position: absolute; left: 50%; top: 52%; transform: translate(-50%, -50%); padding: 15px 25px; border: 1px solid #bfdbba50; background: #173d36e8; border-radius: 8px; font-size: 14px; }
+.hotspots { position: absolute; inset: 0; pointer-events: none; }
+.hotspot { pointer-events: auto; position: absolute; visibility: hidden; transform: translate(-50%, -100%); display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 15px; color: #153f32; background: #f3f6e9ed; backdrop-filter: blur(10px); border: 1px solid #efffd0; border-radius: 7px; box-shadow: 0 8px 35px #132e3b44; text-align: left; cursor: pointer; }
+.hotspot > span { display: flex; align-items: center; gap: 5px; font-size: 9px; color: #397954; }
+.hotspot > strong { font-size: 12px; font-weight: 600; white-space: nowrap; }
+.hotspot i { position: absolute; bottom: -16px; height: 16px; width: 1px; background: #edffbf; left: calc(50% + var(--marker-anchor-x, 0px)); }
+.hotspot:hover, .hotspot[aria-expanded='true'] { background: #dafaab; transform: translate(-50%, -100%) scale(1.04); }
+.inventoryCard, .paymentCard, .treasuryCard { position: absolute; right: 4vw; top: 100px; width: 285px; padding: 24px; border: 1px solid #d5e4c745; background: #123c32e8; backdrop-filter: blur(18px); border-radius: 10px; box-shadow: 0 20px 70px #051d2930; }
+.inventoryCard > div { display: flex; align-items: center; gap: 9px; color: #badfa2; font: 8px monospace; letter-spacing: .1em; }
+.inventoryCard label { display: block; font-size: 10px; color: #adccbb; margin-top: 20px; }
+.inventoryCard select { display: block; width: 100%; padding: 10px; margin-top: 8px; border: 1px solid #bcdbbe50; color: #e7eedb; background: #102e28; border-radius: 4px; }
+.inventoryCard h3, .paymentCard h3, .treasuryCard h3 { margin: 20px 0 12px !important; font-size: 26px !important; }
+.inventoryCard p, .paymentCard p, .treasuryCard p { font-size: 12px; line-height: 1.8; color: #c4d6c7; }
+.inventoryCard footer { display: flex; gap: 7px; align-items: center; padding-top: 18px; margin-top: 20px; border-top: 1px solid #d5e4c730; font-size: 11px; color: #cdebb1; }
+.inventoryCard footer span { font-size: 8px; color: #9ab49f; margin-left: auto; }
+.paymentCard > svg { color: #cdeba4; margin-bottom: 13px; }
+.paymentCard > span, .treasuryCard > span { display: block; color: #d2dda8; font: 8px/1.8 monospace; letter-spacing: .1em; }
+.paymentCard > div { display: flex; align-items: center; gap: 7px; padding-top: 18px; margin-top: 18px; border-top: 1px solid #d5e4c730; font-size: 11px; color: #cef2b4; }
+.paymentCard small, .treasuryCard small { display: block; color: #a1b8a7; font-size: 9px; line-height: 1.7; margin-top: 15px; }
+.scanCard > .scanSteps { display: flex; gap: 5px; border: 0; padding: 0; margin: 18px 0 0; }
+.scanSteps i { flex: 1; height: 2px; background: #d3c5a733; }.scanSteps i[data-complete='true'] { background: #d8bc8d; }
+.replay { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; border: 0; padding: 0; color: #dec9a8; background: none; font-size: 10px; cursor: pointer; }
+.treasuryCard { width: 320px; }
+.treasuryCard > div { display: grid; gap: 9px; margin-top: 17px; }
+.treasuryCard button { display: flex; gap: 10px; align-items: center; padding: 12px; border: 1px solid #cde2b745; border-radius: 5px; background: #0f2c26; color: #c6d9c2; font-size: 12px; cursor: pointer; }
+.treasuryCard button[aria-pressed='true'] { background: #d6eaaa; color: #193c28; border-color: #d6eaaa; }
+.bottom { position: absolute; bottom: 95px; left: 4vw; right: 4vw; }
+.sceneProgress { height: 2px; background: #d0e0c830; margin-bottom: 18px; }
+.sceneProgress > span { display: block; height: 100%; background: #efb58b; }
+.bottom nav { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.bottom nav button { display: flex; gap: 9px; align-items: center; border: 1px solid #d3e9d025; border-radius: 5px; padding: 13px 10px; background: #183b35b5; color: #c0d4c3; font-size: 11px; cursor: pointer; backdrop-filter: blur(14px); }
+.bottom nav button > span { font: 8px monospace; color: #a8b895; }
+.bottom nav button[aria-current='step'] { background: #f0c79b; color: #253c2e; border-color: #f0c79b; }
+.bottom nav button[aria-current='step'] > span { color: #4e6346; }
+.sceneFooter { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-top: 17px; }
+.sceneFooter > span { font: 8px monospace; color: #a9bdac; letter-spacing: .1em; }
+.sceneFooter button { display: flex; gap: 15px; align-items: center; background: transparent; color: #e9e8cf; border: 0; font-size: 12px; cursor: pointer; }
+.flythrough button:focus-visible, .flythrough select:focus-visible { outline: 2px solid #ffe3b5; outline-offset: 4px; }
+.fallback { height: 100svh; min-height: 720px; }
+.fallbackScene { position: absolute; top: 44%; left: 50%; transform: translate(-50%, -30%); text-align: center; width: min(500px, 80%); color: #cde2bb; }
+.fallbackScene > svg { margin: auto; }.fallbackScene h3 { margin: 16px !important; }.fallbackScene p { font-size: 13px; line-height: 1.8; }
+@media (max-width: 900px) {
+  .storyCopy { width: 50%; top: 65px; }.storyCopy h2 { font-size: 37px !important; }.storyCopy > p { font-size: 12px; }
+  .inventoryCard, .paymentCard, .treasuryCard { top: 70px; width: 245px; padding: 19px; }
+  .topline > span:last-child { display: none; }.bottom nav { gap: 5px; }.bottom nav button { font-size: 10px; gap: 5px; }
+}
+@media (max-width: 600px) {
+  .flythrough { height: 600svh; }.stage { min-height: 680px; }
+  .topline { top: 17px; left: 20px; right: 20px; font-size: 7px; letter-spacing: .03em; }.topline > span:nth-child(2) { font-size: 6px; }
+  .storyCopy { top: 53px; left: 20px; right: 20px; width: auto; }.storyCopy > span { font-size: 7px; }.storyCopy h2 { font-size: 33px !important; max-width: 340px; margin: 12px 0 !important; }.storyCopy > p { font-size: 11px; max-width: 350px; }
+  .shade { background: linear-gradient(180deg, #0a252af0, #0a252a70 29%, transparent 43%, transparent 65%, #071e22fa); }
+  .inventoryCard, .paymentCard, .treasuryCard { top: auto; bottom: 226px; right: 16px; width: 210px; padding: 15px; }
+  .inventoryCard h3, .paymentCard h3, .treasuryCard h3 { font-size: 20px !important; margin: 11px 0 7px !important; }
+  .inventoryCard label { margin-top: 12px; }.inventoryCard footer { margin-top: 12px; padding-top: 12px; }.paymentCard > svg { display: none; }
+  .paymentCard small, .treasuryCard small { font-size: 8px; line-height: 1.5; margin-top: 8px; }.treasuryCard > div { margin-top: 10px; gap: 6px; }.treasuryCard button { padding: 8px; font-size: 10px; }
+  .treasuryCard { left: 16px; width: auto; padding: 12px; }.treasuryCard p { font-size: 10px; margin-top: 8px; }
+  .treasuryCard > div { grid-template-columns: 1fr 1fr; }.treasuryCard h3, .paymentCard h3 { display: none; }
+  .paymentCard > div { padding-top: 10px; margin-top: 10px; }
+  .scanCard { width: 230px; }.scanCard p { font-size: 10px; margin-top: 10px; }.scanCard .replay { margin-top: 10px; }
+  .hotspot { padding: 7px 8px; }.hotspot strong { font-size: 9px; }.hotspot span { font-size: 7px; }
+  .inventoryCard { left: 16px; width: auto; padding: 12px; }.inventoryCard h3 { display: none; }
+  .inventoryCard label { margin-top: 8px; }.inventoryCard select { padding: 6px; margin-top: 5px; }
+  .inventoryCard p { margin-top: 6px; }.inventoryCard footer { margin-top: 4px; padding-top: 0; border: 0; }
+  .bottom { bottom: 83px; left: 16px; right: 16px; }.bottom nav { grid-template-columns: repeat(3, 1fr); gap: 6px; }.bottom nav button { padding: 10px 8px; font-size: 10px; }.sceneProgress { margin-bottom: 12px; }.sceneFooter > span { display: none; }.sceneFooter { justify-content: flex-end; margin-top: 11px; }.sceneFooter button { font-size: 11px; }
+  .fallback { height: 100svh; min-height: 720px; }
+}
+@media (prefers-reduced-motion: reduce) { .flythrough * { transition: none !important; animation: none !important; } }
+@media print { .flythrough { height: auto; }.stage { position: relative; height: auto; min-height: 400px; }.canvas, .hotspots, .bottom { display: none; } }

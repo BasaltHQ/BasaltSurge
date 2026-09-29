@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "node:crypto";
+import { canRefreshAchSettlementTarget, resolveReceiptSettlementTarget } from "@/lib/payment-split-routing";
 import { getContainer } from "@/lib/cosmos";
 import { getPlatformAnalyticsFeeData } from "@/lib/platform-analytics-fees";
 import { loadAnalyticsFeeSummary } from "@/lib/reporting/analytics-fee-summary";
@@ -31,7 +32,7 @@ const RECEIPT_PROJECTION = Object.fromEntries([
   "parentUrl", "merchantName", "shopName", "ipAddress", "buyerWallet", "stripeSessionId",
   "sessionId", "stripePaidSessionId", "stripePaymentAttemptSessionId",
   "paymentId", "thirdwebMetadata.paymentId", "transactionHash", "txHash", "leg2TxHash",
-  "leg1TxHash", "onrampTxHash", "crypto", "isCrypto", "paymentMethod", "splitRoutingSnapshot", "settlementSplitAddress", "settlementSplitKind", "settlementSplitVersion", "splitAddressUsed",
+  "leg1TxHash", "onrampTxHash", "crypto", "isCrypto", "paymentMethod", "splitRoutingSnapshot", "settlementSplitAddress", "settlementSplitKind", "settlementSplitVersion", "splitAddressUsed", "settlementSubmissionAt", "settlementTarget",
 ].map(field => [field, 1]));
 
 type CachedPopulation = { rows: any[]; facets: ReturnType<typeof buildAnalyticsFacets>; generatedAt: string; expiresAt: number };
@@ -85,11 +86,14 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
     // Pre-fetch merchant configurations for split addresses and merchant names resolution in a single query
     const configMap: Record<string, { brandKey?: string; merchantName?: string; slug?: string; splitAddress?: string; splitAddressCredit?: string }> = {};
     const brandNameMap: Record<string, string> = {};
+    const routingConfigMap: Record<string, any> = {};
     try {
       const brandSql = partnerScope ? partnerAnalyticsSqlBrandScope(partnerScope.brandKey) : null;
+      const configBrandClause = brandSql
+        ? `(${brandSql.clause} OR (c.type = 'site_config' AND c.id = @analyticsSiteConfigId))` : "";
       const configQuery = {
-        query: "SELECT c.type, c.id, c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.displayName, c.title, c.slug, c.theme, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit FROM c WHERE (c.type = 'site_config' OR c.type = 'shop_config' OR c.type = 'wallet_config' OR c.type = 'client_request' OR c.type = 'brand_config')" + (brandSql ? ` AND ${brandSql.clause}` : ""),
-        parameters: brandSql?.parameters || [],
+        query: "SELECT c.type, c.id, c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.displayName, c.title, c.slug, c.theme, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.splitAddressAch, c.splitAch, c.splitConfigAch, c.splitOverrides, c.splitVersion, c.splitVersionCredit, c.splitVersionAch, c.config FROM c WHERE (c.type = 'site_config' OR c.type = 'shop_config' OR c.type = 'wallet_config' OR c.type = 'client_request' OR c.type = 'brand_config')" + (configBrandClause ? ` AND ${configBrandClause}` : ""),
+        parameters: brandSql ? [...brandSql.parameters, { name: "@analyticsSiteConfigId", value: `site:config:${partnerScope!.brandKey}` }] : [],
       };
       let configs: any[];
       const cachedConfig = configCache.get(cacheScope);
@@ -98,7 +102,8 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         configGeneratedAt = cachedConfig.generatedAt;
       } else {
         const result = await container.items.query(configQuery).fetchAll();
-        configs = (result.resources || []).filter(config => !partnerScope || partnerAnalyticsRecordMatchesBrand(config, partnerScope.brandKey));
+        configs = (result.resources || []).filter(config => !partnerScope || partnerAnalyticsRecordMatchesBrand(config, partnerScope.brandKey)
+          || (!String(config.brandKey || "").trim() && config.type === "site_config" && config.id === `site:config:${partnerScope.brandKey}`));
         configGeneratedAt = new Date().toISOString();
         for (const [key, value] of configCache) if (value.expiresAt <= Date.now()) configCache.delete(key);
         while (configCache.size >= 8) configCache.delete(configCache.keys().next().value!);
@@ -107,6 +112,7 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
       for (const cfg of configs || []) {
         const configBrandKey = String(
           cfg.brandKey
+          || (cfg.type === "site_config" && String(cfg.id || "").startsWith("site:config:") ? String(cfg.id).slice("site:config:".length) : "")
           || cfg.theme?.brandKey
           || (cfg.type === "brand_config" ? String(cfg.id || "").replace(/^brand:config:/i, "") : "")
         ).toLowerCase().trim();
@@ -123,6 +129,11 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
           const wLower = String(cfg.wallet).toLowerCase().trim();
           const bKeyLower = configBrandKey;
           const pair = `${wLower}:${bKeyLower}`;
+          if (cfg.type === "site_config") {
+            // Routing must come from this merchant's canonical brand document,
+            // independently of whichever document provides its display name.
+            if (!routingConfigMap[pair] || cfg.id === `site:config:${bKeyLower}`) routingConfigMap[pair] = cfg;
+          }
           const mName = cfg.merchantName || cfg.shopName || cfg.businessName || cfg.displayName || cfg.name || cfg.title;
           const entry = {
             brandKey: configBrandKey || undefined,
@@ -210,12 +221,39 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         const result = await container.items.query({ query: `SELECT * FROM c WHERE ${clauses.join(" AND ")}`, parameters }).fetchAll();
         projected = result.resources || [];
       }
-      projected = projected.filter(receipt => !partnerScope || partnerAnalyticsRecordMatchesBrand(receipt, partnerScope.brandKey)).map(receipt => {
+      projected = projected.filter(receipt => !partnerScope || partnerAnalyticsRecordMatchesBrand(receipt, partnerScope.brandKey));
+      // Deployment activates a document by its ID + merchant partition, not by
+      // its legacy type/brand metadata. Read that same authoritative document
+      // before using a persisted target or the bulk-query compatibility rows.
+      const pendingAchMerchants = new Map<string, { wallet: string; brandKey: string }>();
+      for (const receipt of projected) {
+        if (!canRefreshAchSettlementTarget(receipt)) continue;
+        const wallet = String(receipt.wallet || receipt.merchantWallet || "").toLowerCase().trim();
+        const brandKey = getReceiptBrandKey(receipt);
+        if (wallet && brandKey && brandKey !== "unknown") pendingAchMerchants.set(`${wallet}:${brandKey}`, { wallet, brandKey });
+      }
+      const merchants = [...pendingAchMerchants.entries()];
+      for (let start = 0; start < merchants.length; start += 20) {
+        await Promise.all(merchants.slice(start, start + 20).map(async ([key, { wallet, brandKey }]) => {
+          try {
+            const { resource } = await container.item(`site:config:${brandKey}`, wallet).read();
+            if (resource) routingConfigMap[key] = resource;
+          } catch (error: any) {
+            if (Number(error?.code || error?.statusCode) !== 404) {
+              configAvailable = false;
+              console.error("[PLATFORM ANALYTICS API] Failed to read pending ACH configuration:", error);
+            }
+          }
+        }));
+      }
+      projected = projected.map(receipt => {
         const brandKey = getReceiptBrandKey(receipt);
         const walletKey = String(receipt.wallet || receipt.merchantWallet || "").toLowerCase().trim();
         const configured = configMap[`${walletKey}:${brandKey}`] || configMap[walletKey];
         return {
           ...receipt, brandKey, brandName: getReceiptBrandName(receipt, brandKey),
+          ...(canRefreshAchSettlementTarget(receipt) && routingConfigMap[`${walletKey}:${brandKey}`]
+            ? { settlementTarget: resolveReceiptSettlementTarget(receipt, routingConfigMap[`${walletKey}:${brandKey}`]) } : {}),
           merchantName: receipt.merchantName || receipt.shopName || configured?.merchantName || null,
           merchantWallet: receipt.merchantWallet || receipt.wallet || null,
         };
@@ -328,6 +366,7 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         cardFunding: analyticsFunding(r) === "bank" ? "us_bank_account" : analyticsFunding(r),
         splitRoutingSnapshot: r.splitRoutingSnapshot || null,
         settlementSplitAddress: analyticsSplitRoute(r).address,
+        settlementTarget: r.settlementTarget,
         settlementSplitKind: analyticsSplitRoute(r).kind,
         settlementSplitVersion: analyticsSplitRoute(r).version,
         splitRouteInherited: analyticsSplitRoute(r).inherited,

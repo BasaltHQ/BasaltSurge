@@ -727,7 +727,7 @@ function MessagesPanelContent({ role, me }: { role?: 'buyer' | 'merchant'; me: s
 
         {/* Search + Filter */}
         <div className="space-y-2 mb-2 shrink-0">
-          <input
+          <input data-tour="messages-buyer.conversation-search"
             aria-label="Search conversations"
             className="w-full px-2 py-1 rounded-md border bg-background"
             placeholder="Search by subject or participant…"
@@ -735,7 +735,7 @@ function MessagesPanelContent({ role, me }: { role?: 'buyer' | 'merchant'; me: s
             onChange={(e) => setSearchQuery(e.target.value)}
           />
           <div className="flex gap-1 flex-wrap" role="tablist" aria-label="Conversation filter">
-            <button
+            <button data-tour="messages.filterMode.all" data-tour-action="activate" data-tour-active={filterMode === "all"}
               role="tab"
               aria-selected={filterMode === "all"}
               className={cx(
@@ -746,7 +746,7 @@ function MessagesPanelContent({ role, me }: { role?: 'buyer' | 'merchant'; me: s
             >
               All
             </button>
-            <button
+            <button data-tour="messages.filterMode.unread" data-tour-action="activate" data-tour-active={filterMode === "unread"}
               role="tab"
               aria-selected={filterMode === "unread"}
               className={cx(

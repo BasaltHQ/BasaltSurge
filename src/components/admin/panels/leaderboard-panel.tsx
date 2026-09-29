@@ -52,7 +52,7 @@ export function LeaderboardPanel() {
   return (
     <div className="w-full space-y-6 pb-24 admin-panel-enter">
       <div className="flex items-center justify-between mb-6">
-        <div>
+        <div data-tour="leaderboard.loyalty-rankings">
           <h2 className="text-2xl font-bold flex items-center gap-2">
             <Trophy className="w-6 h-6 text-primary" />
             Loyalty Leaderboard
@@ -68,7 +68,7 @@ export function LeaderboardPanel() {
 
       <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 max-w-full">
         <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-foreground/[0.05] to-transparent"></div>
-        <ol className="divide-y divide-foreground/[0.05]">
+        <ol data-tour="leaderboard.rankings" className="divide-y divide-foreground/[0.05]">
           {loading ? (
             Array.from({ length: 8 }).map((_, i) => (
               <li key={`skeleton-${i}`} className="flex items-center justify-between gap-3 py-4 animate-pulse">

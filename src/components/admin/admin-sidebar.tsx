@@ -1,6 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import type { TourNavigation, TourStop, TourRole } from '@/lib/admin-tour/catalog';
+import { resolveTourBrand } from '@/lib/admin-tour/branding';
 import { createPortal } from 'react-dom';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -76,6 +78,8 @@ import { canAccessPanel, isPlatformSuperAdmin, resolveWalletRole } from '@/lib/a
 import { canAccessMerchantPanel } from '@/lib/merchant-panel-access';
 
 export type AdminTabKey =
+  | 'takeTour'
+  | 'tourDevelopers'
   | 'dashboard'
   | 'terminal'
   | 'devices'
@@ -149,6 +153,7 @@ export type AdminTabKey =
   | 'agentUniversity';
 
 interface AdminSidebarProps {
+  onTourNavigation?: (navigation: TourNavigation) => void;
   activeTab: AdminTabKey;
   onChangeTab: (tab: AdminTabKey) => void;
   industryPack: string | null;
@@ -321,7 +326,7 @@ function NavGroup({ item, activeTab, onChangeTab }: { item: NavItem; activeTab: 
   );
 }
 
-export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding, canMerchants, isSuperadmin: isSuperadminProp, canAdmins, onCollapseChange, disabledMerchantModules = [] }: AdminSidebarProps) {
+export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding, canMerchants, isSuperadmin: isSuperadminProp, canAdmins, onCollapseChange, disabledMerchantModules = [], onTourNavigation }: AdminSidebarProps) {
   const account = useActiveAccount();
   const wallet = (account?.address || "").toLowerCase();
   const isSuperadmin = isPlatformSuperAdmin(wallet);
@@ -332,6 +337,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
   const { theme } = useTheme();
   const [containerBrandKey, setContainerBrandKey] = useState<string>("");
   const [containerType, setContainerType] = useState<string>("");
+  const [containerResolved, setContainerResolved] = useState(false);
   // Partner brand assets (fetched when container is partner type)
   const [partnerLogoSymbol, setPartnerLogoSymbol] = useState<string>("");
   const [partnerLogoFavicon, setPartnerLogoFavicon] = useState<string>("");
@@ -355,12 +361,15 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
         const ct = String(ci?.containerType || "").trim();
         setContainerBrandKey(bk);
         setContainerType(ct);
+        setContainerResolved(true);
         // If not a partner container, stop loading state immediately
         if (ct.toLowerCase() !== "partner" || !bk) {
           setIsPartnerBrandLoading(false);
         }
       })
       .catch(() => {
+        if (cancelled) return;
+        setContainerResolved(true);
         setIsPartnerBrandLoading(false);
       });
     return () => { cancelled = true; };
@@ -385,7 +394,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
           setPartnerLogoSymbol(String(logos?.symbol || "").trim());
           setPartnerLogoFavicon(String(logos?.favicon || cfg?.theme?.brandFaviconUrl || "").trim());
           setPartnerLogoApp(String(logos?.app || cfg?.theme?.brandLogoUrl || "").trim());
-          setPartnerBrandName(String(cfg?.name || cfg?.displayName || "").trim());
+          setPartnerBrandName(String(data?.overrides?.name || cfg?.name || cfg?.displayName || "").trim());
           setIsPartnerBrandLoading(false);
         }
       } catch {
@@ -570,6 +579,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
       title: 'General',
       icon: <LayoutDashboard className="w-4 h-4" />,
       items: [
+        { title: 'Take The Tour', key: 'takeTour' as AdminTabKey, icon: <Sparkles className="w-4 h-4" /> },
         { title: 'Support', key: 'support' as AdminTabKey, icon: <LifeBuoy className="w-4 h-4" /> },
         { title: 'Developers', href: '/developers', icon: <Code className="w-4 h-4" /> },
       ],
@@ -697,6 +707,48 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
 
   // Filter out groups with zero children (e.g. Apps when no industry pack is set)
   const visibleGroups = sortedGroups.filter(g => !g.items || g.items.length > 0);
+
+  // Export the SAME resolved navigation used by all sidebar layouts. Keep selection
+  // in this component so team context changes use the normal verified page handler.
+  const tourTargets = visibleGroups.flatMap(group => (group.items || []).map(child => {
+    const panel = child.key || (child.href === '/developers' ? 'developers' : '');
+    const role: TourRole | undefined = group.profile || group.title === 'Merchant (My Shop)' ? 'merchant' :
+      group.title === 'Shopper' ? 'shopper' : group.title === 'Partner/Admin' ? 'partner/admin' : group.title === 'Platform' ? 'platform' : undefined;
+    const stop: TourStop = { id: `${group.profile?.merchantWallet || group.title}:${panel}`, panel, title: child.title, section: group.title, role };
+    const selectionGroup = group.title === 'Apps' && isTeamMemberOnly
+      ? { ...group, profile: teamProfiles.find(p => canAccessMerchantPanel(panel, p.permissions)) }
+      : group.title === 'Apps' ? { ...group, title: 'Merchant (My Shop)' } : group;
+    return { stop, selectionGroup };
+  })).filter(target => target.stop.panel && target.stop.panel !== 'takeTour' &&
+    !(target.stop.section === 'Apps' && disabledMerchantModules.includes(target.stop.panel)));
+  const tourTargetsRef = useRef(tourTargets);
+  tourTargetsRef.current = tourTargets;
+  const changeTabRef = useRef(onChangeTab);
+  changeTabRef.current = onChangeTab;
+  const tourSignature = JSON.stringify(tourTargets.map(target => target.stop));
+  const tourBrandSignature = JSON.stringify(resolveTourBrand({
+    key: containerBrandKey || brand.key || '',
+    isPartner: isPartnerContainer || (!containerType && !!brand.key && !['portalpay', 'basaltsurge'].includes(brand.key.toLowerCase())),
+    partnerName: partnerBrandName,
+    contextKey: brand.key,
+    contextName: brand.name,
+    // ThemeContext may contain the active merchant's shop name; the platform
+    // identity comes from BrandContext, not that merchant's presentation theme.
+    platformName: brand.name,
+    ready: containerResolved && (!isPartnerContainer || !isPartnerBrandLoading),
+  }));
+  useEffect(() => {
+    onTourNavigation?.({
+      stops: JSON.parse(tourSignature) as TourStop[],
+      brand: JSON.parse(tourBrandSignature),
+      navigate: id => {
+        const target = tourTargetsRef.current.find(item => item.stop.id === id);
+        if (!target) return false;
+        selectNavigationTab(target.selectionGroup, (target.stop.panel === 'developers' ? 'tourDevelopers' : target.stop.panel) as AdminTabKey, changeTabRef.current);
+        return true;
+      },
+    });
+  }, [tourSignature, tourBrandSignature, onTourNavigation]);
 
   return (
     <>

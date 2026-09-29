@@ -82,6 +82,7 @@ Module._resolveFilename = function(request, parent, ...rest) {
 };
 Module._load = function(request, parent, ...rest) {
   if (request === 'react') return hookReact;
+  if (request === 'next/navigation') return { useRouter: () => ({ refresh() {} }) };
   if (request === 'react-dom') return { createPortal: child => child };
   if (request === 'thirdweb/react') return { useActiveAccount: () => ({ address: merchant }) };
   if (request === 'thirdweb') return {};
@@ -98,12 +99,111 @@ for (const extension of ['.ts', '.tsx']) Module._extensions[extension] = (module
 };
 const { SplitDeployModal } = require('../SplitDeployModal.tsx');
 const { ReserveAnalytics } = require('../reserve/ReserveAnalytics.tsx');
+const PlatformSettingsPanel = require('@/app/(web)/admin/panels/PlatformSettingsPanel.tsx').default;
 const walk = node => !node || typeof node !== 'object' ? [] : Array.isArray(node) ? node.flatMap(walk) : [node, ...walk(node.props?.children)];
 const text = node => Array.isArray(node) ? node.map(text).join('') : node && typeof node === 'object' ? text(node.props?.children) : String(node ?? '');
 const find = (tree, predicate) => walk(tree).find(predicate);
 const defaults = { credit: { platformBps: 150, partnerBps: 50, merchantBps: 9800, agents: [], partnerWallet: ach }, debit: { platformBps: 125, partnerBps: 50, merchantBps: 9825, agents: [], partnerWallet: ach } };
 global.window = {};
 global.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+
+test('platform method presented fees load, save zero and custom rates, clear, and reload', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let saved = { achPresentedFeeBps: 110, cryptoPresentedFeeBps: 50 };
+  global.fetch = async (_url, options) => {
+    if (options?.method === 'PATCH') saved = { ...saved, ...JSON.parse(options.body) };
+    return { ok: true, json: async () => ({ brand: saved }) };
+  };
+  const runner = new HookRunner();
+  await runner.settle(PlatformSettingsPanel);
+  const input = key => find(runner.tree, n => n.props?.id === `platform-${key}`);
+  assert.equal(input('achPresentedFeeBps').props.value, 110);
+  assert.equal(input('cryptoPresentedFeeBps').props.value, 50);
+  for (const [achRate, cryptoRate] of [['160', '0'], ['', '']]) {
+    input('achPresentedFeeBps').props.onChange({ target: { value: achRate } });
+    input('cryptoPresentedFeeBps').props.onChange({ target: { value: cryptoRate } });
+    await runner.settle(PlatformSettingsPanel);
+    await find(runner.tree, n => n.type === 'button' && text(n).includes('Save Changes')).props.onClick();
+    await runner.settle(PlatformSettingsPanel);
+    assert.equal(saved.achPresentedFeeBps, achRate === '' ? null : Number(achRate));
+    assert.equal(saved.cryptoPresentedFeeBps, cryptoRate === '' ? null : Number(cryptoRate));
+    const reload = new HookRunner();
+    await reload.settle(PlatformSettingsPanel);
+    assert.equal(find(reload.tree, n => n.props?.id === 'platform-achPresentedFeeBps').props.value, achRate === '' ? '' : Number(achRate));
+    assert.equal(find(reload.tree, n => n.props?.id === 'platform-cryptoPresentedFeeBps').props.value, cryptoRate === '' ? '' : Number(cryptoRate));
+    reload.dispose();
+  }
+  runner.dispose();
+});
+
+test('platform ACH and Crypto allocation defaults load, save, clear and reload independently', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const keys = ['achPlatformFeeBps', 'cryptoPlatformFeeBps', 'achAgentFeeBps', 'cryptoAgentFeeBps'];
+  let saved = Object.fromEntries(keys.map((key, i) => [key, (i + 1) * 25]));
+  global.fetch = async (_url, options) => {
+    if (options?.method === 'PATCH') saved = { ...saved, ...JSON.parse(options.body) };
+    return { ok: true, json: async () => ({ brand: saved }) };
+  };
+  const runner = new HookRunner();
+  await runner.settle(PlatformSettingsPanel);
+  for (const [i, key] of keys.entries()) assert.equal(find(runner.tree, n => n.props?.id === `platform-${key}`).props.value, (i + 1) * 25);
+  for (const values of [['50', '0', '10', '25'], ['', '', '', '']]) {
+    for (const [i, key] of keys.entries()) find(runner.tree, n => n.props?.id === `platform-${key}`).props.onChange({ target: { value: values[i] } });
+    await runner.settle(PlatformSettingsPanel);
+    await find(runner.tree, n => n.type === 'button' && text(n).includes('Save Changes')).props.onClick();
+    await runner.settle(PlatformSettingsPanel);
+    const reload = new HookRunner();
+    await reload.settle(PlatformSettingsPanel);
+    for (const [i, key] of keys.entries()) {
+      assert.equal(saved[key], values[i] === '' ? null : Number(values[i]));
+      assert.equal(find(reload.tree, n => n.props?.id === `platform-${key}`).props.value, values[i] === '' ? '' : Number(values[i]));
+    }
+    reload.dispose();
+  }
+  runner.dispose();
+});
+
+test('new optional drafts use method platform and primary agent defaults while existing allocations stay intact', async () => {
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    if (options?.body) requests.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ config: { splitRevision: requests.length } }) };
+  };
+  const runner = new HookRunner();
+  const optionalFeeDefaults = { achPlatformFeeBps: 50, cryptoPlatformFeeBps: 0, achAgentFeeBps: 25, cryptoAgentFeeBps: 0, primaryAgentWallet: primary };
+  const credit = { ...defaults.credit, agents: [{ wallet: primary, bps: 100 }, { wallet: historical, bps: 10 }], merchantBps: 9690 };
+  const Component = () => SplitDeployModal({ wallet: merchant, brandKey: 'test', account: { address: merchant }, defaults: { ...defaults, credit }, optionalFeeDefaults, canEditPlatform: true, onClose() {}, onSaved: async () => {} });
+  await runner.settle(Component);
+  for (const label of ['ACH', 'Crypto']) {
+    find(runner.tree, n => n.props?.['aria-label'] === `Separate ${label} fees`).props.onClick();
+    await runner.settle(Component);
+  }
+  await find(runner.tree, n => n.type === 'button' && text(n) === 'Save drafts').props.onClick();
+  const achDraft = requests.find(r => r.splitKind === 'ach').draft;
+  const cryptoDraft = requests.find(r => r.splitKind === 'crypto').draft;
+  assert.equal(achDraft.platformBps, 50);
+  assert.equal(achDraft.agents.find(a => a.wallet === primary).bps, 25);
+  assert.equal(cryptoDraft.platformBps, 0);
+  assert.deepEqual(cryptoDraft.agents, [{ wallet: historical, bps: 10 }]);
+  assert.equal(requests.find(r => r.splitKind === 'credit').draft.platformBps, 150);
+  assert.equal(credit.agents[0].bps, 100);
+  runner.dispose();
+});
+
+test('method fee defaults do not replace an existing deployed ACH allocation', async () => {
+  const existing = { ...defaults.credit, platformBps: 80, merchantBps: 9810, agents: [{ wallet: primary, bps: 60 }] };
+  global.fetch = async () => ({ ok: true, json: async () => ({ config: { splitConfigAch: existing, splitAddressAch: ach, splitOverrides: { ach: true } } }) });
+  const runner = new HookRunner();
+  const Component = () => SplitDeployModal({ wallet: merchant, brandKey: 'test', account: { address: merchant }, defaults,
+    optionalFeeDefaults: { achPlatformFeeBps: 50, achAgentFeeBps: 25, primaryAgentWallet: primary }, canEditPlatform: true, onClose() {}, onSaved: async () => {} });
+  await runner.settle(Component);
+  find(runner.tree, n => n.props?.role === 'tab' && text(n) === 'ACH').props.onClick();
+  await runner.settle(Component);
+  const values = walk(runner.tree).filter(n => n.type === 'input' && n.props?.type === 'number').map(n => n.props.value);
+  assert.equal(values[0], 80);
+  assert.ok(values.includes(60));
+  runner.dispose();
+});
 
 test('deployment modal starts dual, adds independent overrides, and saves drafts without activation', async () => {
   const requests = [];
@@ -242,6 +342,27 @@ test('modal totals match checkout and contract allocations for all four methods'
         assert.ok(output.includes('Partner Fee0.50%'));
         assert.ok(output.includes('Partner Share0.50%'));
       }
+    }
+    runner.dispose();
+  }
+});
+
+test('partner modal uses independent ACH and Crypto presented fees in both layouts', async () => {
+  const allocation = { platformBps: 50, partnerBps: 25, agents: [], partnerWallet: ach };
+  const config = { splitDrafts: { credit: allocation, debit: allocation, ach: allocation, crypto: allocation } };
+  global.fetch = async () => ({ ok: true, json: async () => ({ config }) });
+  for (const unifiedFeeEnabled of [false, true]) for (const configured of [false, true]) {
+    const runner = new HookRunner();
+    const Component = () => SplitDeployModal({ wallet: merchant, brandKey: 'partner-test', account: { address: merchant }, defaults, canEditPlatform: false,
+      unifiedFeeEnabled, presentedFeeBps: 400, creditPresentedFeeBps: 500,
+      achPresentedFeeBps: configured ? 160 : null, cryptoPresentedFeeBps: configured ? 80 : null,
+      onClose() {}, onSaved: async () => {} });
+    await runner.settle(Component);
+    for (const [label, rate] of [['ACH', configured ? '1.85' : '1.35'], ['Crypto', configured ? '1.05' : '0.75']]) {
+      find(runner.tree, n => n.props?.role === 'tab' && text(n) === label).props.onClick();
+      await runner.settle(Component);
+      assert.ok(text(runner.tree).includes(`${rate}%`), `${label} ${unifiedFeeEnabled} ${configured}: ${text(runner.tree)}`);
+      if (!unifiedFeeEnabled && label === 'ACH') assert.ok(text(runner.tree).includes('0.60%'));
     }
     runner.dispose();
   }

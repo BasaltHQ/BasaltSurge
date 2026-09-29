@@ -41,6 +41,12 @@ type BrandConfigDoc = {
   unifiedFeeEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
+  achPresentedFeeBps?: number | null;
+  achPlatformFeeBps?: number | null;
+  cryptoPlatformFeeBps?: number | null;
+  achAgentFeeBps?: number | null;
+  cryptoAgentFeeBps?: number | null;
+  cryptoPresentedFeeBps?: number | null;
   dualSplitEnabled?: boolean;
   stripeOnrampEnabled?: boolean;
   stripeOnrampV2Enabled?: boolean;
@@ -166,6 +172,12 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     primaryAgentWallet: typeof overrides.primaryAgentWallet === "string" ? overrides.primaryAgentWallet : withDefaults.primaryAgentWallet,
     presentedFeeBps: typeof overrides.presentedFeeBps === "number" ? overrides.presentedFeeBps : withDefaults.presentedFeeBps,
     creditPresentedFeeBps: typeof overrides.creditPresentedFeeBps === "number" ? overrides.creditPresentedFeeBps : withDefaults.creditPresentedFeeBps,
+    achPresentedFeeBps: overrides.achPresentedFeeBps !== undefined ? overrides.achPresentedFeeBps : withDefaults.achPresentedFeeBps,
+    achPlatformFeeBps: overrides.achPlatformFeeBps !== undefined ? overrides.achPlatformFeeBps : withDefaults.achPlatformFeeBps ?? null,
+    cryptoPlatformFeeBps: overrides.cryptoPlatformFeeBps !== undefined ? overrides.cryptoPlatformFeeBps : withDefaults.cryptoPlatformFeeBps ?? null,
+    achAgentFeeBps: overrides.achAgentFeeBps !== undefined ? overrides.achAgentFeeBps : withDefaults.achAgentFeeBps ?? null,
+    cryptoAgentFeeBps: overrides.cryptoAgentFeeBps !== undefined ? overrides.cryptoAgentFeeBps : withDefaults.cryptoAgentFeeBps ?? null,
+    cryptoPresentedFeeBps: overrides.cryptoPresentedFeeBps !== undefined ? overrides.cryptoPresentedFeeBps : withDefaults.cryptoPresentedFeeBps,
     stripeOnrampEnabled: typeof overrides.stripeOnrampEnabled === "boolean" ? overrides.stripeOnrampEnabled : withDefaults.stripeOnrampEnabled,
     stripeOnrampV2Enabled: typeof overrides.stripeOnrampV2Enabled === "boolean" ? overrides.stripeOnrampV2Enabled : (typeof overrides.v2CheckoutEnabled === "boolean" ? overrides.v2CheckoutEnabled : withDefaults.stripeOnrampV2Enabled),
     v2CheckoutEnabled: typeof overrides.v2CheckoutEnabled === "boolean" ? overrides.v2CheckoutEnabled : (typeof overrides.stripeOnrampV2Enabled === "boolean" ? overrides.stripeOnrampV2Enabled : withDefaults.v2CheckoutEnabled),
@@ -230,6 +242,11 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
 
   const presCredit = clampBps(raw?.creditPresentedFeeBps);
   if (typeof presCredit === "number") out.creditPresentedFeeBps = presCredit;
+
+  for (const key of ["achPresentedFeeBps", "cryptoPresentedFeeBps", "achPlatformFeeBps", "cryptoPlatformFeeBps", "achAgentFeeBps", "cryptoAgentFeeBps"] as const) {
+    if (raw?.[key] === null) out[key] = null;
+    else if (typeof raw?.[key] === "number" && Number.isFinite(raw[key])) out[key] = clampBps(raw[key]);
+  }
 
   const partner = clampBps(raw?.partnerFeeBps);
   if (typeof partner === "number") out.partnerFeeBps = partner;
@@ -598,7 +615,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ brandKey:
     const deployed = !!(existing?.containerState || existing?.containerAppName || existing?.containerFqdn);
     const roles = Array.isArray((caller as any)?.roles) ? (caller as any).roles : [];
     const platformPrivileged = roles.includes("platform_superadmin") || roles.includes("platform_admin");
-    const attemptingFeeChange = Object.prototype.hasOwnProperty.call(patch, "platformFeeBps") || Object.prototype.hasOwnProperty.call(patch, "partnerFeeBps");
+    const attemptingFeeChange = ["platformFeeBps", "partnerFeeBps", "achPlatformFeeBps", "cryptoPlatformFeeBps"].some(field => Object.prototype.hasOwnProperty.call(patch, field));
     if (deployed && attemptingFeeChange && !platformPrivileged) {
       return NextResponse.json(
         { error: "fees_locked_after_deploy", correlationId },

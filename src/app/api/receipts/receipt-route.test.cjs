@@ -5,13 +5,15 @@ const test = require('node:test');
 const vm = require('node:vm');
 const ts = require('typescript');
 
-test('receipt reload returns the canonical Step 1 customerEmail', async () => {
+test('receipt reload returns the canonical customerEmail and refreshed ACH target without repricing', async () => {
   const queries = [];
   const row = {
     receiptId: 'R1', wallet: '0x1111111111111111111111111111111111111111',
     totalUsd: 25, currency: 'USD', lineItems: [{ label: 'Item', priceUsd: 25 }],
     createdAt: 1, status: 'pending', brandName: 'Test',
     customerEmail: 'step1@example.com', stripeEmail: 'stale-storefront@example.com',
+    detectedCardFunding: 'us_bank_account', brandKey: 'alpha',
+    splitRoutingSnapshot: { splitAddress: '0x' + '2'.repeat(40), achPresentedFeeBps: 110 },
   };
   const mocks = {
     'next/server': { NextResponse: { json: (data, options = {}) => new Response(JSON.stringify(data), options) } },
@@ -26,7 +28,7 @@ test('receipt reload returns the canonical Step 1 customerEmail', async () => {
       } }) },
     }) },
     '@/lib/receipts-mem': { getReceipts: () => [], updateReceiptContent() {}, deleteReceipt() {} },
-    '@/lib/site-config': { getSiteConfigForWallet: async () => null },
+    '@/lib/site-config': { getSiteConfigForWallet: async () => ({ splitAddressAch: '0x' + '3'.repeat(40), splitConfigAch: { platformBps: 50 }, splitOverrides: { ach: true } }) },
     '@/lib/gateway-auth': { requireApimOrJwt: async () => ({}) },
     '@/lib/security': { requireCsrf() {}, rateLimitOrThrow() {}, rateKey: () => 'test' },
     '@/lib/auth': { assertOwnershipOrAdmin() {} },
@@ -66,5 +68,9 @@ test('receipt reload returns the canonical Step 1 customerEmail', async () => {
   assert.equal(response.status, 200);
   assert.equal(body.receipt.customerEmail, 'step1@example.com');
   assert.equal(body.receipt.stripeEmail, 'stale-storefront@example.com');
+  assert.equal(body.receipt.settlementTarget.address, '0x' + '3'.repeat(40));
+  assert.equal(body.receipt.settlementTarget.kind, 'ach');
+  assert.equal(body.receipt.totalUsd, 25);
+  assert.equal(body.receipt.splitRoutingSnapshot.achPresentedFeeBps, 110);
   assert.match(queries[0], /c\.customerEmail/);
 });

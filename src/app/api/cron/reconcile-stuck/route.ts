@@ -1,5 +1,5 @@
 import { recordStripeReceiptFailure } from "@/lib/stripe-receipt-failure";
-import { receiptRoutingFields } from "@/lib/payment-split-routing";
+import { resolveReceiptSettlementTarget } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
 import { recoverStripeReceiptSession, retrieveStripeReceiptSession, persistStripeReceiptUpdate } from "@/lib/stripe-receipt-session";
@@ -26,7 +26,6 @@ import {
 } from "@/lib/stripe-onramp-status";
 import {
   normalizeSettlementFunding,
-  resolveSettlementSplitAddress,
   resolveStripeOnrampFunding,
 } from "@/lib/payment-split-routing";
 import { deriveStripeKycSnapshot } from "@/lib/stripe-kyc-tracking";
@@ -416,11 +415,9 @@ export async function POST(req: NextRequest) {
       const siteConfig = await getSiteConfigForWallet(merchantWallet, brandKey);
       let splitAddress = receipt.splitAddress;
       let splitAddressCredit = receipt.splitAddressCredit;
-      let optionalRouting = receiptRoutingFields(receipt);
       if (siteConfig) {
         splitAddress = siteConfig.splitAddress || siteConfig.split?.address || splitAddress;
         splitAddressCredit = siteConfig.splitAddressCredit || siteConfig.splitCredit?.address || splitAddressCredit;
-          optionalRouting = receiptRoutingFields(receipt, siteConfig);
       }
       if (!splitAddress) {
         splitAddress = merchantWallet;
@@ -582,6 +579,7 @@ export async function POST(req: NextRequest) {
           receipt.isCreditCard === true
         );
         const isSessionAch = sessionFunding === "us_bank_account";
+        if (isSessionAch) receipt.settlementTarget = resolveReceiptSettlementTarget(receipt, siteConfig, sessionFunding);
         const checkoutMode = normalizeStripeOnrampCheckoutMode(
           onrampData.metadata?.checkoutMode || receipt.checkoutMode
         );
@@ -803,13 +801,8 @@ export async function POST(req: NextRequest) {
 
         // Never trust an older event's preselected address here. Recompute from
         // authoritative funding so every recovery path uses the same inversion.
-        const targetSplitAddress = resolveSettlementSplitAddress({
-          funding: cardFunding,
-          splitAddress,
-          splitAddressCredit,
-          ...optionalRouting,
-          fallbackAddress: merchantWallet,
-        });
+        const settlementTarget = resolveReceiptSettlementTarget(receipt, siteConfig, cardFunding);
+        const targetSplitAddress = settlementTarget.address;
 
         // Add to eligible candidates list for Phase 2 processing
         eligibleReceipts.push({
@@ -821,6 +814,7 @@ export async function POST(req: NextRequest) {
           amount,
           brandKey,
           targetSplitAddress,
+          settlementTarget,
           brandTwClient,
           authEndpointSecret,
           onrampData,
@@ -986,6 +980,7 @@ export async function POST(req: NextRequest) {
                         transactionHash,
                         settlementAmount: Number(entry.amount),
                         source: "reconcile_stuck",
+                        settlementTarget: entry.settlementTarget,
                       });
                     }
                   },
@@ -1012,6 +1007,9 @@ export async function POST(req: NextRequest) {
                 const previousStatus = String(r.status || "pending");
                 r.status = "paid";
                 r.transactionHash = txHash;
+                r.settlementSplitAddress = er.settlementTarget.address;
+                r.settlementSplitKind = er.settlementTarget.kind;
+                r.settlementSplitVersion = er.settlementTarget.version;
                 r.transactionTimestamp = Date.now();
                 r.lastUpdatedAt = Date.now();
                 r.statusHistory = Array.isArray(r.statusHistory)
@@ -1451,12 +1449,10 @@ export async function POST(req: NextRequest) {
                 matchedReceipt.detectedCardFunding,
                 matchedReceipt.isCreditCard === true
               );
-              const targetSplit = resolveSettlementSplitAddress({
-                funding: recoveredFunding,
-                splitAddress: matchedReceipt.splitAddress,
-                splitAddressCredit: matchedReceipt.splitAddressCredit,
-                ...receiptRoutingFields(matchedReceipt),
-              });
+              const recoveryConfig = recoveredFunding === "us_bank_account"
+                ? await getSiteConfigForWallet(matchedReceipt.wallet, matchedReceipt.brandKey || uBrand) : undefined;
+              const settlementTarget = resolveReceiptSettlementTarget(matchedReceipt, recoveryConfig, recoveredFunding);
+              const targetSplit = settlementTarget.address;
               const receiptAmount = Number(matchedReceipt.settlementAmount || matchedReceipt.onrampAmount || matchedReceipt.totalUsd || 0);
               if (!/^0x[a-f0-9]{40}$/i.test(targetSplit) || receiptAmount <= 0 || Number(uBalance) / 1_000_000 < receiptAmount * 0.95) {
                 continue;
@@ -1485,6 +1481,7 @@ export async function POST(req: NextRequest) {
                       transactionHash,
                       settlementAmount: receiptAmount,
                       source: "reconcile_stuck_proactive",
+                      settlementTarget,
                     });
                   },
                 }
@@ -1494,6 +1491,9 @@ export async function POST(req: NextRequest) {
                 const previousStatus = String(matchedReceipt.status || "pending");
                 matchedReceipt.status = "paid";
                 matchedReceipt.transactionHash = sweepTx;
+                matchedReceipt.settlementSplitAddress = settlementTarget.address;
+                matchedReceipt.settlementSplitKind = settlementTarget.kind;
+                matchedReceipt.settlementSplitVersion = settlementTarget.version;
                 matchedReceipt.detectedCardFunding = recoveredFunding;
                 matchedReceipt.isCreditCard = recoveredFunding === "credit";
                 matchedReceipt.transactionTimestamp = Date.now();

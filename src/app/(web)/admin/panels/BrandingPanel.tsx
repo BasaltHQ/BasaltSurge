@@ -388,7 +388,7 @@ export default function BrandingPanel() {
           <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 space-y-5">
             <div className="text-xs font-bold text-foreground/80 uppercase tracking-wider mb-2">General & Fees</div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              <div className="space-y-1.5">
+              <div data-tour="branding.workspace-identity" className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Brand Name</label>
                 <input
                   className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-background text-sm transition-colors hover:border-foreground/20 focus:border-foreground/30 focus:outline-none"
@@ -476,7 +476,7 @@ export default function BrandingPanel() {
           <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 space-y-5">
             <div className="text-xs font-bold text-foreground/80 uppercase tracking-wider mb-2">Theme Integration</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              <div className="space-y-1.5">
+              <div data-tour="branding.brand-colors" className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Primary Color</label>
                 <div className="flex items-center gap-2">
                   <input
@@ -806,7 +806,7 @@ export default function BrandingPanel() {
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div className="relative overflow-hidden rounded-2xl border border-foreground/[0.05] bg-gradient-to-b from-foreground/[0.02] to-transparent p-6 space-y-5">
               <div className="text-xs font-bold text-foreground/80 uppercase tracking-wider mb-2">SEO Metadata</div>
-              <div className="space-y-1.5">
+              <div data-tour="branding.social-presentation" className="space-y-1.5">
                 <label className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">OG Title</label>
                 <input
                   className="w-full h-10 px-3 rounded-lg border border-foreground/10 bg-background text-sm transition-colors hover:border-foreground/20 focus:border-foreground/30 focus:outline-none"

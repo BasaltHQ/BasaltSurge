@@ -47,6 +47,8 @@ const nextConfig = {
   // Force-include mongodb adapter files in standalone output since they're
   // dynamically imported with webpackIgnore/turbopackIgnore and not traced.
   outputFileTracingIncludes: {
+    '/api/docs/tour': ['./docs/tour/panels/**/*.md'],
+    '/developers/docs/**': ['./docs/tour/panels/**/*.md'],
     '/**': ['./src/lib/db/**/*'],
     '/api/admin/shopify/apps/*': ['./public/js/shopify-cart-hijack.js', './public/css/shopify-cart-payment.css'],
   },

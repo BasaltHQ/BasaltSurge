@@ -98,7 +98,7 @@ export default function DriverRequestsPanel() {
           </button>
 
           <div className="flex rounded-xl border border-white/10 overflow-hidden bg-black/50 p-0.5">
-            <button
+            <button data-tour="driverRequests.activeFilter.pending" data-tour-action="activate" data-tour-active={activeFilter === "pending"}
               onClick={() => setActiveFilter("pending")}
               className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 activeFilter === "pending" ? "bg-[#35ff7c] text-black" : "text-muted-foreground hover:text-white"
@@ -106,7 +106,7 @@ export default function DriverRequestsPanel() {
             >
               Pending Approval
             </button>
-            <button
+            <button data-tour="driverRequests.activeFilter.approved" data-tour-action="activate" data-tour-active={activeFilter === "approved"}
               onClick={() => setActiveFilter("approved")}
               className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 activeFilter === "approved" ? "bg-white/10 text-white" : "text-muted-foreground hover:text-white"
@@ -114,7 +114,7 @@ export default function DriverRequestsPanel() {
             >
               Active Drivers
             </button>
-            <button
+            <button data-tour="driverRequests.activeFilter.all" data-tour-action="activate" data-tour-active={activeFilter === "all"}
               onClick={() => setActiveFilter("all")}
               className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 activeFilter === "all" ? "bg-white/10 text-white" : "text-muted-foreground hover:text-white"

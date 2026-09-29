@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedWallet } from "@/lib/auth";
 import { getContainer } from "@/lib/cosmos";
 import { createHash } from "crypto";
+import { requireCsrf, rateLimitOrThrow, rateKey } from "@/lib/security";
 
 export const dynamic = 'force-dynamic';
 
@@ -15,7 +16,8 @@ export const dynamic = 'force-dynamic';
  * 3. Returns { signedUrl, maxDurationSec, usageDocId } to the client
  * 
  * Query params:
- *   - persona: "concierge" | "server" (selects the agent ID)
+ *   - persona: "concierge" | "server" | "tour" (selects the agent ID)
+ *   - connectionType: "webrtc" for tour voice, otherwise signed WebSocket URL
  */
 export async function POST(req: NextRequest) {
     try {
@@ -26,18 +28,26 @@ export async function POST(req: NextRequest) {
         const wallet = String(authed || headerWallet || bodyWallet || '').toLowerCase();
 
         const persona = String(body.persona || "concierge").trim().toLowerCase();
+        const useWebRTC = persona === 'tour' && body.connectionType === 'webrtc';
+        if (persona === "tour") {
+            // A claimed wallet in headers/body is never sufficient for admin training.
+            if (!authed) return NextResponse.json({ error: "Sign in to start the tour guide." }, { status: 401 });
+            if (req.headers.get('sec-fetch-site') === 'cross-site') return NextResponse.json({ error: "bad_origin" }, { status: 403 });
+            requireCsrf(req);
+            rateLimitOrThrow(req, rateKey(req, "admin_tour_session", authed), 10, 60 * 60 * 1000);
+        }
 
         // ─── Resolve Agent ID ───
         const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API || process.env.ELEVENLABS_API_KEY || "";
-        const AGENT_ID = persona === "server"
+        const AGENT_ID = persona === "tour" ? (process.env.ELEVENLABS_AGENT_ID_TOUR || "") : persona === "server"
             ? (process.env.ELEVENLABS_AGENT_ID_SERVER || "")
             : (process.env.ELEVENLABS_AGENT_ID_CONCIERGE || "");
 
         if (!ELEVENLABS_API_KEY) {
-            return NextResponse.json({ error: "ElevenLabs API key not configured" }, { status: 500 });
+            return NextResponse.json({ error: persona === 'tour' ? 'tour_not_configured' : 'ElevenLabs API key not configured' }, { status: 503 });
         }
         if (!AGENT_ID) {
-            return NextResponse.json({ error: `ElevenLabs agent ID not configured for persona: ${persona}` }, { status: 500 });
+            return NextResponse.json({ error: persona === 'tour' ? 'tour_not_configured' : 'ElevenLabs agent ID not configured' }, { status: 503 });
         }
 
         // ─── Usage Gating (ported from /api/voice/session) ───
@@ -108,14 +118,16 @@ export async function POST(req: NextRequest) {
                 } catch { }
             }
         } catch (e: any) {
-            return NextResponse.json({ error: "limit_check_failed", reason: e?.message || "unavailable" }, { status: 503 });
+            return NextResponse.json({ error: "limit_check_failed" }, { status: 503 });
         }
 
         // ─── Get Signed URL from ElevenLabs ───
         const signedUrlRes = await fetch(
-            `https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=${AGENT_ID}`,
+            `https://api.elevenlabs.io/v1/convai/conversation/${useWebRTC ? 'token' : 'get-signed-url'}?agent_id=${encodeURIComponent(AGENT_ID)}`,
             {
                 method: "GET",
+                signal: AbortSignal.timeout(15000),
+                cache: 'no-store',
                 headers: {
                     "xi-api-key": ELEVENLABS_API_KEY,
                 },
@@ -123,28 +135,28 @@ export async function POST(req: NextRequest) {
         );
 
         if (!signedUrlRes.ok) {
-            const errText = await signedUrlRes.text().catch(() => "");
             return NextResponse.json(
-                { error: "elevenlabs_signed_url_failed", status: signedUrlRes.status, detail: errText },
+                { error: "elevenlabs_session_failed" },
                 { status: 502 }
             );
         }
 
         const signedUrlData = await signedUrlRes.json();
         const signedUrl = signedUrlData?.signed_url || "";
+        const conversationToken = signedUrlData?.token || '';
 
-        if (!signedUrl) {
-            return NextResponse.json({ error: "elevenlabs_empty_signed_url" }, { status: 502 });
+        if (useWebRTC ? !conversationToken : !signedUrl) {
+            return NextResponse.json({ error: "elevenlabs_empty_session" }, { status: 502 });
         }
 
         return NextResponse.json({
-            signedUrl,
+            ...(useWebRTC ? { conversationToken } : { signedUrl }),
             maxDurationSec: budgetSec,
             usageDocId: usageDocId || undefined,
             agentId: AGENT_ID,
             persona,
-        });
+        }, { headers: { "Cache-Control": "no-store" } });
     } catch (e: any) {
-        return NextResponse.json({ error: e?.message || "Failed" }, { status: 500 });
+        return NextResponse.json({ error: e?.status === 429 ? "rate_limited" : e?.status === 403 ? "bad_origin" : "Voice session unavailable" }, { status: e?.status === 429 ? 429 : e?.status === 403 ? 403 : 500 });
     }
 }

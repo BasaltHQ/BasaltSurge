@@ -51,7 +51,7 @@ export default function LoyaltyPanelPlatform() {
                         { id: 'roles', label: 'Global Roles' },
                         { id: 'compliance', label: 'Rules & Limits' },
                     ].map((tab) => (
-                        <button
+                        <button data-tour={`platform-loyalty.activeTab.${tab.id}`} data-tour-action="activate" data-tour-active={activeTab === tab.id}
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id as any)}
                             className={`px-3 py-2 text-xs uppercase tracking-wide font-medium rounded-lg transition-all ${activeTab === tab.id ? 'bg-emerald-500/10 text-emerald-500 border border-emerald-500/20' : 'text-muted-foreground hover:text-foreground hover:bg-foreground/[0.02]'}`}
@@ -65,7 +65,7 @@ export default function LoyaltyPanelPlatform() {
             {/* Content Area */}
             <div className="min-h-[400px]">
                 {activeTab === 'program' && (
-                    <div className="space-y-6">
+                    <div data-tour="platform-loyalty.activeTab.program.content" className="space-y-6">
                         <div className="p-4 border border-blue-500/20 bg-blue-500/5 rounded-2xl flex gap-3">
                             <Globe className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
                             <div>
@@ -90,7 +90,7 @@ export default function LoyaltyPanelPlatform() {
                 {activeTab === 'roles' && <RoleConfigTab isPlatform={true} />}
 
                 {activeTab === 'merchants' && (
-                    <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md overflow-hidden">
+                    <div data-tour="platform-loyalty.activeTab.merchants.content" className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md overflow-hidden">
                         <div className="p-4 border-b border-foreground/[0.05] flex justify-between items-center">
                             <h3 className="font-semibold text-sm">Participating Merchants</h3>
                             <div className="flex gap-2">
@@ -169,7 +169,7 @@ export default function LoyaltyPanelPlatform() {
                 )}
 
                 {activeTab === 'compliance' && (
-                    <div className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md p-6 space-y-6">
+                    <div data-tour="platform-loyalty.activeTab.compliance.content" className="rounded-2xl border border-foreground/[0.05] bg-foreground/[0.02] backdrop-blur-md p-6 space-y-6">
                         <h3 className="text-lg font-semibold">Platform Limits</h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-2">

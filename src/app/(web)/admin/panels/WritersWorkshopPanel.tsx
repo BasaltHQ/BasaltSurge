@@ -1598,19 +1598,19 @@ export default function WritersWorkshopPanel() {
                 <div className="space-y-6">
                     {/* Tab Navigation */}
                     <div className="flex items-center gap-6 border-b">
-                        <button
+                        <button data-tour="writersWorkshop.viewTab.active" data-tour-action="activate" data-tour-active={viewTab === "active"}
                             onClick={() => setViewTab("active")}
                             className={`pb-3 text-sm font-bold transition-colors ${viewTab === "active" ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
                         >
                             Active Titles
                         </button>
-                        <button
+                        <button data-tour="writersWorkshop.viewTab.archived" data-tour-action="activate" data-tour-active={viewTab === "archived"}
                             onClick={() => setViewTab("archived")}
                             className={`pb-3 text-sm font-bold transition-colors ${viewTab === "archived" ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
                         >
                             Archived
                         </button>
-                        <button
+                        <button data-tour="writersWorkshop.viewTab.series" data-tour-action="activate" data-tour-active={viewTab === "series"}
                             onClick={() => setViewTab("series")}
                             className={`pb-3 text-sm font-bold transition-colors ${viewTab === "series" ? "text-primary border-b-2 border-primary" : "text-muted-foreground hover:text-foreground"}`}
                         >

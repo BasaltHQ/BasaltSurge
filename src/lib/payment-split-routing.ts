@@ -27,14 +27,52 @@ export function settlementRoutingFields(config: any): any {
     for (const key of Object.values(f)) normalized[key] = config?.[key] ?? config?.config?.[key];
     normalized[f.address] ||= normalized[f.contract]?.address;
   }
-  for (const key of ["splitRevision", "feeMinusEnabled", "processingFeePct", "basePlatformFeePct", "presentedFeeBps", "creditPresentedFeeBps"]) normalized[key] = config?.[key] ?? config?.config?.[key];
+  for (const key of ["splitRevision", "feeMinusEnabled", "processingFeePct", "basePlatformFeePct", "presentedFeeBps", "creditPresentedFeeBps", "achPresentedFeeBps", "cryptoPresentedFeeBps"]) normalized[key] = config?.[key] !== undefined ? config[key] : config?.config?.[key];
   normalized.splitOverrides = config?.splitOverrides ?? config?.config?.splitOverrides;
   return Object.fromEntries(Object.entries(normalized).filter(([, value]) => value !== undefined));
 }
 
-/** A recorded routing snapshot pins all method choices for this payment attempt. */
+/** Preserve the checkout terms used to price this payment attempt. */
 export function receiptRoutingFields(receipt: any, config?: any): any {
-  return receipt?.splitRoutingSnapshot || settlementRoutingFields(config || receipt);
+  const snapshot = receipt?.splitRoutingSnapshot;
+  return snapshot ? { ...snapshot, achPresentedFeeBps: snapshot.achPresentedFeeBps ?? null, cryptoPresentedFeeBps: snapshot.cryptoPresentedFeeBps ?? null } : settlementRoutingFields(config || receipt);
+}
+
+/** ACH can settle days after checkout. Refresh only its unsubmitted destination,
+ * never its pricing snapshot or a destination already used on-chain. */
+export function canRefreshAchSettlementTarget(receipt: any, funding?: unknown): boolean {
+  const method = normalizeSettlementFunding(funding || receipt?.detectedCardFunding || receipt?.cardFunding || receipt?.funding);
+  const status = String(receipt?.status || "").toLowerCase();
+  return method === "us_bank_account"
+    && !["paid", "completed", "settled", "refunded", "partially_refunded", "cancelled", "canceled"].includes(status)
+    && ![receipt?.transactionHash, receipt?.leg2TxHash].some(hash => /^0x[a-f\d]{64}$/i.test(String(hash || "")))
+    && !receipt?.settlementSubmissionAt
+    && !receipt?.settlementSplitAddress && !receipt?.splitAddressUsed;
+}
+
+export function resolveReceiptSettlementTarget(receipt: any, config?: any, funding?: unknown) {
+  const method = normalizeSettlementFunding(funding || receipt?.detectedCardFunding || receipt?.cardFunding || receipt?.funding, receipt?.isCreditCard === true);
+  const snapshot = receiptRoutingFields(receipt, config);
+  const current = settlementRoutingFields(config);
+  const refresh = canRefreshAchSettlementTarget(receipt, method)
+    && (isSplitAddress(current.splitAddress) || (optionalSplitActive(current, "ach") && current.splitConfigAch));
+  const fields = refresh ? current : {
+    splitAddress: current.splitAddress || receipt?.splitAddress,
+    splitAddressCredit: current.splitAddressCredit || receipt?.splitAddressCredit,
+    ...snapshot,
+  };
+  const recorded = receipt?.settlementSplitAddress || receipt?.splitAddressUsed;
+  const address = String(recorded || resolveSettlementSplitAddress({ ...fields, funding: method, fallbackAddress: receipt?.wallet || receipt?.merchantWallet })).toLowerCase();
+  const preferred: SplitKind = method === "us_bank_account" ? "ach" : method;
+  const kind = recorded && SPLIT_KINDS.includes(receipt?.settlementSplitKind)
+    ? receipt.settlementSplitKind as SplitKind
+    : [preferred, ...SPLIT_KINDS].find(kind => String(fields[SPLIT_FIELDS[kind].address] || "").toLowerCase() === address &&
+      (kind !== "ach" && kind !== "crypto" || optionalSplitActive(fields, kind))) || "unknown";
+  return {
+    address, kind,
+    version: recorded && receipt?.settlementSplitVersion || (kind === "unknown" ? null : fields[SPLIT_FIELDS[kind].version] || null),
+    inherited: kind === "credit" && (method === "us_bank_account" || method === "crypto"),
+  };
 }
 
 export function optionalSplitActive(config: any, kind: "ach" | "crypto"): boolean {

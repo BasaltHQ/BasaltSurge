@@ -31,6 +31,12 @@ export default function PlatformSettingsPanel() {
     primaryAgentWallet: "",
     presentedFeeBps: undefined as number | undefined,
     creditPresentedFeeBps: undefined as number | undefined,
+    achPresentedFeeBps: null as number | null,
+    achPlatformFeeBps: null as number | null,
+    cryptoPlatformFeeBps: null as number | null,
+    achAgentFeeBps: null as number | null,
+    cryptoAgentFeeBps: null as number | null,
+    cryptoPresentedFeeBps: null as number | null,
   });
 
   useEffect(() => {
@@ -62,6 +68,12 @@ export default function PlatformSettingsPanel() {
             primaryAgentWallet: String(b.primaryAgentWallet || ""),
             presentedFeeBps: typeof b.presentedFeeBps === "number" ? b.presentedFeeBps : undefined,
             creditPresentedFeeBps: typeof b.creditPresentedFeeBps === "number" ? b.creditPresentedFeeBps : undefined,
+            achPresentedFeeBps: typeof b.achPresentedFeeBps === "number" ? b.achPresentedFeeBps : null,
+            achPlatformFeeBps: typeof b.achPlatformFeeBps === "number" ? b.achPlatformFeeBps : null,
+            cryptoPlatformFeeBps: typeof b.cryptoPlatformFeeBps === "number" ? b.cryptoPlatformFeeBps : null,
+            achAgentFeeBps: typeof b.achAgentFeeBps === "number" ? b.achAgentFeeBps : null,
+            cryptoAgentFeeBps: typeof b.cryptoAgentFeeBps === "number" ? b.cryptoAgentFeeBps : null,
+            cryptoPresentedFeeBps: typeof b.cryptoPresentedFeeBps === "number" ? b.cryptoPresentedFeeBps : null,
           });
           setSettingsLoaded(true);
         }
@@ -104,6 +116,12 @@ export default function PlatformSettingsPanel() {
       if (config.creditAgentFeeBps !== undefined) payload.creditAgentFeeBps = config.creditAgentFeeBps;
       if (config.presentedFeeBps !== undefined) payload.presentedFeeBps = config.presentedFeeBps;
       if (config.creditPresentedFeeBps !== undefined) payload.creditPresentedFeeBps = config.creditPresentedFeeBps;
+      payload.achPresentedFeeBps = config.achPresentedFeeBps;
+      payload.achPlatformFeeBps = config.achPlatformFeeBps;
+      payload.cryptoPlatformFeeBps = config.cryptoPlatformFeeBps;
+      payload.achAgentFeeBps = config.achAgentFeeBps;
+      payload.cryptoAgentFeeBps = config.cryptoAgentFeeBps;
+      payload.cryptoPresentedFeeBps = config.cryptoPresentedFeeBps;
 
       const res = await fetch("/api/platform/brands/basaltsurge/config", {
         method: "PATCH",
@@ -157,7 +175,7 @@ export default function PlatformSettingsPanel() {
           <div>
             <h3 className="text-base font-semibold text-white">Platform Settings</h3>
             <p className="text-xs text-muted-foreground">
-              Configure global platform switches, checkout flags, and dual split parameters for BasaltSurge.
+              Configure global platform switches, checkout flags, and split defaults for BasaltSurge.
             </p>
           </div>
         </div>
@@ -186,7 +204,7 @@ export default function PlatformSettingsPanel() {
 
       {/* Feature Switches Card */}
       <div className="glass-pane rounded-xl border border-white/5 overflow-hidden">
-        <div className="px-5 py-4 border-b border-white/5">
+        <div data-tour="platformSettings.platform-feature-switches" className="px-5 py-4 border-b border-white/5">
           <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Feature Switches</h4>
         </div>
         <div className="p-5 space-y-4 divide-y divide-white/5">
@@ -236,7 +254,7 @@ export default function PlatformSettingsPanel() {
                 )}
               </div>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Enable independent fee routing for Debit cards vs. Credit Card & Crypto payments. Deploys standard and credit split contracts.
+                Use separate Credit and Debit splits, with optional dedicated ACH and Crypto splits.
               </p>
             </div>
             <button
@@ -420,7 +438,7 @@ export default function PlatformSettingsPanel() {
       {/* Dual Split Parameters Card */}
       <div className="glass-pane rounded-xl border border-white/5 overflow-hidden">
         <div className="px-5 py-4 border-b border-white/5 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+          <div data-tour="platformSettings.split-parameters" className="flex items-center gap-2">
             <GitMerge className="w-4 h-4 text-purple-400" />
             <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-400">
               Dual Split Parameters (BPS)
@@ -525,7 +543,7 @@ export default function PlatformSettingsPanel() {
               <div className="flex items-center justify-between pb-2 border-b border-white/5">
                 <div className="flex items-center gap-2">
                   <CreditCard className="w-4 h-4 text-purple-400" />
-                  <span className="text-xs font-bold text-white uppercase tracking-wider">Credit & Crypto Component</span>
+                  <span className="text-xs font-bold text-white uppercase tracking-wider">Credit Component</span>
                 </div>
                 <span className="text-[10px] text-purple-400 font-mono">Credit Split</span>
               </div>
@@ -550,7 +568,7 @@ export default function PlatformSettingsPanel() {
                   }}
                 />
                 <div className="text-[10px] text-muted-foreground">
-                  Platform share for Credit and Crypto checkouts (e.g. 150 = 1.50%).
+                  Platform share for Credit and methods using the Credit split (e.g. 150 = 1.50%).
                 </div>
               </div>
 
@@ -574,7 +592,7 @@ export default function PlatformSettingsPanel() {
                   }}
                 />
                 <div className="text-[10px] text-muted-foreground">
-                  Optional agent commission share for credit card & crypto checkouts.
+                  Optional agent commission share for Credit and methods using the Credit split.
                 </div>
               </div>
 
@@ -598,10 +616,46 @@ export default function PlatformSettingsPanel() {
                   }}
                 />
                 <div className="text-[10px] text-muted-foreground">
-                  Top-line fee presented to credit card & crypto merchants (optional).
+                  Top-line fee presented to credit card merchants (optional).
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {([['achPresentedFeeBps', 'ACH'], ['cryptoPresentedFeeBps', 'Crypto']] as const).map(([key, label]) => (
+              <div key={key} className="p-4 rounded-xl border border-white/5 bg-white/[0.02] space-y-1.5">
+                <div className="pb-2 mb-4 border-b border-white/5 text-xs font-bold text-white uppercase tracking-wider">{label} Component</div>
+                {(label === 'ACH'
+                  ? [['achPlatformFeeBps', 'Platform Fee'], ['achAgentFeeBps', 'Primary Agent Fee']] as const
+                  : [['cryptoPlatformFeeBps', 'Platform Fee'], ['cryptoAgentFeeBps', 'Primary Agent Fee']] as const
+                ).map(([feeKey, feeLabel]) => (
+                  <div key={feeKey} className="space-y-1.5 pb-4">
+                    <div className="flex items-center justify-between">
+                      <label htmlFor={`platform-${feeKey}`} className="text-xs font-medium text-zinc-300">{feeLabel} {label} (bps)</label>
+                      <span className="text-[11px] font-mono text-emerald-400">{config[feeKey] === null ? 'Inherit Credit' : formatBpsPercent(config[feeKey])}</span>
+                    </div>
+                    <input id={`platform-${feeKey}`} type="number" min={0} max={10000} step={1}
+                      className="w-full h-9 px-3 rounded-lg border border-white/10 bg-zinc-950 text-sm text-white focus:outline-none focus:border-emerald-400 transition"
+                      value={config[feeKey] ?? ''} placeholder="Inherit Credit"
+                      onChange={e => setConfig(prev => ({ ...prev, [feeKey]: e.target.value === '' ? null : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value)))) }))} />
+                  </div>
+                ))}
+                <p className="text-[10px] text-muted-foreground pb-3">Defaults for new {label} split drafts. Agent fees use the Primary Agent Wallet below. Existing contracts change only after deployment.</p>
+                <div className="flex items-center justify-between">
+                  <label htmlFor={`platform-${key}`} className="text-xs font-medium text-zinc-300">Presented Fee {label} (bps)</label>
+                  <span className="text-[11px] font-mono text-emerald-400">{config[key] === null ? 'Automatic' : formatBpsPercent(config[key])}</span>
+                </div>
+                <input id={`platform-${key}`} type="number" min={0} max={10000} step={1}
+                  className="w-full h-9 px-3 rounded-lg border border-white/10 bg-zinc-950 text-sm text-white focus:outline-none focus:border-emerald-400 transition"
+                  value={config[key] ?? ''} placeholder="Automatic from split"
+                  onChange={e => setConfig(prev => ({ ...prev, [key]: e.target.value === '' ? null : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value)))) }))} />
+                <div className="text-[10px] text-muted-foreground">
+                  {label === 'ACH' ? 'Includes Stripe’s 0.60% charge. ' : 'No Stripe charge. '}
+                  Base presented fee; partner share is added. Blank uses the routed split allocations{label === 'ACH' ? ' plus 0.60% Stripe' : ''}. 100 bps = 1%.
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Primary Agent Wallet Section */}
@@ -618,7 +672,7 @@ export default function PlatformSettingsPanel() {
               onChange={(e) => setConfig((prev) => ({ ...prev, primaryAgentWallet: e.target.value }))}
             />
             <div className="text-[10px] text-muted-foreground">
-              Optional destination EVM wallet for primary agent fee distribution across dual split deployments.
+              Optional destination EVM wallet for primary agent fee distribution across split deployments.
             </div>
           </div>
         </div>

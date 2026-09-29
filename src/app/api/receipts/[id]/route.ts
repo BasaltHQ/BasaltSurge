@@ -1,5 +1,5 @@
-import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
-import { receiptRoutingFields } from "@/lib/payment-split-routing";
+import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps } from "@/lib/portal-checkout-pricing";
+import { receiptRoutingFields, canRefreshAchSettlementTarget, resolveReceiptSettlementTarget } from "@/lib/payment-split-routing";
 import { pinReceiptSplitRouting } from "@/lib/receipt-split-snapshot";
 import { NextRequest, NextResponse } from "next/server";
 import { receiptCurrencyFields, type ReceiptPricing } from "@/lib/receipt-currency";
@@ -22,6 +22,9 @@ type ReceiptLineItem = {
 export type Receipt = {
   receiptId: string;
   splitRoutingSnapshot?: Record<string, any>;
+  settlementTarget?: ReturnType<typeof resolveReceiptSettlementTarget>;
+  settlementSplitAddress?: string;
+  settlementSplitKind?: string;
   totalUsd: number;
   currency: string;
   crypto?: boolean;
@@ -155,7 +158,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.settlementSplitAddress, c.settlementSplitKind, c.settlementSplitVersion, c.splitAddressUsed, c.settlementSubmissionAt, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
       parameters: [
         { name: "@id", value: id },
         { name: "@wallet", value: wallet }
@@ -170,7 +173,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       try {
         const specCrossPartition = {
           query:
-            "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+            "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.settlementSplitAddress, c.settlementSplitKind, c.settlementSplitVersion, c.splitAddressUsed, c.settlementSubmissionAt, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
           parameters: [{ name: "@id", value: id }],
         } as { query: string; parameters: { name: string; value: any }[] };
         const crossRes = await container.items.query(specCrossPartition).fetchAll();
@@ -180,9 +183,14 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 
     if (row) {
       row = await pinReceiptSplitRouting(container, row);
+      const targetConfig = canRefreshAchSettlementTarget(row)
+        ? await getSiteConfigForWallet(row.wallet, row.brandKey).catch(() => null) : undefined;
       const rec: Receipt = {
         receiptId: String(row.receiptId || id),
         splitRoutingSnapshot: row.splitRoutingSnapshot,
+        settlementTarget: resolveReceiptSettlementTarget(row, targetConfig),
+        settlementSplitAddress: row.settlementSplitAddress,
+        settlementSplitKind: row.settlementSplitKind,
         totalUsd: Number(row.totalUsd || 0),
         ...receiptCurrencyFields(row),
         createdAt: Number(row.createdAt || Date.now()),
@@ -639,7 +647,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     } else {
       basePlatformFeePct = typeof (cfg as any)?.basePlatformFeePct === "number" ? Math.max(0, (cfg as any).basePlatformFeePct) : 0.5;
     }
-    const totalFeePct = Math.max(0, basePlatformFeePct + Number(processingFeePct || 0) + (isAch && !cfg?.feeMinusEnabled ? 0.6 : 0));
+    const totalFeePct = Math.max(0, basePlatformFeePct + Number(processingFeePct || 0) + (isAch && !cfg?.feeMinusEnabled && resolveFundingPresentedFeeBps("us_bank_account", cfg || {}) === undefined ? 0.6 : 0));
     const feePctFraction = totalFeePct / 100;
     const processingFeeCents = isCryptoOnly
       ? toCents(calculateCryptoFeeUsd(fromCents(baseWithoutFeeCents), totalFeePct))

@@ -39,6 +39,8 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     partnerFeeBps?: number;
     presentedFeeBps?: number;
     creditPresentedFeeBps?: number;
+    achPresentedFeeBps?: number | null;
+    cryptoPresentedFeeBps?: number | null;
     creditPlatformFeeBps?: number;
     dualSplitEnabled?: boolean;
     unifiedFeeEnabled?: boolean;
@@ -108,6 +110,8 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
           : (typeof (fb as any)?.presentedFeeBps === "number" ? (fb as any).presentedFeeBps : undefined);
         brandFeesConfig.creditPresentedFeeBps = typeof ov?.creditPresentedFeeBps === "number" ? ov.creditPresentedFeeBps
           : (typeof (fb as any)?.creditPresentedFeeBps === "number" ? (fb as any).creditPresentedFeeBps : undefined);
+        brandFeesConfig.achPresentedFeeBps = ov?.achPresentedFeeBps !== undefined ? ov.achPresentedFeeBps : (fb?.achPresentedFeeBps ?? null);
+        brandFeesConfig.cryptoPresentedFeeBps = ov?.cryptoPresentedFeeBps !== undefined ? ov.cryptoPresentedFeeBps : (fb?.cryptoPresentedFeeBps ?? null);
         brandFeesConfig.creditPlatformFeeBps = typeof ov?.creditPlatformFeeBps === "number" ? ov.creditPlatformFeeBps
           : (typeof (fb as any)?.creditPlatformFeeBps === "number" ? (fb as any).creditPlatformFeeBps : 125);
         brandFeesConfig.dualSplitEnabled = typeof ov?.dualSplitEnabled === "boolean" ? ov.dualSplitEnabled
@@ -179,6 +183,9 @@ async function applyPartnerOverrides(req: NextRequest, cfg: any): Promise<any> {
     }
     if (typeof brandFeesConfig.creditPresentedFeeBps === "number") {
       (cfg as any).creditPresentedFeeBps = brandFeesConfig.creditPresentedFeeBps;
+    }
+    for (const key of ["achPresentedFeeBps", "cryptoPresentedFeeBps"] as const) {
+      if (brandFeesConfig[key] !== undefined) cfg[key] = brandFeesConfig[key];
     }
 
     // For per-merchant configs, check if they have customized their theme

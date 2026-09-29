@@ -25,6 +25,7 @@ function createHarness({
   afterErrors = 0,
   funding = "debit",
   debitSplit = SPLIT,
+  siteConfig = {},
   receiptOverrides = {},
   stripeCustomerEmail = "buyer@example.test",
   requestEmail = "buyer@example.test",
@@ -141,7 +142,7 @@ function createHarness({
       },
     },
     "@/lib/aws/ses": { sendEmail: async (...args) => { calls.emails.push(args); } },
-    "@/lib/site-config": { getSiteConfigForWallet: async () => ({ splitAddress: SPLIT, splitAddressCredit: SPLIT }) },
+    "@/lib/site-config": { getSiteConfigForWallet: async () => ({ splitAddress: SPLIT, splitAddressCredit: SPLIT, ...siteConfig }) },
     "@/lib/notifications/email-template": { generateHtmlEmailTemplate: () => "test email" },
     "@/app/api/auth/thirdweb-verify/route": { markEmailVerified: () => "test_verification_token" },
     "@/lib/webhook-dispatch": { dispatchReceiptStatusWebhookBestEffort: async (...args) => { (calls.webhooks ||= []).push(args); return { ok: true }; } },
@@ -251,15 +252,20 @@ for (const funding of ["debit", "credit", "us_bank_account", "prepaid"]) {
   });
 }
 
-test("ACH settles to its dedicated payment snapshot even if site configuration differs", async () => {
+test("ACH refreshes an older Credit snapshot to the active ACH target without repricing", async () => {
   const achSplit = `0x${"7".repeat(40)}`;
-  const harness = createHarness({ funding: "us_bank_account", receiptOverrides: {
-    splitRoutingSnapshot: { splitAddress: SPLIT, splitAddressCredit: SPLIT, splitAddressAch: achSplit, splitConfigAch: { platformBps: 80 }, splitOverrides: { ach: true } },
+  const harness = createHarness({ funding: "us_bank_account", siteConfig: {
+    splitAddressAch: achSplit, splitConfigAch: { platformBps: 50 }, splitVersionAch: 2, splitOverrides: { ach: true },
+  }, receiptOverrides: {
+    splitRoutingSnapshot: { splitAddress: SPLIT, splitAddressCredit: SPLIT, achPresentedFeeBps: 110 },
   } });
   assert.equal((await harness.post()).status, 200);
   await harness.runAfter();
   assert.equal(harness.calls.send.length, 1);
   assert.equal(harness.calls.send[0].transaction.params[0], achSplit);
+  assert.equal(harness.receipt().settlementSplitAddress, achSplit);
+  assert.equal(harness.receipt().settlementSplitKind, "ach");
+  assert.equal(harness.receipt().splitRoutingSnapshot.achPresentedFeeBps, 110);
   assert.equal(harness.calls.send[0].transaction.params[1], 9_000_000n);
 });
 

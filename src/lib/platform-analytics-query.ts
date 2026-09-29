@@ -208,22 +208,29 @@ export function analyticsFunding(receipt: Record<string, any>): "credit" | "debi
   return "unknown";
 }
 
-/** Historical evidence only: never infer a payment's destination from today's site config. */
+/** Actual destinations win; pending targets are supplied by the settlement resolver. */
 export function analyticsSplitRoute(receipt: Record<string, any>) {
   const funding = analyticsFunding(receipt);
+  if (receipt.settlementTarget?.address && ![receipt.transactionHash, receipt.leg2TxHash].some(hash => /^0x[a-f\d]{64}$/i.test(String(hash || ""))) && !receipt.settlementSubmissionAt &&
+    (!receipt.settlementSplitAddress || receipt.splitRouteSource === "settlement_target")) {
+    return { ...receipt.settlementTarget, source: "settlement_target" };
+  }
   const snapshot = receipt.splitRoutingSnapshot;
   const explicit = normalized(receipt.settlementSplitAddress || receipt.splitAddressUsed);
+  // API detail rows also carry inferred addresses. Preserve their provenance
+  // instead of upgrading a checkout snapshot into proof of settlement.
+  const explicitSource = ["payment_snapshot", "settlement_target"].includes(receipt.splitRouteSource) ? receipt.splitRouteSource : "recorded";
   if (explicit && ["credit", "debit", "ach", "crypto"].includes(receipt.settlementSplitKind)) {
     const kind = receipt.settlementSplitKind;
-    return { kind, address: explicit, version: receipt.settlementSplitVersion || null, inherited: kind === "credit" && (funding === "bank" || funding === "crypto"), source: "recorded" };
+    return { kind, address: explicit, version: receipt.settlementSplitVersion || null, inherited: kind === "credit" && (funding === "bank" || funding === "crypto"), source: explicitSource };
   }
-  if (!snapshot) return { kind: receipt.settlementSplitKind || "unknown", address: explicit, version: receipt.settlementSplitVersion || null, inherited: false, source: explicit ? "recorded" : "unknown" };
+  if (!snapshot) return { kind: receipt.settlementSplitKind || "unknown", address: explicit, version: receipt.settlementSplitVersion || null, inherited: false, source: explicit ? explicitSource : "unknown" };
   const suffix = funding === "debit" ? "Credit" : funding === "bank" && snapshot.splitOverrides?.ach && snapshot.splitAddressAch && snapshot.splitConfigAch ? "Ach" : funding === "crypto" && snapshot.splitOverrides?.crypto && snapshot.splitAddressCrypto && snapshot.splitConfigCrypto ? "Crypto" : "";
   if (funding === "unknown" && !explicit) return { kind: "unknown", address: "", version: null, inherited: false, source: "unknown" };
   const address = normalized(explicit || snapshot[`splitAddress${suffix}`] || snapshot.splitAddress || snapshot.splitAddressCredit);
   const matchedSuffix = [suffix, "", "Credit", "Ach", "Crypto"].find(key => address && normalized(snapshot[`splitAddress${key}`]) === address && (key !== "Ach" || snapshot.splitOverrides?.ach === true) && (key !== "Crypto" || snapshot.splitOverrides?.crypto === true));
   const kind = matchedSuffix === "Ach" ? "ach" : matchedSuffix === "Crypto" ? "crypto" : matchedSuffix === "Credit" ? "debit" : matchedSuffix === "" ? "credit" : "unknown";
-  return { kind, address, version: snapshot[`splitVersion${matchedSuffix ?? suffix}`] || null, inherited: kind === "credit" && (funding === "bank" || funding === "crypto"), source: explicit ? "recorded" : "payment_snapshot" };
+  return { kind, address, version: snapshot[`splitVersion${matchedSuffix ?? suffix}`] || null, inherited: kind === "credit" && (funding === "bank" || funding === "crypto"), source: explicit ? explicitSource : "payment_snapshot" };
 }
 
 /** Date-scoped filter catalog, independent of currently selected dimensions. */
