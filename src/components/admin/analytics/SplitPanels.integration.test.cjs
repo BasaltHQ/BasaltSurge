@@ -136,6 +136,75 @@ test('platform method presented fees load, save zero and custom rates, clear, an
   runner.dispose();
 });
 
+test('platform ACH and Crypto allocation defaults load, save, clear and reload independently', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const keys = ['achPlatformFeeBps', 'cryptoPlatformFeeBps', 'achAgentFeeBps', 'cryptoAgentFeeBps'];
+  let saved = Object.fromEntries(keys.map((key, i) => [key, (i + 1) * 25]));
+  global.fetch = async (_url, options) => {
+    if (options?.method === 'PATCH') saved = { ...saved, ...JSON.parse(options.body) };
+    return { ok: true, json: async () => ({ brand: saved }) };
+  };
+  const runner = new HookRunner();
+  await runner.settle(PlatformSettingsPanel);
+  for (const [i, key] of keys.entries()) assert.equal(find(runner.tree, n => n.props?.id === `platform-${key}`).props.value, (i + 1) * 25);
+  for (const values of [['50', '0', '10', '25'], ['', '', '', '']]) {
+    for (const [i, key] of keys.entries()) find(runner.tree, n => n.props?.id === `platform-${key}`).props.onChange({ target: { value: values[i] } });
+    await runner.settle(PlatformSettingsPanel);
+    await find(runner.tree, n => n.type === 'button' && text(n).includes('Save Changes')).props.onClick();
+    await runner.settle(PlatformSettingsPanel);
+    const reload = new HookRunner();
+    await reload.settle(PlatformSettingsPanel);
+    for (const [i, key] of keys.entries()) {
+      assert.equal(saved[key], values[i] === '' ? null : Number(values[i]));
+      assert.equal(find(reload.tree, n => n.props?.id === `platform-${key}`).props.value, values[i] === '' ? '' : Number(values[i]));
+    }
+    reload.dispose();
+  }
+  runner.dispose();
+});
+
+test('new optional drafts use method platform and primary agent defaults while existing allocations stay intact', async () => {
+  const requests = [];
+  global.fetch = async (_url, options) => {
+    if (options?.body) requests.push(JSON.parse(options.body));
+    return { ok: true, json: async () => ({ config: { splitRevision: requests.length } }) };
+  };
+  const runner = new HookRunner();
+  const optionalFeeDefaults = { achPlatformFeeBps: 50, cryptoPlatformFeeBps: 0, achAgentFeeBps: 25, cryptoAgentFeeBps: 0, primaryAgentWallet: primary };
+  const credit = { ...defaults.credit, agents: [{ wallet: primary, bps: 100 }, { wallet: historical, bps: 10 }], merchantBps: 9690 };
+  const Component = () => SplitDeployModal({ wallet: merchant, brandKey: 'test', account: { address: merchant }, defaults: { ...defaults, credit }, optionalFeeDefaults, canEditPlatform: true, onClose() {}, onSaved: async () => {} });
+  await runner.settle(Component);
+  for (const label of ['ACH', 'Crypto']) {
+    find(runner.tree, n => n.props?.['aria-label'] === `Separate ${label} fees`).props.onClick();
+    await runner.settle(Component);
+  }
+  await find(runner.tree, n => n.type === 'button' && text(n) === 'Save drafts').props.onClick();
+  const achDraft = requests.find(r => r.splitKind === 'ach').draft;
+  const cryptoDraft = requests.find(r => r.splitKind === 'crypto').draft;
+  assert.equal(achDraft.platformBps, 50);
+  assert.equal(achDraft.agents.find(a => a.wallet === primary).bps, 25);
+  assert.equal(cryptoDraft.platformBps, 0);
+  assert.deepEqual(cryptoDraft.agents, [{ wallet: historical, bps: 10 }]);
+  assert.equal(requests.find(r => r.splitKind === 'credit').draft.platformBps, 150);
+  assert.equal(credit.agents[0].bps, 100);
+  runner.dispose();
+});
+
+test('method fee defaults do not replace an existing deployed ACH allocation', async () => {
+  const existing = { ...defaults.credit, platformBps: 80, merchantBps: 9810, agents: [{ wallet: primary, bps: 60 }] };
+  global.fetch = async () => ({ ok: true, json: async () => ({ config: { splitConfigAch: existing, splitAddressAch: ach, splitOverrides: { ach: true } } }) });
+  const runner = new HookRunner();
+  const Component = () => SplitDeployModal({ wallet: merchant, brandKey: 'test', account: { address: merchant }, defaults,
+    optionalFeeDefaults: { achPlatformFeeBps: 50, achAgentFeeBps: 25, primaryAgentWallet: primary }, canEditPlatform: true, onClose() {}, onSaved: async () => {} });
+  await runner.settle(Component);
+  find(runner.tree, n => n.props?.role === 'tab' && text(n) === 'ACH').props.onClick();
+  await runner.settle(Component);
+  const values = walk(runner.tree).filter(n => n.type === 'input' && n.props?.type === 'number').map(n => n.props.value);
+  assert.equal(values[0], 80);
+  assert.ok(values.includes(60));
+  runner.dispose();
+});
+
 test('deployment modal starts dual, adds independent overrides, and saves drafts without activation', async () => {
   const requests = [];
   global.fetch = async (_url, options) => {

@@ -6,11 +6,12 @@ import { deploySplitContract } from "thirdweb/deploys";
 import { client, chain } from "@/lib/thirdweb/client";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { SPLIT_FIELDS, SPLIT_KINDS, discoverSplitContracts, optionalSplitActive, type SplitKind } from "@/lib/payment-split-routing";
-import { SPLIT_LABELS, validateSplitAllocation, type SplitDraft } from "@/lib/split-allocation";
+import { SPLIT_LABELS, validateSplitAllocation, optionalSplitDraft, type OptionalSplitFeeDefaults, type SplitDraft } from "@/lib/split-allocation";
 import { resolveFundingPlatformFeePct, resolveFundingPresentedFeeBps } from "@/lib/portal-checkout-pricing";
 
-export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditPlatform, onClose, onSaved, onApprove, approvedAgents = [], unifiedFeeEnabled = false, presentedFeeBps, creditPresentedFeeBps, achPresentedFeeBps, cryptoPresentedFeeBps, requiredAgents = {}, processorFeeBps = {}, showFeeExplainer = false, merchantName }: {
+export function SplitDeployModal({ wallet, brandKey, account, defaults, optionalFeeDefaults, canEditPlatform, onClose, onSaved, onApprove, approvedAgents = [], unifiedFeeEnabled = false, presentedFeeBps, creditPresentedFeeBps, achPresentedFeeBps, cryptoPresentedFeeBps, requiredAgents = {}, processorFeeBps = {}, showFeeExplainer = false, merchantName }: {
   wallet: string; brandKey: string; account: any; defaults: Partial<Record<SplitKind, SplitDraft>>;
+  optionalFeeDefaults?: OptionalSplitFeeDefaults;
   approvedAgents?: { wallet: string; name?: string }[];
   unifiedFeeEnabled?: boolean; presentedFeeBps?: number; creditPresentedFeeBps?: number;
   achPresentedFeeBps?: number | null; cryptoPresentedFeeBps?: number | null;
@@ -55,6 +56,15 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
     setDrafts(next);
   }
   useEffect(() => { load().catch(e => setError(e.message)).finally(() => setBusy(false)); }, [wallet, brandKey]);
+
+  function addOptionalSplit(kind: "ach" | "crypto") {
+    try {
+      const draft = optionalSplitDraft(defaults[kind] || drafts.credit!, kind, optionalFeeDefaults);
+      setDrafts(prev => ({ ...prev, [kind]: draft }));
+      setActive(kind);
+      setError("");
+    } catch (error: any) { setError(error.message); }
+  }
 
   async function write(kind: SplitKind, action: string, extra: any = {}) {
     const response = await fetch("/api/split/deploy", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json", "x-wallet": wallet, "x-csrf": "1" }, body: JSON.stringify({ wallet, brandKey, splitKind: kind, action, revision: configRef.current.splitRevision || 0, ...extra }) });
@@ -232,7 +242,7 @@ export function SplitDeployModal({ wallet, brandKey, account, defaults, canEditP
         ) : <div className="space-y-6">
           <div className="flex flex-wrap gap-2 p-1 rounded-xl bg-black/40 border border-white/5 w-fit" role="tablist" aria-label="Payment splits">
             {configuredKinds.map(kind => { const Icon = kind === "ach" ? Landmark : kind === "crypto" ? Wallet : CreditCard; return <button type="button" key={kind} role="tab" aria-selected={active === kind} disabled={busy} onClick={() => setActive(kind)} className={`px-4 py-2 rounded-lg font-semibold text-xs transition-all flex items-center gap-1.5 border disabled:opacity-40 ${active === kind ? kind === "debit" ? "bg-purple-500/10 text-purple-400 border-purple-500/20 shadow-lg shadow-purple-500/5" : "bg-emerald-500/10 text-emerald-400 border-emerald-500/20 shadow-lg shadow-emerald-500/5" : "text-zinc-400 border-transparent hover:text-zinc-200"}`}><Icon className="w-3.5 h-3.5" /><span>{SPLIT_LABELS[kind]}</span></button>; })}
-            {(["ach", "crypto"] as const).filter(kind => !drafts[kind]).map(kind => <button type="button" key={kind} disabled={busy || !drafts.credit} onClick={() => { setDrafts(prev => ({ ...prev, [kind]: structuredClone(prev.credit!) })); setActive(kind); }} className="px-3 py-2 rounded-lg border border-dashed border-white/10 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40" aria-label={`Separate ${SPLIT_LABELS[kind]} fees`}><Plus className="w-3.5 h-3.5" />{SPLIT_LABELS[kind]}</button>)}
+            {(["ach", "crypto"] as const).filter(kind => !drafts[kind]).map(kind => <button type="button" key={kind} disabled={busy || !drafts.credit} onClick={() => addOptionalSplit(kind)} className="px-3 py-2 rounded-lg border border-dashed border-white/10 text-zinc-400 hover:text-emerald-300 hover:border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40" aria-label={`Separate ${SPLIT_LABELS[kind]} fees`}><Plus className="w-3.5 h-3.5" />{SPLIT_LABELS[kind]}</button>)}
           </div>
           <p className="text-xs text-zinc-500 !mt-2">Credit currently covers Credit{inherited.map(k => ` + ${SPLIT_LABELS[k]}`).join("")}.</p>
           {(active === "ach" || active === "crypto") && <p className="rounded-lg border border-white/5 bg-black/20 p-3 text-xs text-zinc-400">{optionalSplitActive(config, active) ? "Dedicated contract active." : "Currently routes to Credit until this split is deployed."}</p>}

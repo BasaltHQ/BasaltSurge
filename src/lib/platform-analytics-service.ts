@@ -221,7 +221,32 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         const result = await container.items.query({ query: `SELECT * FROM c WHERE ${clauses.join(" AND ")}`, parameters }).fetchAll();
         projected = result.resources || [];
       }
-      projected = projected.filter(receipt => !partnerScope || partnerAnalyticsRecordMatchesBrand(receipt, partnerScope.brandKey)).map(receipt => {
+      projected = projected.filter(receipt => !partnerScope || partnerAnalyticsRecordMatchesBrand(receipt, partnerScope.brandKey));
+      // Deployment activates a document by its ID + merchant partition, not by
+      // its legacy type/brand metadata. Read that same authoritative document
+      // before using a persisted target or the bulk-query compatibility rows.
+      const pendingAchMerchants = new Map<string, { wallet: string; brandKey: string }>();
+      for (const receipt of projected) {
+        if (!canRefreshAchSettlementTarget(receipt)) continue;
+        const wallet = String(receipt.wallet || receipt.merchantWallet || "").toLowerCase().trim();
+        const brandKey = getReceiptBrandKey(receipt);
+        if (wallet && brandKey && brandKey !== "unknown") pendingAchMerchants.set(`${wallet}:${brandKey}`, { wallet, brandKey });
+      }
+      const merchants = [...pendingAchMerchants.entries()];
+      for (let start = 0; start < merchants.length; start += 20) {
+        await Promise.all(merchants.slice(start, start + 20).map(async ([key, { wallet, brandKey }]) => {
+          try {
+            const { resource } = await container.item(`site:config:${brandKey}`, wallet).read();
+            if (resource) routingConfigMap[key] = resource;
+          } catch (error: any) {
+            if (Number(error?.code || error?.statusCode) !== 404) {
+              configAvailable = false;
+              console.error("[PLATFORM ANALYTICS API] Failed to read pending ACH configuration:", error);
+            }
+          }
+        }));
+      }
+      projected = projected.map(receipt => {
         const brandKey = getReceiptBrandKey(receipt);
         const walletKey = String(receipt.wallet || receipt.merchantWallet || "").toLowerCase().trim();
         const configured = configMap[`${walletKey}:${brandKey}`] || configMap[walletKey];

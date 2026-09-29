@@ -9,6 +9,28 @@ export type SplitAllocation = {
 export type SplitDraft = SplitAllocation & { partnerWallet: string };
 export const SPLIT_LABELS: Record<SplitKind, string> = { credit: "Credit", debit: "Debit", ach: "ACH", crypto: "Crypto" };
 
+export type OptionalSplitFeeDefaults = {
+  achPlatformFeeBps?: number | null; cryptoPlatformFeeBps?: number | null;
+  achAgentFeeBps?: number | null; cryptoAgentFeeBps?: number | null;
+  primaryAgentWallet?: string;
+};
+
+/** Apply brand defaults only when creating a new optional split draft. */
+export function optionalSplitDraft(credit: SplitDraft, kind: "ach" | "crypto", defaults: OptionalSplitFeeDefaults = {}): SplitDraft {
+  const draft = structuredClone(credit);
+  const platformBps = defaults[`${kind}PlatformFeeBps`];
+  if (typeof platformBps === "number") draft.platformBps = platformBps;
+  const agentBps = defaults[`${kind}AgentFeeBps`];
+  const wallet = String(defaults.primaryAgentWallet || "").trim().toLowerCase();
+  if (typeof agentBps === "number") {
+    if (agentBps > 0 && !isSplitAddress(wallet)) throw new Error("Set a Primary Agent Wallet in Platform Settings before using this agent fee.");
+    if (wallet) draft.agents = draft.agents.filter(agent => agent.wallet.toLowerCase() !== wallet);
+    if (agentBps > 0) draft.agents.push({ wallet, bps: agentBps });
+  }
+  draft.merchantBps = 10000 - draft.platformBps - draft.partnerBps - draft.agents.reduce((sum, agent) => sum + agent.bps, 0);
+  return draft;
+}
+
 export function validateSplitAllocation(input: any): SplitAllocation {
   const bps = (value: any) => {
     if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 10000) throw new Error("Shares must be whole basis points between 0 and 10,000.");

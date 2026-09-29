@@ -1705,6 +1705,13 @@ export default function ClientRequestsPanel() {
                     creditPresentedFeeBps={creditPresentedFeeBps}
                     achPresentedFeeBps={fetchedBrand?.achPresentedFeeBps !== undefined ? fetchedBrand.achPresentedFeeBps : (brand as any)?.achPresentedFeeBps}
                     cryptoPresentedFeeBps={fetchedBrand?.cryptoPresentedFeeBps !== undefined ? fetchedBrand.cryptoPresentedFeeBps : (brand as any)?.cryptoPresentedFeeBps}
+                    optionalFeeDefaults={{
+                        achPlatformFeeBps: fetchedBrand?.achPlatformFeeBps !== undefined ? fetchedBrand.achPlatformFeeBps : (brand as any)?.achPlatformFeeBps,
+                        cryptoPlatformFeeBps: fetchedBrand?.cryptoPlatformFeeBps !== undefined ? fetchedBrand.cryptoPlatformFeeBps : (brand as any)?.cryptoPlatformFeeBps,
+                        achAgentFeeBps: fetchedBrand?.achAgentFeeBps !== undefined ? fetchedBrand.achAgentFeeBps : (brand as any)?.achAgentFeeBps,
+                        cryptoAgentFeeBps: fetchedBrand?.cryptoAgentFeeBps !== undefined ? fetchedBrand.cryptoAgentFeeBps : (brand as any)?.cryptoAgentFeeBps,
+                        primaryAgentWallet: fetchedBrand?.primaryAgentWallet || (brand as any)?.primaryAgentWallet || process.env.NEXT_PUBLIC_AGENT_WALLET || "",
+                    }}
                     requiredAgents={{ credit: getEnvAgents(false), debit: getEnvAgents(true) }}
                     processorFeeBps={{ credit: fetchedBrand?.creditStripeFeeBps ?? (brand as any)?.creditStripeFeeBps ?? 350, debit: fetchedBrand?.debitStripeFeeBps ?? (brand as any)?.debitStripeFeeBps ?? 225 }}
                     defaults={{

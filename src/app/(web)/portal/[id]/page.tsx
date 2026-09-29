@@ -2863,6 +2863,15 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
     return +(itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd + creditFeeUsd).toFixed(2);
   }, [itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd, creditFeePct, feeMinusEnabled, totalUsd]);
 
+  const achFeeQuote = useMemo(() => {
+    const config = { ...methodSplits, splitConfig, splitConfigCredit };
+    const presented = resolveFundingPresentedFeeBps("us_bank_account", config);
+    const feePct = Math.max(0, resolveFundingPlatformFeePct("us_bank_account", config) + Number(processingFeePct || 0) + (presented !== undefined ? 0 : 0.6));
+    const baseUsd = itemsSubtotalUsd + taxUsd + tipUsd + shippingCostUsd;
+    const feeUsd = +(baseUsd * feePct / 100).toFixed(2);
+    return { feePct, totalUsd: +(baseUsd + feeUsd).toFixed(2) };
+  }, [methodSplits, splitConfig, splitConfigCredit, processingFeePct, itemsSubtotalUsd, taxUsd, tipUsd, shippingCostUsd]);
+
   const stripeTotalUsd = useMemo(() => {
     if (!receipt) return 0;
     if (isCryptoDirect) return totalUsd;
@@ -7321,6 +7330,17 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
                               const converted = convertReceiptDisplayAmount(creditTotalUsd);
                               const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
                               return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(creditTotalUsd, "USD");
+                            })()})
+                          </div>
+                        )}
+
+                        {!feeMinusEnabled && partnerAchEnabled && merchantAchEnabled && detectedCardFunding !== "us_bank_account" && (
+                          <div className="microtext text-muted-foreground opacity-70 text-right mt-1.5 animate-in fade-in duration-500">
+                            * ACH payments subject to a {achFeeQuote.feePct.toFixed(2)}% fee (Total: {(() => {
+                              if (currency === "USD") return formatCurrency(achFeeQuote.totalUsd, "USD");
+                              const converted = convertReceiptDisplayAmount(achFeeQuote.totalUsd);
+                              const rounded = nativePricing?.currency === currency || converted > 0 ? roundForCurrency(converted, currency) : 0;
+                              return nativePricing?.currency === currency || rounded > 0 ? formatCurrency(rounded, currency) : formatCurrency(achFeeQuote.totalUsd, "USD");
                             })()})
                           </div>
                         )}

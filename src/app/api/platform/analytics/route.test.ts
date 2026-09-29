@@ -31,7 +31,7 @@ function project(row: Record<string, any>, projection: Record<string, number>) {
   return result;
 }
 
-function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?: any[], configRows: any[] = [{ type: "wallet_config", wallet: "merchant", brandKey: "legacy", merchantName: "O'Brien Shop" }]) {
+function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?: any[], configRows: any[] = [{ type: "wallet_config", wallet: "merchant", brandKey: "legacy", merchantName: "O'Brien Shop" }], canonicalConfigs = configRows) {
   const collection = {
     find: (filter: any, options: any) => ({ toArray: async () => filter._id
       ? rows.filter(row => filter._id.$in.includes(row._id))
@@ -39,6 +39,7 @@ function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?
   };
   const container = {
     ...(backend === "mongo" ? { getCollection: () => collection } : {}),
+    item: (id: string, wallet: string) => ({ read: async () => ({ resource: canonicalConfigs.find(row => row.id === id && row.wallet === wallet) }) }),
     items: { query: (spec: any) => ({ fetchAll: async () => ({ resources: spec.query.includes("site_config") ? configRows : rows }) }) },
   };
   const exports: Record<string, any> = {};
@@ -82,6 +83,28 @@ test("pending ACH target drives the ledger and split filter using the correct br
     assert.equal(result.recentReceipts[0].settlementSplitAddress, ach);
     assert.equal(result.recentReceipts[0].splitRouteSource, "settlement_target");
     assert.equal(result.recentReceipts[0].splitRoutingSnapshot.achPresentedFeeBps, 110);
+  }
+});
+
+test("R-158570 replaces a saved Credit target with the activated canonical ACH contract", async () => {
+  const wallet = "0x6c28067a2d4f10013fbbb8534acd76ab43a4ff9f";
+  const credit = "0xc98e71791e3924f1d9d9b6f3e91fd9af94943396";
+  const ach = "0x2d384140e18d897a0c62a2ed6d3e2c0592f86e32";
+  const row = { _id: "ach", id: "receipt:R-158570", receiptId: "R-158570", wallet, brandKey: "basaltsurge",
+    status: "paid - ach pending", detectedCardFunding: "us_bank_account", totalUsd: 1.10, createdAt: "2026-09-06T12:00:00Z",
+    splitRoutingSnapshot: { splitAddress: credit, achPresentedFeeBps: 110 },
+    settlementTarget: { address: credit, kind: "credit", inherited: true, version: 1 } };
+  const stale = { id: "site:config:basaltsurge", type: "site_config", wallet, brandKey: "basaltsurge", splitAddress: credit };
+  const active = { ...stale, brandKey: "portalpay", splitAddressAch: ach, splitConfigAch: { platformBps: 50 }, splitVersionAch: 1, splitOverrides: { ach: true } };
+  for (const backend of ["mongo", "cosmos"] as const) {
+    const call = routeFor([row], backend, undefined, [stale], [active]);
+    const result = await call(new URLSearchParams({ snapshotEnd: "2026-09-06T18:00:00Z", splitKind: "ach" }));
+    assert.equal(result.recentReceipts.length, 1);
+    assert.equal(result.recentReceipts[0].settlementSplitAddress, ach);
+    assert.equal(result.recentReceipts[0].settlementSplitKind, "ach");
+    assert.equal(result.stats.splitBreakdown.ach.total, 1);
+    assert.equal(result.recentReceipts[0].totalUsd, 1.10);
+    assert.deepEqual(result.recentReceipts[0].splitRoutingSnapshot, row.splitRoutingSnapshot);
   }
 });
 

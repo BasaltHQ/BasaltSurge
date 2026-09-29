@@ -36,6 +36,13 @@ function harness(options = {}) {
 }
 const draft = { platformBps: 150, partnerBps: 50, agents: [], partnerWallet: partner };
 
+test("new optional deployments honor configured method platform defaults without weakening platform locks", async () => {
+  const h = harness({ platformAdmin: false, brand: { achPlatformFeeBps: 50, cryptoPlatformFeeBps: 0, creditPlatformFeeBps: 150 } });
+  await h.call("ach", "draft", { draft: { ...draft, platformBps: 50 } });
+  await h.call("crypto", "draft", { draft: { ...draft, platformBps: 0 } });
+  await assert.rejects(h.call("ach", "draft", { draft: { ...draft, platformBps: 75 } }), /Only platform administrators/);
+});
+
 test("drafts do not change active routing; four deployments activate independently", async () => {
   const h = harness();
   await h.call("ach", "draft", { draft });

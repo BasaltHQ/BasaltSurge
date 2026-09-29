@@ -114,7 +114,7 @@ function harness(options = {}) {
     item(id, partition) { return { read: async () => {
       state.reads.push({ id, partition });
       if (options.permissionFailure) throw new Error("database_unavailable");
-      return { resource: state.documents[`${partition}/${id}`] || null };
+      return { resource: state.documents[`${partition}/${id}`] || configs.find(config => config.id === id && config.wallet === partition) || null };
     } }; },
     items: { query(spec) {
       state.queries.push({ backend: "cosmos", ...spec });
@@ -152,6 +152,24 @@ for (const backend of ["mongo", "cosmos"]) test(`${backend}: pending ACH uses th
     assert.equal(result.body.recentReceipts[0].settlementSplitAddress, ach);
     assert.equal(result.body.stats.splitBreakdown.ach.total, 1);
     assert.equal(result.body.recentReceipts[0].splitRouteSource, 'settlement_target');
+  }
+});
+
+for (const backend of ["mongo", "cosmos"]) test(`${backend}: canonical ACH activation overrides stale bulk config and saved Credit targets`, async () => {
+  const ach = '0x2d384140e18d897a0c62a2ed6d3e2c0592f86e32';
+  const stale = { id: 'site:config:alpha', type: 'site_config', brandKey: 'alpha', wallet: merchant, splitAddress: merchant };
+  const active = { ...stale, splitAddressAch: ach, splitConfigAch: { platformBps: 50 }, splitOverrides: { ach: true } };
+  const row = receipt('ach-stale', { status: 'paid - ach pending', detectedCardFunding: 'us_bank_account',
+    splitRoutingSnapshot: { splitAddress: merchant }, settlementTarget: { address: merchant, kind: 'credit', inherited: true } });
+  const h = harness({ backend, rows: [row], configs: [stale], documents: {
+    'global/admin_roles': { admins: [{ wallet: actor, role: 'platform_admin' }] },
+    [`${merchant}/site:config:alpha`]: active,
+  } });
+  for (const call of [h.call, h.platform]) {
+    const result = await call({ paymentMethod: 'bank', splitKind: 'ach' });
+    assert.equal(result.status, 200, result.body.error);
+    assert.equal(result.body.recentReceipts[0].settlementSplitAddress, ach);
+    assert.equal(result.body.stats.splitBreakdown.ach.total, 1);
   }
 });
 

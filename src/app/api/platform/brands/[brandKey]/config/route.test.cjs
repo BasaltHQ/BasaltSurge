@@ -95,3 +95,22 @@ test('ACH and Crypto presented fees survive save, reload, zero, and clearing ind
         }
     }
 });
+
+test('ACH and Crypto platform and agent defaults persist, preserve zero, and clear to inheritance', async () => {
+    const h = harness('open');
+    const keys = ['achPlatformFeeBps', 'cryptoPlatformFeeBps', 'achAgentFeeBps', 'cryptoAgentFeeBps'];
+    for (const value of [50, 0, null]) {
+        const response = await h.patch(Object.fromEntries(keys.map(key => [key, value])));
+        assert.equal(response.status, 200);
+        const reloaded = (await (await h.get()).json()).brand;
+        for (const key of keys) {
+            assert.equal(h.saved[key], value);
+            assert.equal(reloaded[key], value);
+        }
+    }
+    await h.patch({ achPlatformFeeBps: 75.8, cryptoAgentFeeBps: -1, achAgentFeeBps: 10001 });
+    assert.equal(h.saved.achPlatformFeeBps, 75);
+    assert.equal(h.saved.cryptoAgentFeeBps, 0);
+    assert.equal(h.saved.achAgentFeeBps, 10000);
+    assert.equal(h.saved.cryptoPlatformFeeBps, null);
+});
