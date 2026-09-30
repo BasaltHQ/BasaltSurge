@@ -69,3 +69,63 @@
 .dl-record-inspector h2 { font-size:13px; font-weight:600; }
 .dl-stale-result { padding:10px 18px; background:#43362040; border-bottom:1px solid #8e774b33; color:#cab691; font-size:10px; }
 .dl-sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+
+/* Keep the chrome compact and give the working surfaces the remaining space. */
+.dl-workspace > .dl-hero { min-height:90px; padding:8px 6px 14px; }
+.dl-workspace .dl-hero h1 { font-size:32px; margin:7px 0 4px; }
+.dl-workspace .dl-hero p { font-size:11px; }
+.dl-workspace .dl-hero-art { width:82px; height:82px; top:0; }
+.dl-workspace .dl-hero-art > span { inset:4px; border-radius:16px; }
+.dl-workspace .dl-hero-art > span:nth-child(2) { inset:13px; border-radius:12px; }
+.dl-workspace .dl-hero-art > span:nth-child(3) { inset:22px; border-radius:8px; }
+.dl-workspace .dl-hero-art > svg { width:23px; height:23px; }
+.dl-workspace .dl-art-label { display:none; }
+.dl-workspace > .dl-summary { padding:10px 16px; margin-bottom:10px; }
+.dl-workspace .dl-summary strong { font-size:16px; }
+.dl-workspace > .dl-footer { padding:9px 3px 0; }
+.dl-canvas-stage { position:relative; overflow:hidden; }
+.dl-canvas-stage > .dl-canvas { position:absolute; left:0; top:0; }
+
+@media(min-width:801px) {
+  .admin-data-lab-workspace { padding-top:76px; padding-bottom:12px; }
+  .admin-data-lab-workspace > .dl-workspace { margin-top:0; }
+  .dl-workspace {
+    display:flex;
+    flex-direction:column;
+    height:calc(100dvh - 88px);
+    min-height:640px;
+  }
+  .dl-workspace > :not(.dl-workbench) { flex-shrink:0; }
+  .dl-workspace > .dl-workbench { flex:1; min-height:0; }
+  .dl-workspace .dl-explorer { min-height:0; overflow:hidden; }
+  .dl-workspace .dl-explorer > :not(.dl-schema-list) { flex-shrink:0; }
+  .dl-workspace .dl-schema-list { flex:1; min-height:100px; max-height:none; }
+  .dl-workspace .dl-library { max-height:20%; overflow:auto; padding:12px 13px; margin-top:0; }
+  .dl-workspace .dl-explorer-footer { padding:12px 13px; }
+  .dl-workspace .dl-main { display:flex; flex-direction:column; min-height:0; overflow:auto; }
+  .dl-workspace .dl-main > * { flex-shrink:0; }
+  .dl-workspace .dl-tabs { min-height:46px; }
+  .dl-workspace .dl-tabs button { padding-top:14px; padding-bottom:14px; }
+  .dl-workspace .dl-toolbar { min-height:45px; padding-top:8px; padding-bottom:8px; }
+  .dl-workspace .dl-main > .dl-empty { flex:1; min-height:160px; }
+  .dl-workspace .dl-main > :is(.dl-table-scroll,.dl-json,.dl-chart) { flex:1; min-height:160px; max-height:none; overflow:auto; }
+  .dl-workspace .dl-editor { min-height:170px; }
+  .dl-workspace .dl-editor textarea { min-height:170px; max-height:40vh; }
+  .dl-workspace .dl-atlas { display:flex; flex-direction:column; flex:1; min-height:0; padding:20px; }
+  .dl-workspace .dl-atlas > :not(.dl-table-scroll) { flex-shrink:0; }
+  .dl-workspace .dl-atlas > .dl-table-scroll { flex:1; min-height:160px; max-height:none; }
+  .dl-workspace .dl-schema-stats { margin:16px 0; }
+  .dl-workspace .dl-schema-stats > div { padding:14px 20px; }
+  .dl-workspace .dl-flow { display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden; }
+  .dl-workspace .dl-flow > :not(.dl-flow-layout) { flex-shrink:0; }
+  .dl-workspace .dl-flow-tools { padding-top:8px; padding-bottom:8px; }
+  .dl-workspace .dl-flow-layout { flex:1; min-height:0; grid-template-columns:minmax(0,1fr) clamp(220px,18vw,290px); }
+  .dl-workspace .dl-canvas-shell { min-height:0; }
+  .dl-workspace .dl-canvas-scroll { position:absolute; inset:0; height:auto; }
+  .dl-workspace .dl-node-inspector { display:block; min-height:0; overflow:auto; border-top:0; border-left:1px solid var(--dl-line); }
+  .dl-workspace .dl-node-inspector label { margin-top:17px; }
+}
+@media(max-width:800px) {
+  .dl-workspace > .dl-hero { min-height:100px; }
+  .dl-workspace .dl-canvas-scroll { height:clamp(360px,60dvh,620px); }
+}

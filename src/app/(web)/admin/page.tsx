@@ -11788,7 +11788,7 @@ export default function AdminPage() {
     <>
       <div className="admin-ambient" />
       <div className={`mx-auto pl-4 pr-4 space-y-6 pt-[144px] md:pt-[88px] pb-10 transition-all duration-300 ${isSidebarCollapsed ? 'md:pl-24' : 'md:pl-72'
-        } ${isSupportTab ? '' : 'max-w-full'}`}>
+        } ${isSupportTab ? '' : 'max-w-full'} ${activeTab === "dataLab" ? 'admin-data-lab-workspace' : ''}`}>
         <AdminHero />
         <AdminSidebar
           onTourNavigation={setTourNavigation}

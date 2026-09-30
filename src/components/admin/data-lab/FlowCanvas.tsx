@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { Database, Filter, Workflow, ArrowUpRight, Plus, Trash2, Link2, Minus, Maximize2, Download, Upload, Save } from "lucide-react";
 import { isLabFlow, type LabFlow, type LabNode } from "@/lib/data-lab";
 
@@ -14,12 +14,51 @@ export function downloadLabFile(name: string, content: string, type = "applicati
 
 export default function FlowCanvas({ flow, onChange, onSave, onNew }: { flow: LabFlow; onChange: (flow: LabFlow) => void; onSave: () => void; onNew: () => void }) {
   const [selected, setSelected] = useState<string>("source");
-  const [zoom, setZoom] = useState(0.8);
+  const [viewport, setViewport] = useState({ width: 900, height: 520 });
+  const [manualView, setManualView] = useState<{ zoom: number; x: number; y: number } | null>(null);
+  const canvasViewport = useRef<HTMLDivElement>(null);
   const [connectFrom, setConnectFrom] = useState<string | null>(null);
   const [notice, setNotice] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   const drag = useRef<{ id: string; x: number; y: number; clientX: number; clientY: number } | null>(null);
   const node = flow.nodes.find(item => item.id === selected);
+  const bounds = {
+    left: Math.min(...flow.nodes.map(item => item.x), flow.nodes.length ? Infinity : 0),
+    top: Math.min(...flow.nodes.map(item => item.y), flow.nodes.length ? Infinity : 0),
+    right: Math.max(...flow.nodes.map(item => item.x + 230), 230),
+    bottom: Math.max(...flow.nodes.map(item => item.y + 112), 112),
+  };
+  const fitZoom = Math.max(0.1, Math.min(1.75, (viewport.width - 96) / (bounds.right - bounds.left), (viewport.height - 144) / (bounds.bottom - bounds.top)));
+  function centeredView(zoom: number) {
+    return { zoom, x: Math.max(48, (viewport.width - (bounds.right - bounds.left) * zoom) / 2) - bounds.left * zoom, y: Math.max(72, (viewport.height - (bounds.bottom - bounds.top) * zoom) / 2) - bounds.top * zoom };
+  }
+  const view = manualView || centeredView(fitZoom);
+  const zoom = view.zoom;
+  const stage = { width: Math.max(viewport.width, bounds.right * zoom + view.x + 48), height: Math.max(viewport.height, bounds.bottom * zoom + view.y + 72) };
+  function fitFlow() {
+    setManualView(null);
+    canvasViewport.current?.scrollTo({ left: 0, top: 0 });
+  }
+  function changeZoom(amount: number) {
+    setManualView(centeredView(Math.max(0.1, Math.min(2, zoom + amount))));
+    canvasViewport.current?.scrollTo({ left: 0, top: 0 });
+  }
+  useEffect(() => {
+    const element = canvasViewport.current;
+    if (!element) return;
+    const resize = () => setViewport({ width: element.clientWidth, height: element.clientHeight });
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  // A different graph should open framed; moving or editing existing nodes
+  // preserves the camera so the canvas does not shift underneath the pointer.
+  const graphKey = flow.nodes.map(item => item.id).join("|");
+  useEffect(() => {
+    setManualView(null);
+    canvasViewport.current?.scrollTo({ left: 0, top: 0 });
+  }, [graphKey]);
   const updateNode = (patch: Partial<LabNode>) => onChange({ ...flow, nodes: flow.nodes.map(item => item.id === selected ? { ...item, ...patch } : item) });
   function addNode(kind: LabNode["kind"]) {
     if (flow.nodes.length >= 100) { setNotice("A flow can contain up to 100 nodes."); return; }
@@ -41,7 +80,7 @@ export default function FlowCanvas({ flow, onChange, onSave, onNew }: { flow: La
       <Workflow size={16} className="dl-mint" />
       <input aria-label="Flowchart name" className="dl-flow-name" value={flow.name} maxLength={100} onChange={event => onChange({ ...flow, name: event.target.value })} />
       <span className="dl-spacer" />
-      <button onClick={() => { onNew(); setSelected(""); setConnectFrom(null); }}><Plus size={14} /> New flow</button>
+      <button onClick={() => { onNew(); setSelected(""); setConnectFrom(null); fitFlow(); }}><Plus size={14} /> New flow</button>
       <button onClick={() => fileInput.current?.click()}><Upload size={14} /> Import</button>
       <button onClick={() => downloadLabFile("data-lab-flow.json", JSON.stringify(flow, null, 2))}><Download size={14} /> Export</button>
       <button onClick={onSave}><Save size={14} /> Save flow</button>
@@ -53,7 +92,7 @@ export default function FlowCanvas({ flow, onChange, onSave, onNew }: { flow: La
           if (file.size > 500000) throw new Error("Flow files must be under 500 KB.");
           const next: unknown = JSON.parse(await file.text());
           if (!isLabFlow(next)) throw new Error("This file is not a valid Data Lab flowchart.");
-          onChange(next); setSelected(next.nodes[0]?.id || ""); setNotice("Flowchart imported. Save to keep it in this browser.");
+          onChange(next); setSelected(next.nodes[0]?.id || ""); fitFlow(); setNotice("Flowchart imported. Save to keep it in this browser.");
         } catch (error) { setNotice(error instanceof Error ? error.message : "Import failed."); }
       }} />
     </div>
@@ -66,9 +105,9 @@ export default function FlowCanvas({ flow, onChange, onSave, onNew }: { flow: La
     <div className="dl-flow-layout">
       <div className="dl-canvas-shell">
         <div className="dl-canvas-caption">{connectFrom ? "Select a destination node · Escape to cancel" : "Drag to arrange · Select to configure"}</div>
-        <div className="dl-canvas-scroll">
-          <div style={{ width: 2250 * zoom, height: 1700 * zoom }}>
-            <div className="dl-canvas" style={{ transform: `scale(${zoom})` }}>
+        <div ref={canvasViewport} className="dl-canvas-scroll">
+          <div className="dl-canvas-stage" style={stage}>
+            <div className="dl-canvas" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${zoom})` }}>
               <svg className="dl-connections" width="2250" height="1700" aria-label="Flowchart connections">
                 <defs><marker id="dl-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#79e9b0" /></marker></defs>
                 {flow.edges.map(edge => {
@@ -81,6 +120,7 @@ export default function FlowCanvas({ flow, onChange, onSave, onNew }: { flow: La
               {flow.nodes.map(item => { const Icon = icons[item.kind]; return <button key={item.id} className={`dl-node ${selected === item.id ? "is-selected" : ""}`} data-kind={item.kind} style={{ left: item.x, top: item.y }} onClick={() => chooseNode(item.id)}
                 onPointerDown={event => {
                   if (event.button !== 0 || connectFrom) return;
+                  setManualView(view);
                   event.currentTarget.setPointerCapture(event.pointerId);
                   drag.current = { id: item.id, x: item.x, y: item.y, clientX: event.clientX, clientY: event.clientY };
                   setSelected(item.id);
@@ -88,13 +128,14 @@ export default function FlowCanvas({ flow, onChange, onSave, onNew }: { flow: La
                 onPointerMove={event => {
                   const current = drag.current;
                   if (!current || current.id !== item.id) return;
-                  onChange({ ...flow, nodes: flow.nodes.map(n => n.id === item.id ? { ...n, x: Math.round(Math.max(0, Math.min(2000, current.x + (event.clientX - current.clientX) / zoom))), y: Math.round(Math.max(0, Math.min(1500, current.y + (event.clientY - current.clientY) / zoom))) } : n) });
+                  onChange({ ...flow, nodes: flow.nodes.map(n => n.id === item.id ? { ...n, x: Math.round(Math.max(0, -view.x / zoom, Math.min(2000, current.x + (event.clientX - current.clientX) / zoom))), y: Math.round(Math.max(0, -view.y / zoom, Math.min(1500, current.y + (event.clientY - current.clientY) / zoom))) } : n) });
                 }}
                 onPointerUp={() => { drag.current = null; }} onPointerCancel={() => { drag.current = null; }}
                 onKeyDown={event => {
                   if (event.key === "Escape") setConnectFrom(null);
                   if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
                     event.preventDefault();
+                    setManualView(view);
                     onChange({ ...flow, nodes: flow.nodes.map(n => n.id === item.id ? { ...n, x: Math.max(0, Math.min(2000, n.x + (event.key === "ArrowRight" ? 20 : event.key === "ArrowLeft" ? -20 : 0))), y: Math.max(0, Math.min(1500, n.y + (event.key === "ArrowDown" ? 20 : event.key === "ArrowUp" ? -20 : 0))) } : n) });
                   }
                 }}>
@@ -104,7 +145,7 @@ export default function FlowCanvas({ flow, onChange, onSave, onNew }: { flow: La
             </div>
           </div>
         </div>
-        <div className="dl-zoom"><button aria-label="Zoom out" onClick={() => setZoom(value => Math.max(0.4, value - 0.1))}><Minus size={14} /></button><span>{Math.round(zoom * 100)}%</span><button aria-label="Zoom in" onClick={() => setZoom(value => Math.min(1.5, value + 0.1))}><Plus size={14} /></button><button aria-label="Reset zoom" onClick={() => setZoom(0.8)}><Maximize2 size={14} /></button></div>
+        <div className="dl-zoom"><button aria-label="Zoom out" onClick={() => changeZoom(-0.1)}><Minus size={14} /></button><span>{Math.round(zoom * 100)}%</span><button aria-label="Zoom in" onClick={() => changeZoom(0.1)}><Plus size={14} /></button><button aria-label="Fit flow to canvas" onClick={fitFlow}><Maximize2 size={14} /> Fit flow</button></div>
       </div>
       <aside className="dl-node-inspector">
         <div className="dl-kicker">NODE INSPECTOR</div>

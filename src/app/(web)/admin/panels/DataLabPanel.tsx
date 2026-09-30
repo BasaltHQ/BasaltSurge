@@ -153,7 +153,7 @@ function DataLabWorkspace({ wallet }: { wallet: string }) {
   const fields = (schema?.fields || []).filter(field => field.name.toLowerCase().includes(fieldSearch.toLowerCase()));
   const connected = !catalogLoading && !catalogError;
 
-  return <section className="data-lab" aria-label="Data Lab">
+  return <section className="data-lab dl-workspace" data-workspace={workspace} aria-label="Data Lab">
     <header className="dl-hero">
       <div className="dl-hero-copy"><div className="dl-kicker"><span className="dl-crosshair">+</span> PLATFORM / INTELLIGENCE WORKSPACE</div><h1>Data Lab<span className="dl-title-dot">.</span></h1><p>Follow the data. Find the signal.</p></div>
       <div className="dl-hero-art" aria-hidden="true"><span /><span /><span /><Database size={35} /><i className="dl-art-label">DL / 01</i></div>
