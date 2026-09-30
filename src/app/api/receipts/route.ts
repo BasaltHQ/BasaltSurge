@@ -350,7 +350,7 @@ export async function POST(req: NextRequest) {
       req.headers.get("origin") ||
       undefined
     );
-    const origin = (
+    const clientOrigin = (
       (typeof body?.origin === "string" && body.origin.trim()) ||
       req.headers.get("origin") ||
       (parentUrl ? (() => { try { return new URL(parentUrl).origin; } catch { return undefined; } })() : undefined)
@@ -452,7 +452,7 @@ export async function POST(req: NextRequest) {
       brandName,
       status: "pending",
       ...(parentUrl ? { parentUrl } : {}),
-      ...(origin ? { origin } : {}),
+      ...(clientOrigin ? { origin: clientOrigin } : {}),
       ...(ipAddress ? { ipAddress } : {}),
       ...(userAgent ? { userAgent } : {}),
       statusHistory: [{ status: "pending", ts: now }],
@@ -517,7 +517,7 @@ export async function POST(req: NextRequest) {
     const host = req.headers.get("host");
     const proto = xfProto || (process.env.NODE_ENV === "production" ? "https" : "http");
     const h = xfHost || (host ? host.split(",")[0].trim() : "");
-    const origin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
+    const appOrigin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
     const tParams = new URLSearchParams();
     tParams.set("recipient", wallet);
     if (isCryptoOnly) tParams.set("crypto", "true");
@@ -525,7 +525,7 @@ export async function POST(req: NextRequest) {
     if (returnUrl) tParams.set("returnUrl", returnUrl);
     if (onSuccess) tParams.set("onSuccess", onSuccess);
     if (stripeEmail) tParams.set("stripeEmail", stripeEmail);
-    const paymentUrl = `${origin}/portal/${encodeURIComponent(id)}?${tParams.toString()}`;
+    const paymentUrl = `${appOrigin}/portal/${encodeURIComponent(id)}?${tParams.toString()}`;
     return NextResponse.json(
       {
         id,

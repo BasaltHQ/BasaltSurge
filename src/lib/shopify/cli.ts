@@ -557,7 +557,7 @@ export async function deployShopifyApp(
 
     // The cart option is independent of the optional checkout UI extension.
     for (const [relativePath, contents] of Object.entries(await generateCartExtensionFiles(config))) {
-      const target = path.join(workspaceRoot, relativePath);
+      const target = path.join(/*turbopackIgnore: true*/ workspaceRoot, relativePath);
       let original: Buffer | null = null;
       try { original = await fs.readFile(target); } catch (error: any) {
         if (error.code !== "ENOENT") throw error;
