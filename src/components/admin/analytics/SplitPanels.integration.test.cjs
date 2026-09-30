@@ -347,6 +347,42 @@ test('modal totals match checkout and contract allocations for all four methods'
   }
 });
 
+test('ACH and Crypto fee headers and allocation summaries include agent edits with presented overrides', async () => {
+  for (const brandKey of ['basaltsurge', 'partner-test']) for (const unifiedFeeEnabled of [false, true]) for (const configured of [false, true]) {
+    const partnerBps = brandKey === 'basaltsurge' ? 0 : 25;
+    const allocation = { platformBps: 50, partnerBps, agents: [{ wallet: historical, bps: 150 }], partnerWallet: ach };
+    global.fetch = async () => ({ ok: true, json: async () => ({ config: { splitDrafts: { credit: allocation, debit: allocation, ach: allocation, crypto: allocation } } }) });
+    const runner = new HookRunner();
+    const Component = () => SplitDeployModal({ wallet: merchant, brandKey, account: { address: merchant }, defaults,
+      canEditPlatform: brandKey === 'basaltsurge', unifiedFeeEnabled,
+      achPresentedFeeBps: configured ? 110 : null, cryptoPresentedFeeBps: configured ? 50 : null,
+      onClose() {}, onSaved: async () => {} });
+    await runner.settle(Component);
+    for (const [label, processor] of [['ACH', 60], ['Crypto', 0]]) {
+      find(runner.tree, n => n.props?.role === 'tab' && text(n) === label).props.onClick();
+      await runner.settle(Component);
+      for (const agentBps of [150, 200, 0]) {
+        if (agentBps !== 150) {
+          const old = agentBps === 200 ? 150 : 200;
+          find(runner.tree, n => n.type === 'input' && n.props.type === 'number' && n.props.value === old).props.onChange({ target: { value: String(agentBps) } });
+          await runner.settle(Component);
+        }
+        const rate = ((processor + 50 + partnerBps + agentBps) / 100).toFixed(2);
+        const context = `${brandKey} ${label} unified=${unifiedFeeEnabled} configured=${configured}`;
+        if (brandKey === 'basaltsurge' || unifiedFeeEnabled) {
+          const headline = find(runner.tree, n => n.type === 'span' && n.props?.className?.includes('text-4xl'));
+          assert.equal(text(headline), `${rate}%`, context);
+        }
+        if (brandKey === 'basaltsurge' || !unifiedFeeEnabled) {
+          assert.ok(text(runner.tree).includes(`Customer Fee${rate}%`), context);
+          assert.ok(text(runner.tree).includes(`Total Presented: ${rate}%`), context);
+        }
+      }
+    }
+    runner.dispose();
+  }
+});
+
 test('partner modal uses independent ACH and Crypto presented fees in both layouts', async () => {
   const allocation = { platformBps: 50, partnerBps: 25, agents: [], partnerWallet: ach };
   const config = { splitDrafts: { credit: allocation, debit: allocation, ach: allocation, crypto: allocation } };

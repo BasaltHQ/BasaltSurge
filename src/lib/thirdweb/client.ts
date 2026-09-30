@@ -17,13 +17,15 @@ export function getClient() {
   const secret = process.env.THIRDWEB_SECRET_KEY;
 
   // Resolve brandKey dynamically
-  let brandKey = "";
+  let brandKey = typeof document !== "undefined"
+    ? document.documentElement?.getAttribute("data-pp-brand-key") || ""
+    : "";
   if (typeof window !== "undefined") {
     const hostLower = window.location.hostname.toLowerCase().split(":")[0];
     const win = window as any;
 
     // 1. Check dynamic domains (hydrated via layout / script insertion)
-    if (win.__DYNAMIC_DOMAINS__ && win.__DYNAMIC_DOMAINS__[hostLower]) {
+    if (!brandKey && win.__DYNAMIC_DOMAINS__ && win.__DYNAMIC_DOMAINS__[hostLower]) {
       brandKey = win.__DYNAMIC_DOMAINS__[hostLower];
     }
 
@@ -134,28 +136,20 @@ export function getClient() {
 
   let clientId: string | undefined = undefined;
 
-  // 1. Check module-level cache first to guarantee immunity against Next.js layout DOM resets during SPA transitions
-  if (typeof window !== "undefined" && brandKey && resolvedClientIdCache[brandKey]) {
-    clientId = resolvedClientIdCache[brandKey];
-  }
-
-  // 2. Check cookie and localStorage cache to guarantee synchronous resolution on hard refreshes (F5) even in sandboxed mobile WebViews
-  if (!clientId && typeof window !== "undefined" && brandKey) {
-    try {
-      const match = document.cookie.match(new RegExp('(^| )pp_tw_client_id_' + brandKey + '=([^;]+)'));
-      clientId = match ? match[2] : undefined;
-      if (!clientId) {
-        clientId = localStorage.getItem(`pp-thirdweb-client-id:${brandKey}`) || undefined;
-      }
-    } catch { }
-  }
-
-  // 3. Check DOM attribute
-  if (!clientId && typeof window !== "undefined") {
-    clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id") || undefined;
+  // The server layout / live brand configuration is authoritative. A cached
+  // project ID can create a different in-app wallet for the same credentials.
+  if (typeof window !== "undefined") {
+    clientId = document.documentElement?.getAttribute("data-pp-thirdweb-client-id")?.trim() || undefined;
     if (clientId === "undefined" || clientId === "null" || clientId === "") {
       clientId = undefined;
     }
+  }
+
+  // Preserve the last authoritative ID only within this page's lifetime when
+  // Next.js temporarily removes layout attributes during navigation. Never
+  // restore legacy cookies/localStorage over freshly loaded configuration.
+  if (!clientId && typeof window !== "undefined" && brandKey) {
+    clientId = resolvedClientIdCache[brandKey];
   }
 
   // 4. Check brand-specific env var (partners only)
@@ -166,17 +160,9 @@ export function getClient() {
   // 5. Fallback to default env var
   clientId = clientId || process.env.NEXT_PUBLIC_THIRDWEB_CLIENT_ID;
 
-  // 6. Cache the resolved client ID in module memory, localStorage, and cookie to survive page updates and private-mode browser restarts
+  // Keep navigation stable without persisting obsolete project IDs across loads.
   if (clientId && typeof window !== "undefined" && brandKey) {
     resolvedClientIdCache[brandKey] = clientId;
-    try {
-      localStorage.setItem(`pp-thirdweb-client-id:${brandKey}`, clientId);
-      document.cookie = `pp_tw_client_id_${brandKey}=${clientId}; path=/; max-age=31536000; SameSite=Lax`;
-    } catch { }
-  }
-
-  if (typeof window !== "undefined") {
-    console.log("[Thirdweb Client] getClient() resolved brandKey:", brandKey, "clientId:", clientId);
   }
 
   const cacheKey = secret ? `secret_${secret}` : `client_${clientId}`;

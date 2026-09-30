@@ -12,6 +12,8 @@ export function useThirdwebClient(): ReturnType<typeof createThirdwebClient> {
       setActiveClient(getClient());
     };
     window.addEventListener("pp:thirdweb-client-id:updated", handleUpdate);
+    // Catch configuration updates that occurred between render and this effect.
+    handleUpdate();
     return () => {
       window.removeEventListener("pp:thirdweb-client-id:updated", handleUpdate);
     };

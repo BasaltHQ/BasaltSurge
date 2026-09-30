@@ -88,7 +88,7 @@ function harness(options = {}) {
     const module = { exports: {} };
     cache.set(file, module);
     vm.runInNewContext(compiled.get(file), {
-      module, exports: module.exports, URL, Headers, Buffer, Date, Intl, Map, Set, process: { env },
+      module, exports: module.exports, URL, URLSearchParams, Headers, Buffer, Date, Intl, Map, Set, process: { env },
       console: { log() {}, warn() {}, error() {} },
       require(name) {
         if (dependencies[name]) return dependencies[name];
@@ -129,11 +129,12 @@ function harness(options = {}) {
     if (name === "payportal_events" || settings) assert.equal(settings?.profile, "critical");
     return container;
   } };
+  const agentRoute = load("app/api/agents/transactions/route.ts");
   const route = load("app/api/partner/analytics/route.ts");
   const service = load("lib/platform-analytics-service.ts");
   const access = load("lib/partner-analytics-access.ts");
   const request = (params = {}, headers = {}) => ({ headers: new Headers({ host: "alpha.example.com", ...headers }), nextUrl: { searchParams: new URLSearchParams({ snapshotEnd: "2026-09-06T18:00:00Z", ...params }) } });
-  return { state, access, request, call: (params, headers) => route.GET(request(params, headers)), platform: (params, headers) => service.loadAnalyticsResponse(request(params, headers)) };
+  return { state, access, request, agent: (params, headers) => agentRoute.GET(request(params, headers)), call: (params, headers) => route.GET(request(params, headers)), platform: (params, headers) => service.loadAnalyticsResponse(request(params, headers)) };
 }
 
 const receipt = (id, fields = {}) => ({ type: "receipt", _id: id, id, receiptId: id, brandKey: "alpha", wallet: merchant, status: "paid", totalUsd: 100, createdAt: "2026-09-06T12:00:00Z", ...fields });
@@ -375,4 +376,49 @@ test("merchant performance and KYC/failure totals include receipts beyond the fi
   assert.equal(second.body.recentReceipts.length, 120);
   assert.equal(second.body.pagination.hasMore, false);
   assert.equal(new Set([...first.body.recentReceipts, ...second.body.recentReceipts].map(row => row.storageId)).size, 620);
+});
+
+
+for (const backend of ["mongo", "cosmos"]) test(`${backend}: agents receive only enabled, assigned brand rows and no details`, async () => {
+  const configs = [
+    { type: 'brand_config', wallet: 'alpha', name: 'Alpha', agentTransactionsEnabled: true, primaryAgentWallet: actor },
+    { type: 'brand_config', wallet: 'beta', name: 'Beta', agentTransactionsEnabled: true },
+    { type: 'site_config', id: 'site:config:beta', brandKey: 'beta', wallet: merchant, splitConfig: { agents: [{ wallet: actor, bps: 50 }] } },
+  ];
+  const rows = [receipt('a', { customerEmail: 'buyer@example.com', buyerWallet: 'private', logs: [{ message: 'secret' }], lineItems: ['secret'], kycFinalSnapshot: { secret: true } }),
+    receipt('b', { brandKey: 'beta', totalUsd: 50 }), receipt('c', { brandKey: 'beta', wallet: secondMerchant }), receipt('d', { brandKey: 'disabled' })];
+  const h = harness({ backend, brand: 'basaltsurge', configs, rows, leakyReads: true });
+  assert.deepEqual((await h.agent()).body.brands, [{ brandKey: 'alpha', name: 'Alpha' }, { brandKey: 'beta', name: 'Beta' }]);
+  const alpha = await h.agent({ brandKey: 'alpha' });
+  assert.equal(alpha.status, 200, alpha.body.error);
+  assert.deepEqual(alpha.body.rows.map(row => row.receiptId), ['a']);
+  assert.deepEqual(Object.keys(alpha.body.rows[0]).sort(), ['receiptId', 'createdAt', 'brandKey', 'merchantName', 'totalUsd', 'email', 'stripeSessionId', 'transactionHash', 'status', 'kyc'].sort());
+  assert.equal(alpha.body.rows[0].email, 'buyer@example.com');
+  assert.equal(h.state.logsRead, 0);
+  assert.deepEqual((await h.agent({ brandKey: 'beta' })).body.rows.map(row => row.receiptId), ['b']);
+  assert.equal((await h.agent({ brandKey: 'disabled' })).status, 403);
+  configs[0].agentTransactionsEnabled = false;
+  assert.equal((await h.agent({ brandKey: 'alpha' })).status, 403);
+  configs[2].splitConfig.agents = [];
+  assert.equal((await h.agent({ brandKey: 'beta' })).status, 403);
+});
+
+test('agent transactions reject spoofed wallets, unverified sessions and foreign containers', async () => {
+  const configs = [{ type: 'brand_config', wallet: 'alpha', agentTransactionsEnabled: true, primaryAgentWallet: actor }];
+  assert.equal((await harness({ configs, session: null }).agent()).status, 401);
+  assert.equal((await harness({ configs }).agent({}, { 'x-wallet': secondMerchant })).status, 403);
+  assert.equal((await harness({ configs, brand: 'beta' }).agent({ brandKey: 'alpha' }, { 'x-brand-key': 'alpha' })).status, 403);
+  const blocked = harness({ configs: [...configs, { type: 'agent_request', wallet: actor, brandKey: 'alpha', status: 'blocked' }] });
+  assert.deepEqual((await blocked.agent()).body.brands, []);
+});
+
+test('agent ledger sorts the entire result before paging and searches only visible fields', async () => {
+  const configs = [{ type: 'brand_config', wallet: 'alpha', agentTransactionsEnabled: true, agents: [{ wallet: actor, bps: 50 }] }];
+  const rows = [receipt('a', { totalUsd: 90, ipAddress: 'secret-evidence' }), receipt('b', { totalUsd: 10 }), receipt('c', { totalUsd: 50 })];
+  const h = harness({ configs, rows });
+  const result = await h.agent({ brandKey: 'alpha', sortKey: 'totalUsd', sortDirection: 'asc', limit: '1', offset: '1' });
+  assert.equal(result.status, 200, result.body.error);
+  assert.equal(result.body.total, 3);
+  assert.equal(result.body.rows[0].receiptId, 'c');
+  assert.deepEqual((await h.agent({ brandKey: 'alpha', search: 'secret-evidence' })).body.rows, []);
 });

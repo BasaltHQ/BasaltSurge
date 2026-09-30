@@ -6,6 +6,15 @@ import { auditEvent } from "@/lib/audit";
 import crypto from "node:crypto";
 import { fetchEthRates } from "@/lib/eth";
 import { getBrandKey } from "@/config/brands";
+import { getPlatformAnalyticsFeeData } from "@/lib/platform-analytics-fees";
+
+function computeReceiptFee(r: any): number {
+  if (String(r?.paymentMethod || "").toLowerCase() === "cash") {
+    return 0;
+  }
+  const feeData = getPlatformAnalyticsFeeData(r);
+  return feeData?.amount ?? 0;
+}
 
 type UsersAggRow = {
   merchant: string;
@@ -70,6 +79,59 @@ export async function GET(req: NextRequest) {
 
     const container = await getContainer();
 
+    // Query paid receipts for actual platform sales, platform fees, buyers, and XP
+    let receiptRows: Array<{
+      wallet?: string;
+      merchantWallet?: string;
+      totalUsd?: number;
+      amountPlatformMinor?: number;
+      platformFeeUsd?: number;
+      platformFee?: number;
+      portalFeeUsd?: number;
+      platformFeeBps?: number;
+      platformBps?: number;
+      splitConfig?: any;
+      paymentMethod?: string;
+      buyerWallet?: string;
+      customerWallet?: string;
+      customerEmail?: string;
+      stripeEmail?: string;
+      xp?: number;
+      customerXp?: number;
+      status?: string;
+      brandKey?: string;
+    }> = [];
+    try {
+      const spec = {
+        query: `
+          SELECT c.wallet, c.merchantWallet, c.totalUsd, c.amountPlatformMinor,
+                 c.platformFeeUsd, c.platformFee, c.portalFeeUsd,
+                 c.platformFeeBps, c.platformBps, c.splitConfig, c.paymentMethod,
+                 c.buyerWallet, c.customerWallet, c.customerEmail, c.stripeEmail,
+                 c.xp, c.customerXp, c.status, c.brandKey
+          FROM c
+          WHERE c.type='receipt' AND ARRAY_CONTAINS(@statuses, c.status)
+        `,
+        parameters: [
+          {
+            name: "@statuses",
+            value: [
+              "paid",
+              "checkout_success",
+              "completed",
+              "receipt_claimed",
+              "paid - ach pending",
+              "reconciled",
+            ],
+          },
+        ],
+      };
+      const { resources } = await container.items.query(spec as any).fetchAll();
+      receiptRows = Array.isArray(resources) ? (resources as any[]) : [];
+    } catch (e) {
+      console.error("[ADMIN USERS] Error querying receipts:", e);
+    }
+
     // Aggregate from user_merchant to compute customers and XP per merchant
     let userMerchantRows: Array<{ merchant?: string; wallet?: string; xp?: number }> = [];
     try {
@@ -98,16 +160,40 @@ export async function GET(req: NextRequest) {
       purchaseRows = Array.isArray(resources) ? resources as any[] : [];
     } catch { }
 
-    type Acc = { buyers: Set<string>; xpSum: number; grossUsd: number; platformFeeUsd: number };
+    type Acc = { buyers: Set<string>; xpSum: number; grossUsd: number; platformFeeUsd: number; txCount: number };
     const byMerchant = new Map<string, Acc>();
     const hex = (s: any) => typeof s === "string" && /^0x[a-f0-9]{40}$/i.test(s);
+
+    // Merge receipt rows (primary source of truth for platform sales, fees, buyers, XP)
+    for (const r of receiptRows) {
+      const rawWallet = r?.wallet || r?.merchantWallet;
+      const m = String(rawWallet || "").toLowerCase();
+      if (!hex(m)) continue;
+
+      const prev = byMerchant.get(m) || { buyers: new Set<string>(), xpSum: 0, grossUsd: 0, platformFeeUsd: 0, txCount: 0 };
+      const usd = Number(r?.totalUsd || 0);
+      if (Number.isFinite(usd) && usd > 0) {
+        prev.grossUsd += usd;
+        prev.platformFeeUsd += computeReceiptFee(r);
+      }
+
+      const buyer = String(r?.buyerWallet || r?.customerWallet || r?.customerEmail || r?.stripeEmail || "").toLowerCase();
+      if (buyer) prev.buyers.add(buyer);
+
+      const xp = r?.customerXp != null ? Number(r.customerXp) : (r?.xp != null ? Number(r.xp) : (usd > 0 ? Math.floor(usd) : 0));
+      if (Number.isFinite(xp) && xp > 0) {
+        prev.xpSum += xp;
+      }
+      prev.txCount += 1;
+      byMerchant.set(m, prev);
+    }
 
     // Merge user_merchant aggregate (customers, XP)
     for (const r of userMerchantRows) {
       const m = String(r?.merchant || "").toLowerCase();
       const w = String(r?.wallet || "").toLowerCase();
       if (!hex(m) || !hex(w)) continue;
-      const prev = byMerchant.get(m) || { buyers: new Set<string>(), xpSum: 0, grossUsd: 0, platformFeeUsd: 0 };
+      const prev = byMerchant.get(m) || { buyers: new Set<string>(), xpSum: 0, grossUsd: 0, platformFeeUsd: 0, txCount: 0 };
       prev.buyers.add(w);
       const xp = Math.max(0, Number(r?.xp || 0));
       prev.xpSum += xp;
@@ -119,12 +205,13 @@ export async function GET(req: NextRequest) {
       const m = String(r?.recipient || "").toLowerCase();
       const w = String(r?.wallet || "").toLowerCase();
       if (!hex(m)) continue;
-      const prev = byMerchant.get(m) || { buyers: new Set<string>(), xpSum: 0, grossUsd: 0, platformFeeUsd: 0 };
+      const prev = byMerchant.get(m) || { buyers: new Set<string>(), xpSum: 0, grossUsd: 0, platformFeeUsd: 0, txCount: 0 };
       if (hex(w)) prev.buyers.add(w);
       const usd = Number(r?.usd || 0);
       const fee = Number(r?.portalFeeUsd || 0);
       if (Number.isFinite(usd) && usd > 0) prev.grossUsd += usd;
       if (Number.isFinite(fee) && fee >= 0) prev.platformFeeUsd += fee;
+      prev.txCount += 1;
       byMerchant.set(m, prev);
     }
 
@@ -155,11 +242,6 @@ export async function GET(req: NextRequest) {
       profileMap.set(w, { displayName, tags });
     }
 
-    // Build superset of wallets: merchants with activity ∪ all profiles
-    const walletsSet = new Set<string>(Array.from(byMerchant.keys()));
-    for (const w of profileMap.keys()) walletsSet.add(w);
-    const allWallets = Array.from(walletsSet);
-
     function round2(n: number) {
       return Math.round((Number(n || 0)) * 100) / 100;
     }
@@ -186,16 +268,7 @@ export async function GET(req: NextRequest) {
       cbXRP: 0.50,  // Approximate XRP price
     };
 
-    // Map to store transaction data per merchant (customers, volume, and cumulative metrics)
-    const transactionStatsMap = new Map<string, {
-      uniqueCustomers: Set<string>;
-      totalVolumeUsd: number;
-      cumulativePayments: Record<string, number>;
-      cumulativeMerchantReleases: Record<string, number>;
-      cumulativePlatformReleases: Record<string, number>;
-    }>();
-
-    // Query indexed split data from Cosmos (single source of truth from blockchain)
+    // Query indexed split data from Cosmos (source for on-chain split data)
     let splitIndexRows: Array<{
       merchantWallet?: string;
       splitAddress?: string;
@@ -208,17 +281,8 @@ export async function GET(req: NextRequest) {
       cumulativePayments?: Record<string, number>;
       cumulativeMerchantReleases?: Record<string, number>;
       cumulativePlatformReleases?: Record<string, number>;
+      brandKey?: string;
     }> = [];
-
-    // Query indexed split data from Cosmos (single source of truth from blockchain)
-    // (Redeclaration removed, reusing variable from above if it existed, but better to just use one. 
-    // The previous edit added a second declaration block. I will remove the second block header and just keep the try/catch logic populating it if I can.
-    // Wait, the variable 'splitIndexRows' IS used in line 236 inside the try block.
-    // I will remove the 'let splitIndexRows ... = []' lines and just use the try block to assign to it, assuming it was declared earlier.
-    // However, the earlier declaration (line 192) was:
-    // let splitIndexRows: Array<{...}> = [];
-    // So I can just remove the lines 209-222 entirely? No, I need the comment.
-    // I will remove the declaration lines.
 
     try {
       const spec = {
@@ -523,88 +587,113 @@ export async function GET(req: NextRequest) {
       allSplitAddressesMap.set(w, existing);
     }
 
+    // Build superset of wallets: merchants with activity ∪ all profiles ∪ shop configs ∪ split records
+    const walletsSet = new Set<string>(Array.from(byMerchant.keys()));
+    for (const w of profileMap.keys()) walletsSet.add(w);
+    for (const w of featuresMap.keys()) walletsSet.add(w);
+    for (const r of splitIndexRows) {
+      const w = String(r?.merchantWallet || "").toLowerCase();
+      if (hex(w)) walletsSet.add(w);
+    }
+    const allWallets = Array.from(walletsSet);
+
     const allowedWallets = (
       containerType === "partner"
-        ? Array.from(new Set<string>([...walletsFromIndex, ...fallbackWalletsFromSiteConfig]))
+        ? Array.from(new Set<string>([
+            ...walletsFromIndex,
+            ...Array.from(brandPriorityMap.entries()).filter(([_, b]) => b === brandFilter).map(([w]) => w),
+            ...fallbackWalletsFromSiteConfig,
+          ]))
         : (qBrand
           ? Array.from(new Set<string>([
             ...Array.from(brandMap.entries())
               .filter(([_, b]) => b === qBrand)
               .map(([w]) => w),
+            ...Array.from(brandPriorityMap.entries())
+              .filter(([_, b]) => b === qBrand)
+              .map(([w]) => w),
             ...fallbackWalletsFromSiteConfig,
           ]))
           : allWallets)
-    ).filter(w => !disallowedWallets.has(w));
+    ).filter(w => !disallowedWallets.has(w) || (brandPriorityMap.get(w) === brandFilter));
 
     const items: UsersAggRow[] = allowedWallets
       .map((m) => {
         const prof = profileMap.get(m) || { displayName: undefined, tags: ["Connected"] };
         const splitAddress = splitAddressMap.get(m);
         const indexedMetrics = indexedMetricsMap.get(m);
+        const acc = byMerchant.get(m);
 
-        // Initialize with fallback values
+        // Receipts are the primary source of truth for platform sales, fees, customers, and XP
+        const receiptGrossUsd = acc ? acc.grossUsd : 0;
+        const receiptFeeUsd = acc ? acc.platformFeeUsd : 0;
+        const receiptEarnedUsd = round2(receiptGrossUsd - receiptFeeUsd);
+        const receiptCustomers = acc ? acc.buyers.size : 0;
+        const receiptXp = acc ? Math.floor(acc.xpSum) : 0;
+        const receiptTxCount = acc ? acc.txCount : 0;
+
         let totalEarnedUsd = 0;
+        let platformFeeUsd = 0;
         let customers = 0;
         let totalCustomerXp = 0;
-        let platformFeeUsd = 0;
         let transactionCount = 0;
         let totalVolumeEth = 0;
 
-        // Use indexed split data as the ONLY source of truth when available
-        if (indexedMetrics) {
-          customers = indexedMetrics.customers;
-          totalCustomerXp = indexedMetrics.totalCustomerXp;
-          transactionCount = indexedMetrics.transactionCount;
+        // Calculate on-chain released amounts from indexed split data (if available)
+        let merchantEarnedOnChainUsd = 0;
+        let platformEarnedOnChainUsd = 0;
+        let totalPaymentsOnChainUsd = 0;
 
-          // Compute total earned from cumulativeMerchantReleases (actual on-chain merchant payouts)
-          // This is more accurate than totalVolumeUsd which may be stale/incorrectly computed
+        if (indexedMetrics) {
           const cumulativeMR = indexedMetrics.cumulativeMerchantReleases || {};
           const cumulativePR = indexedMetrics.cumulativePlatformReleases || {};
           const cumulativePayments = indexedMetrics.cumulativePayments || {};
 
-          // Sum merchant releases converted to USD
-          let merchantEarnedUsd = 0;
           for (const [token, amount] of Object.entries(cumulativeMR)) {
             const price = tokenPrices[token] || 0;
-            merchantEarnedUsd += Number(amount || 0) * price;
+            merchantEarnedOnChainUsd += Number(amount || 0) * price;
           }
-
-          // Sum platform releases converted to USD
-          let platformEarnedUsd = 0;
           for (const [token, amount] of Object.entries(cumulativePR)) {
             const price = tokenPrices[token] || 0;
-            platformEarnedUsd += Number(amount || 0) * price;
+            platformEarnedOnChainUsd += Number(amount || 0) * price;
           }
-
-          // If no releases yet but payments exist, use payments as volume (not yet distributed)
-          const acc = byMerchant.get(m);
-          const accruedFee = acc ? acc.platformFeeUsd : 0;
-
-          if (merchantEarnedUsd === 0 && platformEarnedUsd === 0) {
-            let totalPaymentsUsd = 0;
-            for (const [token, amount] of Object.entries(cumulativePayments)) {
-              const price = tokenPrices[token] || 0;
-              totalPaymentsUsd += Number(amount || 0) * price;
-            }
-            // If payments exist but nothing released yet, show payment volume (net of fee)
-            // Fall back to stored totalVolumeUsd only as last resort
-            const grossUsd = totalPaymentsUsd > 0 ? totalPaymentsUsd : indexedMetrics.totalVolumeUsd;
-            totalEarnedUsd = round2(grossUsd - accruedFee);
-            platformFeeUsd = round2(accruedFee > 0 ? accruedFee : indexedMetrics.platformFeeUsd);
-          } else {
-            totalEarnedUsd = round2(merchantEarnedUsd);
-            platformFeeUsd = round2(platformEarnedUsd > 0 ? platformEarnedUsd : (accruedFee > 0 ? accruedFee : indexedMetrics.platformFeeUsd));
+          for (const [token, amount] of Object.entries(cumulativePayments)) {
+            const price = tokenPrices[token] || 0;
+            totalPaymentsOnChainUsd += Number(amount || 0) * price;
           }
-
-          totalVolumeEth = round2((merchantEarnedUsd + platformEarnedUsd) / (ethUsdRate || 1));
-        } else {
-          // Fallback to receipt-based data ONLY if split index unavailable
-          const acc = byMerchant.get(m) || { buyers: new Set<string>(), xpSum: 0, grossUsd: 0, platformFeeUsd: 0 };
-          totalEarnedUsd = round2((acc.grossUsd || 0) - (acc.platformFeeUsd || 0));
-          customers = acc.buyers.size;
-          totalCustomerXp = Math.floor(Math.max(0, acc.xpSum || 0));
-          platformFeeUsd = round2(acc.platformFeeUsd || 0);
         }
+
+        const indexMR = indexedMetrics ? Number(indexedMetrics.merchantEarnedUsd || 0) : 0;
+        const indexPR = indexedMetrics ? Number(indexedMetrics.platformFeeUsd || 0) : 0;
+        const indexVol = indexedMetrics ? Number(indexedMetrics.totalVolumeUsd || 0) : 0;
+        const effectiveMR = Math.max(merchantEarnedOnChainUsd, indexMR);
+        const effectivePR = Math.max(platformEarnedOnChainUsd, indexPR);
+
+        if (receiptGrossUsd > 0) {
+          // Receipts exist: use receipt totals as primary source of truth,
+          // but respect higher on-chain releases if they exceed receipt net.
+          totalEarnedUsd = effectiveMR > receiptEarnedUsd ? round2(effectiveMR) : receiptEarnedUsd;
+          platformFeeUsd = round2(effectivePR > receiptFeeUsd ? effectivePR : receiptFeeUsd);
+          customers = Math.max(receiptCustomers, indexedMetrics?.customers || 0);
+          totalCustomerXp = Math.max(receiptXp, indexedMetrics?.totalCustomerXp || 0);
+          transactionCount = Math.max(receiptTxCount, indexedMetrics?.transactionCount || 0);
+        } else if (indexedMetrics && (effectiveMR > 0 || effectivePR > 0 || indexVol > 0 || totalPaymentsOnChainUsd > 0)) {
+          // No receipts, but on-chain activity exists
+          if (effectiveMR > 0 || effectivePR > 0) {
+            totalEarnedUsd = round2(effectiveMR);
+            platformFeeUsd = round2(effectivePR > 0 ? effectivePR : indexPR);
+          } else {
+            const grossUsd = totalPaymentsOnChainUsd > 0 ? totalPaymentsOnChainUsd : indexVol;
+            totalEarnedUsd = round2(grossUsd - (effectivePR > 0 ? effectivePR : indexPR));
+            platformFeeUsd = round2(effectivePR > 0 ? effectivePR : indexPR);
+          }
+          customers = indexedMetrics.customers || 0;
+          totalCustomerXp = indexedMetrics.totalCustomerXp || 0;
+          transactionCount = indexedMetrics.transactionCount || 0;
+        }
+
+        const totalUsdVol = totalEarnedUsd + platformFeeUsd;
+        totalVolumeEth = round2(totalUsdVol / (ethUsdRate || 1));
 
         // Mark current split address in allSplitAddresses
         const allSplits = allSplitAddressesMap.get(m) || [];

@@ -666,6 +666,18 @@ export const ClientRequestsKYBPDF: React.FC<ClientRequestsKYBPDFProps> = ({
                                                 {req.deployedSplitAddress || "Unallocated / Direct"}
                                             </Text>
                                         </View>
+                                        {req.deployedSplitAddressAch && (
+                                            <View style={s.infoRow}>
+                                                <Text style={s.infoLabel}>ACH Split:</Text>
+                                                <Text style={s.infoValueMono}>{req.deployedSplitAddressAch}</Text>
+                                            </View>
+                                        )}
+                                        {req.deployedSplitAddressCrypto && (
+                                            <View style={s.infoRow}>
+                                                <Text style={s.infoLabel}>Crypto Split:</Text>
+                                                <Text style={s.infoValueMono}>{req.deployedSplitAddressCrypto}</Text>
+                                            </View>
+                                        )}
                                         {req.deployedSplitAddressCredit && (
                                             <View style={s.infoRow}>
                                                 <Text style={s.infoLabel}>Debit Split:</Text>

@@ -652,7 +652,7 @@ export default function PlatformSettingsPanel() {
                   onChange={e => setConfig(prev => ({ ...prev, [key]: e.target.value === '' ? null : Math.max(0, Math.min(10000, Math.floor(Number(e.target.value)))) }))} />
                 <div className="text-[10px] text-muted-foreground">
                   {label === 'ACH' ? 'Includes Stripe’s 0.60% charge. ' : 'No Stripe charge. '}
-                  Base presented fee; partner share is added. Blank uses the routed split allocations{label === 'ACH' ? ' plus 0.60% Stripe' : ''}. 100 bps = 1%.
+                  Base presented fee; partner and agent shares are added. Blank uses the routed split allocations{label === 'ACH' ? ' plus 0.60% Stripe' : ''}. 100 bps = 1%.
                 </div>
               </div>
             ))}

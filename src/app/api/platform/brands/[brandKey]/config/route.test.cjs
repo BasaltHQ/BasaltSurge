@@ -20,6 +20,7 @@ function harness(accessMode, roles = ['admin']) {
             item: () => ({ read: async () => ({ resource: saved }) }),
             items: { upsert: async doc => { saved = doc; } },
         }) },
+        '@/lib/partner-analytics-access': { requirePlatformAnalyticsAccess: async () => { if (!roles.includes('platform_admin')) throw Object.assign(new Error('forbidden'), { status: 403 }); } },
         '@/lib/auth': { requireThirdwebAuth: async () => ({ wallet: 'admin-wallet', roles }) },
         '@/lib/security': { requireCsrf() {}, rateLimitOrThrow() {}, rateKey: () => 'test' },
         '@/lib/validation': { parseJsonBody: req => req.json() },
@@ -113,4 +114,17 @@ test('ACH and Crypto platform and agent defaults persist, preserve zero, and cle
     assert.equal(h.saved.cryptoAgentFeeBps, 0);
     assert.equal(h.saved.achAgentFeeBps, 10000);
     assert.equal(h.saved.cryptoPlatformFeeBps, null);
+});
+
+
+test('agent visibility defaults off, persists true and false, and rejects non-platform changes', async () => {
+    const h = harness('open', ['admin', 'platform_admin']);
+    assert.equal((await (await h.get()).json()).brand.agentTransactionsEnabled, false);
+    for (const enabled of [true, false]) {
+        assert.equal((await h.patch({ agentTransactionsEnabled: enabled })).status, 200);
+        assert.equal(h.saved.agentTransactionsEnabled, enabled);
+        assert.equal((await (await h.get()).json()).brand.agentTransactionsEnabled, enabled);
+    }
+    assert.equal((await h.patch({ agentTransactionsEnabled: 'true' })).status, 400);
+    assert.equal((await harness('open').patch({ agentTransactionsEnabled: true })).status, 403);
 });

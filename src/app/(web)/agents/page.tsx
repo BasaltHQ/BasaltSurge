@@ -1,11 +1,14 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useMemo } from "react";
-import { useActiveAccount, ConnectButton } from "thirdweb/react";
+import { useActiveAccount } from "thirdweb/react";
 import { sendTransaction, getContract, prepareContractCall } from "thirdweb";
-import { client, chain, getWallets } from "@/lib/thirdweb/client";
+import { chain } from "@/lib/thirdweb/client";
+import { useThirdwebClient } from "@/hooks/useThirdwebClient";
+import AgentConnectButton from "@/components/agents/AgentConnectButton";
 import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
 import { useBrand } from "@/contexts/BrandContext";
+import AgentTransactions from "@/components/agents/AgentTransactions";
 import AgentHero from "@/components/agents/agent-hero";
 import TruncatedAddress from "@/components/truncated-address";
 import { formatCurrency } from "@/lib/fx";
@@ -565,24 +568,17 @@ function AgentUniversity({ brandName }: { brandName: string }) {
 /*              AGENT DASHBOARD               */
 /* ═══════════════════════════════════════════ */
 export default function AgentDashboard() {
+    const client = useThirdwebClient();
     const account = useActiveAccount();
     const brand = useBrand();
     const twTheme = usePortalThirdwebTheme();
     const agentWallet = (account?.address || "").toLowerCase();
 
-    const [wallets, setWallets] = useState<any[]>([]);
-    useEffect(() => {
-        let mounted = true;
-        getWallets().then((w) => {
-            if (mounted) setWallets(w as any[]);
-        }).catch(() => setWallets([]));
-        return () => { mounted = false; };
-    }, []);
-
     const [range, setRange] = useState("month");
     const [activeTab, setActiveTab] = useState<"dashboard" | "university" | "videos">("dashboard");
     const [customStart, setCustomStart] = useState(() => new Date().toISOString().split("T")[0]);
     const [customEnd, setCustomEnd] = useState(() => new Date().toISOString().split("T")[0]);
+    const transactionDates = useMemo(() => getDateRange(range, customStart, customEnd), [range, customStart, customEnd]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
     const [data, setData] = useState<AgentReport | null>(null);
@@ -982,21 +978,14 @@ export default function AgentDashboard() {
                             Connect the wallet associated with your agent role to view commission reports, earnings analytics, and withdraw funds across all your assigned merchants.
                         </p>
                         <div className="flex justify-center">
-                            {wallets.length > 0 ? (
-                            <ConnectButton 
-                                client={client} 
-                                chain={chain} 
+                            <AgentConnectButton
                                 theme={twTheme}
-                                wallets={wallets}
                                 connectModal={{
                                     size: "compact",
                                     title: "Agent Console",
                                     showThirdwebBranding: false
                                 }}
                             />
-                            ) : (
-                                <div className="w-[140px] h-[40px] bg-white/5 animate-pulse rounded-[10px]" />
-                            )}
                         </div>
                         <div className="pt-4 border-t border-border/50 space-y-2 text-xs text-muted-foreground">
                             <p>Your agent wallet was set by the partner when configuring merchant splits.</p>
@@ -1495,6 +1484,8 @@ export default function AgentDashboard() {
                                 </div>
                             </div>
                         </div>
+
+                        <AgentTransactions key={agentWallet} wallet={agentWallet} start={transactionDates.start} end={transactionDates.end} />
 
                         {/* ─── My Referrals Pipeline ─── */}
                         <div className="rounded-xl border bg-card overflow-hidden">

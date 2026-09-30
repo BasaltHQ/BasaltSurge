@@ -2,8 +2,8 @@
 
 import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
-import { useActiveAccount, ConnectButton } from "thirdweb/react";
-import { client, chain } from "@/lib/thirdweb/client";
+import { useActiveAccount } from "thirdweb/react";
+import AgentConnectButton from "@/components/agents/AgentConnectButton";
 import { usePortalThirdwebTheme } from "@/lib/thirdweb/theme";
 import { useBrand } from "@/contexts/BrandContext";
 import { useTheme } from "@/contexts/ThemeContext";
@@ -145,9 +145,7 @@ export default function AgentSignUp() {
                     <h2 className={agentStyles.cardTitle}>Sign Up as an Agent</h2>
                     <p className={agentStyles.cardSubtitle}>Connect your wallet to begin your application. Your wallet acts as your identity and commission payout destination.</p>
                     <div style={{ display: "flex", justifyContent: "center", paddingBlock: "12px 20px" }}>
-                        <ConnectButton
-                            client={client}
-                            chain={chain}
+                        <AgentConnectButton
                             theme={twTheme}
                             connectButton={{
                                 label: "Sign Up Now",

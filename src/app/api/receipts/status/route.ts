@@ -182,7 +182,16 @@ export async function POST(req: NextRequest) {
     const failureAction = failureInfo ? failureInfo.suggestedAction : undefined;
 
     const paymentMethodDetails = typeof body.paymentMethodDetails === "object" ? body.paymentMethodDetails : undefined;
-    const parentUrl = typeof body.parentUrl === "string" ? String(body.parentUrl).trim() : undefined;
+    const rawParent = typeof body.parentUrl === "string" && body.parentUrl.trim()
+      ? String(body.parentUrl).trim()
+      : (req.headers.get("referer") || req.headers.get("origin") || undefined);
+    const parentUrl = rawParent;
+    const origin = typeof body.origin === "string" && body.origin.trim()
+      ? String(body.origin).trim()
+      : (req.headers.get("origin") || (parentUrl ? (() => { try { return new URL(parentUrl).origin; } catch { return undefined; } })() : undefined));
+    const userAgent = typeof body.userAgent === "string" && body.userAgent.trim()
+      ? String(body.userAgent).trim()
+      : (req.headers.get("user-agent") || undefined);
     const requestIpAddress = (req as NextRequest & { ip?: unknown }).ip;
     let brandKey: string | undefined = undefined;
     try { brandKey = getBrandKey(); } catch { brandKey = undefined; }
@@ -559,6 +568,8 @@ export async function POST(req: NextRequest) {
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
+          ...(origin ? { origin } : {}),
+          ...(userAgent ? { userAgent } : {}),
           ...(failureReason ? { failureReason } : {}),
           ...(failureCode ? { failureCode } : {}),
           ...(failureCategory ? { failureCategory } : {}),
@@ -616,6 +627,8 @@ export async function POST(req: NextRequest) {
           ...(detectedCardFunding ? { detectedCardFunding } : {}),
           ...(typeof isCreditCard === "boolean" ? { isCreditCard } : {}),
           ...(parentUrl ? { parentUrl } : {}),
+          ...(origin ? { origin } : {}),
+          ...(userAgent ? { userAgent } : {}),
           ...(failureReason ? { failureReason } : {}),
           ...(failureCode ? { failureCode } : {}),
           ...(failureCategory ? { failureCategory } : {}),

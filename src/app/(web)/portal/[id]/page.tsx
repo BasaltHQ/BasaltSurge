@@ -3511,12 +3511,24 @@ export default function PortalReceiptPage({ propId, propEmbedded, propRecipient 
   async function postStatus(status: string, extra?: any) {
     try {
       if (!receiptId) return;
-      const parentUrl = typeof document !== "undefined" && document.referrer ? document.referrer : undefined;
+      const parentUrl = (
+        (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("parentUrl")) ||
+        (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("parent_url")) ||
+        (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("origin")) ||
+        (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("referrer")) ||
+        (typeof window !== "undefined" && (window.location as any).ancestorOrigins?.[0]) ||
+        (typeof document !== "undefined" && document.referrer) ||
+        undefined
+      );
+      const origin = typeof window !== "undefined" && window.location ? window.location.origin : undefined;
+      const userAgent = typeof navigator !== "undefined" ? navigator.userAgent : undefined;
       const payload = {
         receiptId,
         wallet: merchantWallet || recipient,
         status,
         parentUrl,
+        origin,
+        userAgent,
         totalUsd: typeof totalUsd === "number" && totalUsd > 0 ? totalUsd : undefined,
         lineItems: Array.isArray(items) && items.length > 0 ? items : undefined,
         shippingCostUsd: typeof shippingCostUsd === "number" ? shippingCostUsd : undefined,

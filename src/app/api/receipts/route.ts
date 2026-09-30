@@ -341,7 +341,33 @@ export async function POST(req: NextRequest) {
     const splits = computeSplitAmounts(grossMinor, brand, merchantFeeBps ?? 0);
     const effectiveProcessingFeeBps = getEffectiveProcessingFeeBps(brand, merchantFeeBps);
 
-    const parentUrl = req.headers.get("referer") || req.headers.get("origin") || undefined;
+    const parentUrl = (
+      (typeof body?.parentUrl === "string" && body.parentUrl.trim()) ||
+      (typeof body?.parent_url === "string" && body.parent_url.trim()) ||
+      (typeof body?.origin === "string" && body.origin.trim()) ||
+      (typeof body?.referrer === "string" && body.referrer.trim()) ||
+      req.headers.get("referer") ||
+      req.headers.get("origin") ||
+      undefined
+    );
+    const origin = (
+      (typeof body?.origin === "string" && body.origin.trim()) ||
+      req.headers.get("origin") ||
+      (parentUrl ? (() => { try { return new URL(parentUrl).origin; } catch { return undefined; } })() : undefined)
+    );
+    const ipAddress = (
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      req.headers.get("x-real-ip") ||
+      (req as any).ip ||
+      (typeof body?.ipAddress === "string" && body.ipAddress.trim()) ||
+      (typeof body?.clientIp === "string" && body.clientIp.trim()) ||
+      undefined
+    );
+    const userAgent = (
+      req.headers.get("user-agent") ||
+      (typeof body?.userAgent === "string" && body.userAgent.trim()) ||
+      undefined
+    );
 
     // Construct receipt doc
     const docId = `receipt:${id}`;
@@ -426,6 +452,9 @@ export async function POST(req: NextRequest) {
       brandName,
       status: "pending",
       ...(parentUrl ? { parentUrl } : {}),
+      ...(origin ? { origin } : {}),
+      ...(ipAddress ? { ipAddress } : {}),
+      ...(userAgent ? { userAgent } : {}),
       statusHistory: [{ status: "pending", ts: now }],
       employeeId,
       employeeName,

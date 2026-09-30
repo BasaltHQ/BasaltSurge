@@ -252,6 +252,7 @@ export type BrandConfigDoc = {
 
   // Access Control
   accessMode?: "open" | "request";
+  agentTransactionsEnabled?: boolean;
   unifiedFeeEnabled?: boolean;
   dualSplitEnabled?: boolean;
   presentedFeeBps?: number;
@@ -547,6 +548,7 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     defaultMerchantFeeBps: 0,
     partnerWallet: "",
     apimCatalog: [],
+    agentTransactionsEnabled: false,
     unifiedFeeEnabled: false,
     dualSplitEnabled: false,
     creditPlatformFeeBps: undefined,
@@ -606,6 +608,7 @@ export function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConf
     agents: Array.isArray(overrides.agents) ? overrides.agents : withDefaults.agents || [],
     apimCatalog: Array.isArray(overrides.apimCatalog) ? overrides.apimCatalog : withDefaults.apimCatalog,
     accessMode: (overrides.accessMode === "request" || overrides.accessMode === "open") ? overrides.accessMode : withDefaults.accessMode,
+    agentTransactionsEnabled: overrides.agentTransactionsEnabled === true,
     unifiedFeeEnabled: typeof overrides.unifiedFeeEnabled === "boolean" ? overrides.unifiedFeeEnabled : withDefaults.unifiedFeeEnabled,
     dualSplitEnabled: typeof overrides.dualSplitEnabled === "boolean" ? overrides.dualSplitEnabled : withDefaults.dualSplitEnabled,
     creditPlatformFeeBps: typeof overrides.creditPlatformFeeBps === "number" ? overrides.creditPlatformFeeBps : withDefaults.creditPlatformFeeBps,

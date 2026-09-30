@@ -58,6 +58,10 @@ function routeFor(rows: any[], backend: "mongo" | "cosmos" = "mongo", logGroups?
     // Verified session authorization is exercised by partner analytics access tests.
     "@/lib/partner-analytics-access": { requirePlatformAnalyticsAccess: async () => ({ actorWallet: "platform", role: "platform_admin" }) },
   };
+  const rowExports: Record<string, any> = {};
+  const rowCode = ts.transpileModule(readFileSync(new URL("../../../../lib/agent-transaction-row.ts", import.meta.url), "utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  new Function("require", "module", "exports", rowCode)((id: string) => dependencies[id] || nativeRequire(id), { exports: rowExports }, rowExports);
+  dependencies["@/lib/agent-transaction-row"] = rowExports;
   const serviceExports: Record<string, any> = {};
   new Function("require", "module", "exports", compiledService)((id: string) => dependencies[id] || nativeRequire(id), { exports: serviceExports }, serviceExports);
   dependencies["@/lib/platform-analytics-service"] = serviceExports;

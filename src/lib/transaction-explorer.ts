@@ -22,3 +22,21 @@ export function getTransactionChainName(chainId?: number | string | null): strin
   return CHAINS[Number(chainId)]?.name || `Chain ID ${chainId}`;
 }
 
+const ADDRESS_EXPLORERS: Record<number, string> = {
+  8453: "https://basescan.org/address/",
+  84532: "https://sepolia.basescan.org/address/",
+  1: "https://etherscan.io/address/",
+  137: "https://polygonscan.com/address/",
+  42161: "https://arbiscan.io/address/",
+  10: "https://optimistic.etherscan.io/address/",
+  56: "https://bscscan.com/address/",
+  43114: "https://snowtrace.io/address/",
+  101: "https://solscan.io/account/",
+};
+
+export function getAddressExplorerUrl(address?: string | null, chainId: number | string = 8453): string | undefined {
+  if (!address) return undefined;
+  const explorer = ADDRESS_EXPLORERS[Number(chainId)] || "https://basescan.org/address/";
+  return `${explorer}${encodeURIComponent(address)}`;
+}
+

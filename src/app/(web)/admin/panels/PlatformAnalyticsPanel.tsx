@@ -242,8 +242,16 @@ interface ReceiptInfo {
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
   items?: { label?: string; priceUsd?: number; quantity?: number; qty?: number }[];
   parentUrl?: string | null;
+  origin?: string | null;
+  userAgent?: string | null;
   splitAddress?: string | null;
   splitAddressCredit?: string | null;
+  splitAddressAch?: string | null;
+  splitAddressCrypto?: string | null;
+  splitConfigAch?: any;
+  splitConfigCrypto?: any;
+  splitVersionAch?: number | null;
+  splitVersionCrypto?: number | null;
   customerSessions?: any[];
   kycTierRequired?: string | null;
   onrampLimits?: any[] | null;
@@ -1583,14 +1591,42 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
     ];
   }, [stats, baseFilteredReceipts]);
 
-  // Copy to clipboard helper
-  const handleCopy = (text: string, key: string) => {
-    navigator.clipboard.writeText(text).then(() => {
+  // Copy to clipboard helper with resilient fallback
+  const handleCopy = async (text: string, key: string) => {
+    if (!text) return;
+    let copied = false;
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+        copied = true;
+      }
+    } catch {
+      // Fall through to execCommand
+    }
+    if (!copied && typeof document !== "undefined") {
+      try {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.left = "-9999px";
+        textarea.style.top = "0";
+        textarea.style.opacity = "0";
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        copied = document.execCommand("copy");
+        document.body.removeChild(textarea);
+      } catch (err) {
+        console.warn("[CLIPBOARD] Fallback copy failed:", err);
+      }
+    }
+    if (copied) {
       setCopySuccess(prev => ({ ...prev, [key]: true }));
       setTimeout(() => {
         setCopySuccess(prev => ({ ...prev, [key]: false }));
       }, 2000);
-    });
+    }
   };
 
   // Helper to get browser/UA icons or name
@@ -2750,9 +2786,9 @@ export default function PlatformAnalyticsPanel({ audience = "platform", brandKey
                               )}
                               {r.transactionHash && (
                                 <a
-                                  href={getTransactionExplorerUrl(r.destinationChainId ?? r.chainId, r.transactionHash)}
-                                  aria-disabled={!getTransactionExplorerUrl(r.destinationChainId ?? r.chainId, r.transactionHash)}
-                                  title={getTransactionExplorerUrl(r.destinationChainId ?? r.chainId, r.transactionHash) ? "Open recorded transaction network" : "Explorer unavailable: chain was not recorded"}
+                                  href={getTransactionExplorerUrl(r.destinationChainId ?? r.chainId ?? 8453, r.transactionHash)}
+                                  aria-disabled={!getTransactionExplorerUrl(r.destinationChainId ?? r.chainId ?? 8453, r.transactionHash)}
+                                  title={getTransactionExplorerUrl(r.destinationChainId ?? r.chainId ?? 8453, r.transactionHash) ? "Open Basescan transaction" : "Explorer unavailable: chain was not recorded"}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="hover:text-emerald-300 hover:underline inline-flex items-center gap-1 text-emerald-400 font-bold truncate"

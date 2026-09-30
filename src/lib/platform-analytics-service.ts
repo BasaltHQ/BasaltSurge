@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { toAgentTransactionRow } from "@/lib/agent-transaction-row";
 import { createHash } from "node:crypto";
 import { canRefreshAchSettlementTarget, resolveReceiptSettlementTarget } from "@/lib/payment-split-routing";
 import { getContainer } from "@/lib/cosmos";
@@ -55,7 +56,7 @@ function cachePopulation(key: string, value: CachedPopulation) {
 }
 
 /** Partner callers must supply only a brand returned by requirePartnerAnalyticsAccess. */
-export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { brandKey: string }) {
+export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { brandKey: string; agent?: { merchantWallets: string[] | null } }) {
   try {
     // 1. Authorize the caller
     if (!partnerScope) await requirePlatformAnalyticsAccess(req);
@@ -65,7 +66,13 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
     let limit: number;
     let offset: number;
     try {
-      scope = resolveAnalyticsQuery(req.nextUrl.searchParams, req.headers.get("x-client-timezone"));
+      const params = new URLSearchParams(req.nextUrl.searchParams);
+      if (partnerScope?.agent) {
+        const allowed = new Set(["resolvedStart", "resolvedEnd", "snapshotEnd", "statusFilter", "search"]);
+        for (const key of [...params.keys()]) if (!allowed.has(key)) params.delete(key);
+        params.set("comparison", "none");
+      }
+      scope = resolveAnalyticsQuery(params, req.headers.get("x-client-timezone"));
       if (partnerScope) scope = { ...scope, brandKey: partnerScope.brandKey };
       limit = analyticsPageSize(req.nextUrl.searchParams.get("limit"));
       const rawOffset = req.nextUrl.searchParams.get("offset") || req.nextUrl.searchParams.get("skip") || "0";
@@ -76,9 +83,11 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
     }
 
     const includeAggregates = req.nextUrl.searchParams.get("includeAggregates") !== "false";
-    const cacheScope = partnerScope ? `partner:${partnerScope.brandKey}` : "platform";
+    const cacheScope = partnerScope?.agent
+      ? `agent:${partnerScope.brandKey}:${JSON.stringify(partnerScope.agent.merchantWallets)}`
+      : partnerScope ? `partner:${partnerScope.brandKey}` : "platform";
     const queryKey = createHash("sha256").update(JSON.stringify({ accessScope: cacheScope, query: scope })).digest("hex").slice(0, 24);
-    const cursor = req.nextUrl.searchParams.get("cursor") || req.nextUrl.searchParams.get("continuationToken");
+    const cursor = partnerScope?.agent ? null : req.nextUrl.searchParams.get("cursor") || req.nextUrl.searchParams.get("continuationToken");
     const container = await getContainer();
     const collection = (container as any).getCollection?.();
     let configGeneratedAt: string | null = null;
@@ -92,7 +101,7 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
       const configBrandClause = brandSql
         ? `(${brandSql.clause} OR (c.type = 'site_config' AND c.id = @analyticsSiteConfigId))` : "";
       const configQuery = {
-        query: "SELECT c.type, c.id, c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.displayName, c.title, c.slug, c.theme, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.splitAddressAch, c.splitAch, c.splitConfigAch, c.splitOverrides, c.splitVersion, c.splitVersionCredit, c.splitVersionAch, c.config FROM c WHERE (c.type = 'site_config' OR c.type = 'shop_config' OR c.type = 'wallet_config' OR c.type = 'client_request' OR c.type = 'brand_config')" + (configBrandClause ? ` AND ${configBrandClause}` : ""),
+        query: "SELECT c.type, c.id, c.wallet, c.brandKey, c.merchantName, c.name, c.businessName, c.shopName, c.displayName, c.title, c.slug, c.theme, c.splitAddress, c.splitAddressCredit, c.split, c.splitCredit, c.splitAddressAch, c.splitAch, c.splitConfigAch, c.splitOverrides, c.splitVersion, c.splitVersionCredit, c.splitVersionAch, c.splitAddressCrypto, c.splitCrypto, c.splitConfigCrypto, c.splitVersionCrypto, c.config FROM c WHERE (c.type = 'site_config' OR c.type = 'shop_config' OR c.type = 'wallet_config' OR c.type = 'client_request' OR c.type = 'brand_config')" + (configBrandClause ? ` AND ${configBrandClause}` : ""),
         parameters: brandSql ? [...brandSql.parameters, { name: "@analyticsSiteConfigId", value: `site:config:${partnerScope!.brandKey}` }] : [],
       };
       let configs: any[];
@@ -140,7 +149,9 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
             merchantName: mName || undefined,
             slug: cfg.slug || undefined,
             splitAddress: cfg.splitAddress || cfg.split?.address || undefined,
-            splitAddressCredit: cfg.splitAddressCredit || cfg.splitCredit?.address || undefined
+            splitAddressCredit: cfg.splitAddressCredit || cfg.splitCredit?.address || undefined,
+            splitAddressAch: cfg.splitAddressAch || cfg.splitAch?.address || undefined,
+            splitAddressCrypto: cfg.splitAddressCrypto || cfg.splitCrypto?.address || undefined
           };
           if (!configMap[pair] || (mName && !configMap[pair].merchantName)) {
             configMap[pair] = entry;
@@ -222,6 +233,10 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         projected = result.resources || [];
       }
       projected = projected.filter(receipt => !partnerScope || partnerAnalyticsRecordMatchesBrand(receipt, partnerScope.brandKey));
+      if (partnerScope?.agent?.merchantWallets) {
+        const allowed = new Set(partnerScope.agent.merchantWallets);
+        projected = projected.filter(receipt => allowed.has(String(receipt.merchantWallet || receipt.wallet || "").trim().toLowerCase()));
+      }
       // Deployment activates a document by its ID + merchant partition, not by
       // its legacy type/brand metadata. Read that same authoritative document
       // before using a persisted target or the bulk-query compatibility rows.
@@ -260,11 +275,32 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
       });
       facets = buildAnalyticsFacets(projected.filter(receipt => analyticsReceiptInRange(receipt, scope)));
       const selected = scope.failureReasons.length ? [scope.failureReasons[0], scope.failureReasons[1] || scope.failureReasons[0]] as [string, string] : null;
-      projected = projected.filter(receipt => matchesAnalyticsQueryDimensions(receipt, scope) && matchesAnalyticsFailureSelection(receipt, selected));
+      projected = projected.filter(receipt => {
+        if (partnerScope?.agent) {
+          const row = toAgentTransactionRow(receipt);
+          const statusMatches = scope.status === "all" || (scope.status === "paid" ? row.status.toLowerCase().startsWith("paid") : row.status.toLowerCase() === scope.status);
+          return statusMatches && (!scope.search || Object.values(row).some(value => String(value).toLowerCase().includes(scope.search.toLowerCase())));
+        }
+        return matchesAnalyticsQueryDimensions(receipt, scope) && matchesAnalyticsFailureSelection(receipt, selected);
+      });
       cachePopulation(queryKey, { rows: projected, facets, generatedAt, expiresAt: Date.now() + CACHE_TTL_MS });
     }
 
     const allReceiptsLight = projected.filter(receipt => analyticsReceiptInRange(receipt, scope)).sort(analyticsSortReceipts);
+    if (partnerScope?.agent) {
+      const sortKey = req.nextUrl.searchParams.get("sortKey") || "createdAt";
+      const keys = ["receiptId", "createdAt", "merchantName", "totalUsd", "email", "stripeSessionId", "status", "kyc"];
+      if (!keys.includes(sortKey)) return analyticsJson({ error: "Invalid sort column" }, 400);
+      const direction = req.nextUrl.searchParams.get("sortDirection") === "asc" ? 1 : -1;
+      const rows = allReceiptsLight.map(toAgentTransactionRow).sort((a, b) => {
+        const key = sortKey as keyof typeof a;
+        const comparison = key === "totalUsd" ? a.totalUsd - b.totalUsd
+          : key === "createdAt" ? new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+          : String(a[key]).localeCompare(String(b[key]));
+        return comparison * direction || a.receiptId.localeCompare(b.receiptId);
+      });
+      return analyticsJson({ rows: rows.slice(offset, offset + limit), total: rows.length, hasMore: offset + limit < rows.length, snapshotEnd: scope.snapshotEnd });
+    }
     let page: ReturnType<typeof pageAnalyticsReceipts>;
     try { page = pageAnalyticsReceipts(allReceiptsLight, limit, offset, cursor, queryKey); }
     catch (error) { return analyticsJson({ ok: false, error: error instanceof Error ? error.message : "Invalid cursor" }, 400); }
@@ -417,8 +453,16 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         detailUnavailable: r.detailUnavailable === true,
         lineItems: r.lineItems || [],
         parentUrl: r.parentUrl || null,
+        origin: r.origin || (r.parentUrl ? (() => { try { return new URL(r.parentUrl).origin; } catch { return null; } })() : null),
+        userAgent: r.userAgent || null,
         splitAddress: r.splitAddress || resolvedConfig.splitAddress || null,
         splitAddressCredit: r.splitAddressCredit || resolvedConfig.splitAddressCredit || null,
+        splitAddressAch: r.splitAddressAch || (resolvedConfig as any).splitAddressAch || null,
+        splitAddressCrypto: r.splitAddressCrypto || (resolvedConfig as any).splitAddressCrypto || null,
+        splitConfigAch: r.splitConfigAch || (resolvedConfig as any).splitConfigAch || null,
+        splitConfigCrypto: r.splitConfigCrypto || (resolvedConfig as any).splitConfigCrypto || null,
+        splitVersionAch: r.splitVersionAch ?? (resolvedConfig as any).splitVersionAch ?? null,
+        splitVersionCrypto: r.splitVersionCrypto ?? (resolvedConfig as any).splitVersionCrypto ?? null,
         customerSessions: r.customerSessions || [],
         lastPolledAt: r.lastPolledAt || null,
         stripeSessionStatus: r.stripeSessionStatus || null,
@@ -432,7 +476,9 @@ export async function loadAnalyticsResponse(req: NextRequest, partnerScope?: { b
         paymentId: r.paymentId || r.thirdwebMetadata?.paymentId || null,
         transactions: r.transactions || r.thirdwebMetadata?.transactions || [],
         originChainId: r.originChainId || r.thirdwebMetadata?.originChainId || null,
-        destinationChainId: r.destinationChainId || r.thirdwebMetadata?.destinationChainId || null,
+        destinationChainId: r.destinationChainId || r.thirdwebMetadata?.destinationChainId || (r.leg2TxHash || r.transactionHash ? 8453 : null),
+        leg2ChainId: r.leg2ChainId || 8453,
+        onrampChainId: r.onrampChainId || r.leg1ChainId || 8453,
         originToken: r.originToken || r.thirdwebMetadata?.originToken || null,
         destinationToken: r.destinationToken || r.thirdwebMetadata?.destinationToken || null,
         originAmount: r.originAmount || r.thirdwebMetadata?.originAmount || null,
