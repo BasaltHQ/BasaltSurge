@@ -216,6 +216,7 @@ export function getDefaultRolePermissions(role: string): readonly AdminPermissio
 export type AdminPanel =
   | 'partners'        // Manage Partners
   | 'platformSettings' // Platform Feature Switches
+  | 'dataLab'          // Platform document exploration
   | 'branding'        // Branding editor
   | 'merchants'       // Merchant list, inventory, orders
   | 'walletsSplit'    // Wallets/Split configuration
@@ -435,6 +436,8 @@ export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
     return isAdminRole && permissions.includes('view:analytics');
   }
 
+  if (panel === 'dataLab') return role.startsWith('platform_');
+
   // Platform level admins have complete authority to see any panel and make changes
   if (role.startsWith('platform_')) {
     return true;
@@ -455,6 +458,7 @@ export function canAccessPanel(panel: AdminPanel, wallet?: string): boolean {
     'notificationsPlatform',
     'nodeOperators',
     'platformAnalytics',
+    'dataLab',
     'platformSettings'
   ];
 

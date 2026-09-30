@@ -66,6 +66,7 @@ import {
   Clock,
   Mail,
   Sliders,
+  FlaskConical,
   Menu,
   X
 } from 'lucide-react';
@@ -148,6 +149,7 @@ export type AdminTabKey =
   | 'emailConfig'
   | 'sandbox'
   | 'platformAnalytics'
+  | 'dataLab'
   | 'partnerAnalytics'
   | 'platformSettings'
   | 'agentUniversity';
@@ -661,6 +663,7 @@ export function AdminSidebar({ activeTab, onChangeTab, industryPack, canBranding
       icon: <Building2 className="w-4 h-4" />,
       items: [
         { title: 'Platform Analytics', key: 'platformAnalytics' as AdminTabKey, icon: <LineChart className="w-4 h-4" /> },
+        { title: 'Data Lab', key: 'dataLab' as AdminTabKey, icon: <FlaskConical className="w-4 h-4" /> },
         { title: 'Publications', key: 'publications' as AdminTabKey, icon: <BookOpen className="w-4 h-4" /> },
         { title: 'Updates', key: 'updates' as AdminTabKey, icon: <FileBarChart className="w-4 h-4" /> },
         { title: 'Loyalty Config', key: 'loyaltyConfig' as AdminTabKey, icon: <Medal className="w-4 h-4" /> },

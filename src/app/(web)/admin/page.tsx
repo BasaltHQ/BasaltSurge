@@ -77,6 +77,8 @@ import CannabisCompliancePanel from "@/app/(web)/admin/panels/CannabisCompliance
 import PublicationsPanelExt from "@/app/(web)/admin/panels/PublicationsPanel";
 import AgentUniversityPanelExt from "@/app/(web)/admin/panels/AgentUniversityPanel";
 import PlatformAnalyticsPanel from "@/app/(web)/admin/panels/PlatformAnalyticsPanel";
+import dynamic from "next/dynamic";
+const DataLabPanel = dynamic(() => import("@/app/(web)/admin/panels/DataLabPanel"));
 import PartnerAnalyticsPanel from "@/app/(web)/admin/panels/PartnerAnalyticsPanel";
 // Placeholder to avoid errors - I will read file first
 import ReportsPanel from "@/app/(web)/admin/panels/ReportsPanel";
@@ -11599,7 +11601,7 @@ export default function AdminPage() {
   }, []);
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get("tab");
-    if (tab === "platformAnalytics" || tab === "partnerAnalytics") setActiveTab(tab);
+    if (tab === "platformAnalytics" || tab === "partnerAnalytics" || tab === "dataLab") setActiveTab(tab);
   }, []);
   const [industryPack, setIndustryPack] = useState<string | null>(null);
   const containerType = String(process.env.NEXT_PUBLIC_CONTAINER_TYPE || "platform").toLowerCase();
@@ -12041,6 +12043,7 @@ export default function AdminPage() {
         {activeTab === "roadmap" && <RoadmapPanel brandKey={getEffectiveBrandKey()} />}
         {activeTab === "updates" && canAccessPanel("updates", wallet) && <UpdatesPanel brandKey={getEffectiveBrandKey()} />}
         {activeTab === "platformAnalytics" && canAccessPanel("platformAnalytics", wallet) && <PlatformAnalyticsPanel />}
+        {activeTab === "dataLab" && canAccessPanel("dataLab", wallet) && <DataLabPanel />}
         {activeTab === "partnerAnalytics" && canAccessPanel("partnerAnalytics", wallet) && <PartnerAnalyticsPanel />}
 
         {activeTab === "manualWithdrawal" && (
