@@ -54,6 +54,7 @@ export interface DobPickerProps {
 }
 
 export interface PortalPayAccordionCheckoutV2Props {
+  onCheckoutPresented?: () => void;
   theme?: {
     primaryColor?: string;
     brandKey?: string;

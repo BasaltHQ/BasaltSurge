@@ -1,3 +1,4 @@
+import { requirePlatformAnalyticsAccess } from "@/lib/partner-analytics-access";
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { getContainer } from "@/lib/cosmos";
@@ -38,6 +39,7 @@ type BrandConfigDoc = {
   agents?: { wallet: string; bps: number }[];
   // Access control for partner containers
   accessMode?: "open" | "request"; // "open" = anyone can use, "request" = requires approval
+  agentTransactionsEnabled?: boolean;
   unifiedFeeEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
@@ -109,6 +111,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     defaultMerchantFeeBps: 0,
     partnerWallet: "",
     apimCatalog: [],
+    agentTransactionsEnabled: false,
     unifiedFeeEnabled: false,
     dualSplitEnabled: false,
     creditPlatformFeeBps: undefined,
@@ -164,6 +167,7 @@ function toEffectiveBrand(brandKey: string, overrides?: Partial<BrandConfigDoc>)
     agents: Array.isArray(overrides.agents) ? overrides.agents : withDefaults.agents || [],
     apimCatalog: Array.isArray(overrides.apimCatalog) ? overrides.apimCatalog : withDefaults.apimCatalog,
     accessMode: overrides.accessMode === "open" || overrides.accessMode === "request" ? overrides.accessMode : withDefaults.accessMode,
+    agentTransactionsEnabled: overrides.agentTransactionsEnabled === true,
     unifiedFeeEnabled: typeof overrides.unifiedFeeEnabled === "boolean" ? overrides.unifiedFeeEnabled : withDefaults.unifiedFeeEnabled,
     dualSplitEnabled: typeof overrides.dualSplitEnabled === "boolean" ? overrides.dualSplitEnabled : withDefaults.dualSplitEnabled,
     creditPlatformFeeBps: typeof overrides.creditPlatformFeeBps === "number" ? overrides.creditPlatformFeeBps : withDefaults.creditPlatformFeeBps,
@@ -341,6 +345,10 @@ function normalizePatch(raw: any): Partial<BrandConfigDoc> {
   // Access Mode for partner containers (open or request-based)
   if (raw?.accessMode === "open" || raw?.accessMode === "request") {
     out.accessMode = raw.accessMode;
+  }
+
+  if (typeof raw?.agentTransactionsEnabled === "boolean") {
+    out.agentTransactionsEnabled = raw.agentTransactionsEnabled;
   }
 
   if (typeof raw?.unifiedFeeEnabled === "boolean") {
@@ -607,6 +615,13 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ brandKey:
     );
   }
 
+  if (Object.prototype.hasOwnProperty.call(patch, "agentTransactionsEnabled")) {
+    try { await requirePlatformAnalyticsAccess(req); }
+    catch (error: any) {
+      return NextResponse.json({ error: "Platform permission is required to change agent transaction visibility", correlationId }, { status: error?.status || 403 });
+    }
+  }
+
   // Enforce fee immutability post-deploy for non-platform-superadmin callers:
   // If the partner container has been deployed (containerState/containerAppName present),
   // block changes to platformFeeBps and partnerFeeBps unless caller has platform_superadmin/platform_admin role.
@@ -662,6 +677,9 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ brandKey:
       { headers: { "x-correlation-id": correlationId } }
     );
   } catch (e: any) {
+    if (Object.prototype.hasOwnProperty.call(patch, "agentTransactionsEnabled")) {
+      return NextResponse.json({ error: "Agent transaction visibility could not be saved. Please retry.", correlationId }, { status: 503 });
+    }
     // Degraded: return effective with patched overrides even if Cosmos is unavailable
     try {
       await auditEvent(req, {

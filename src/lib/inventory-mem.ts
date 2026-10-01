@@ -2,6 +2,7 @@ export type InventoryItemMem = {
   id: string;            // e.g., "inventory:SKU123" or uuid
   wallet: string;        // merchant partition key
   sku: string;           // merchant-defined SKU
+  shopifyProductVariantId?: string;
   name: string;          // display name
   priceUsd: number;      // unit price in USD
   currency: "USD";

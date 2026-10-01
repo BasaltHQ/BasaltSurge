@@ -22,6 +22,11 @@ export interface IndexDefinition {
 const eventCollection = process.env.DB_COLLECTION || process.env.COSMOS_CONTAINER_ID || process.env.COSMOS_PAYPORTAL_CONTAINER_ID || "payportal_events";
 
 export const REQUIRED_INDEXES: IndexDefinition[] = [
+  {
+    collection: eventCollection,
+    keys: { type: 1, brandKey: 1, checkoutExperimentId: 1, checkoutAssignedAt: 1 },
+    options: { name: "idx_checkout_experiment_cohort", background: true },
+  },
   // Merchant list keyset pagination: equality scope, then sort and unique tie-breaker.
   ...["createdAt", "totalUsd", "receiptId", "status", "brandName"].map(field => ({
     collection: eventCollection,

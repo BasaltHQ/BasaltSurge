@@ -18,6 +18,9 @@ export interface MongoQueryOptions {
     readConcern?: ReadConcernLevel;
     session?: ClientSession;
     maxStalenessSeconds?: number;
+    /** Optional bounds for interactive, read-only exploration. */
+    maxTimeMS?: number;
+    abortSignal?: AbortSignal;
     profile?: "operational" | "critical" | "analytics" | "cache";
     /** Atomic compare-and-set for a patch after a point read. */
     matchFields?: Record<string, unknown>;
@@ -321,6 +324,8 @@ class MongoItemsReference {
                     const results = await this.collection
                         .aggregate(parsed.pipeline, {
                             readPreference: resolvedReadPref,
+                            maxTimeMS: opts.maxTimeMS,
+                            signal: opts.abortSignal,
                             session: opts.session
                         })
                         .toArray();
@@ -343,6 +348,8 @@ class MongoItemsReference {
 
                 let cursor = this.collection.find(parsed.filter, {
                     readPreference: resolvedReadPref,
+                    maxTimeMS: opts.maxTimeMS,
+                    signal: opts.abortSignal,
                     session: opts.session
                 });
 

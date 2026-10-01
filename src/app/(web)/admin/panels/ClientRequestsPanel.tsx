@@ -117,6 +117,15 @@ function extractDateTs(val: any, fallbackTs?: number): number {
 
 // Helper to get split history version string
 function getHistoryVersionStr(h: any, index: number, history: any[]): string {
+    const kind = h.splitKind || (h.isCredit === true ? "debit" : h.isCredit === false ? "credit" : undefined);
+    if (kind === "ach") {
+        const count = history.slice(index).filter((x: any) => x.splitKind === "ach").length;
+        return `${count || 1}ach`;
+    }
+    if (kind === "crypto") {
+        const count = history.slice(index).filter((x: any) => x.splitKind === "crypto").length;
+        return `${count || 1}crypto`;
+    }
     if (h.isCredit === undefined || h.isCredit === null) {
         // Legacy/Unified (no payment-type specific prefix, no suffix)
         const count = history.slice(index).filter((x: any) => x.isCredit === undefined || x.isCredit === null).length;
@@ -128,9 +137,23 @@ function getHistoryVersionStr(h: any, index: number, history: any[]): string {
 }
 
 // Helper to get active split version string
-function getActiveVersionStr(req: any, isDebit: boolean): string {
+function getActiveVersionStr(req: any, kindOrIsDebit: boolean | "credit" | "debit" | "ach" | "crypto"): string {
+    const kind = typeof kindOrIsDebit === "boolean" ? (kindOrIsDebit ? "debit" : "credit") : kindOrIsDebit;
     const history = req?.splitHistory || [];
-    const count = history.filter((x: any) => isDebit ? x.isCredit === true : x.isCredit !== true).length;
+    if (kind === "ach") {
+        const count = history.filter((x: any) => x.splitKind === "ach").length;
+        const activeAddr = req?.deployedSplitAddressAch;
+        const ver = count + (activeAddr ? 1 : 0);
+        return ver > 0 ? `${ver}ach` : "";
+    }
+    if (kind === "crypto") {
+        const count = history.filter((x: any) => x.splitKind === "crypto").length;
+        const activeAddr = req?.deployedSplitAddressCrypto;
+        const ver = count + (activeAddr ? 1 : 0);
+        return ver > 0 ? `${ver}crypto` : "";
+    }
+    const isDebit = kind === "debit";
+    const count = history.filter((x: any) => isDebit ? x.isCredit === true : (x.isCredit !== true && x.splitKind !== "ach" && x.splitKind !== "crypto")).length;
     const activeAddr = isDebit ? req?.deployedSplitAddressCredit : req?.deployedSplitAddress;
     const ver = count + (activeAddr ? 1 : 0);
     return ver > 0 ? `${ver}${isDebit ? "db" : "cr"}` : "";
@@ -1197,18 +1220,18 @@ export default function ClientRequestsPanel() {
                                                         <span className="text-muted-foreground">Type: </span>
                                                         <span className="uppercase text-xs font-mono bg-foreground/5 px-1.5 py-0.5 rounded">{req.businessType || "?"}</span>
                                                     </div>
-                                                    {(req.deployedSplitAddress || req.deployedSplitAddressCredit || (req.splitHistory && req.splitHistory.length > 0)) && (
+                                                    {(req.deployedSplitAddress || req.deployedSplitAddressCredit || req.deployedSplitAddressAch || req.deployedSplitAddressCrypto || (req.splitHistory && req.splitHistory.length > 0)) && (
                                                         <div className="text-xs flex flex-col gap-2">
                                                             <div className="flex flex-wrap gap-2 items-center">
                                                                 {req.deployedSplitAddress && (
                                                                     <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md text-emerald-400">
-                                                                        <span className="font-bold text-[10px]">Credit{!req.splitOverrides?.ach ? " / ACH" : ""}{!req.splitOverrides?.crypto ? " / Crypto" : ""} Split: </span>
+                                                                        <span className="font-bold text-[10px]">Credit{!req.deployedSplitAddressAch || req.splitOverrides?.ach === false ? " / ACH" : ""}{!req.deployedSplitAddressCrypto || req.splitOverrides?.crypto === false ? " / Crypto" : ""} Split: </span>
                                                                         <a
                                                                             href={`https://basescan.org/address/${req.deployedSplitAddress}`}
                                                                             target="_blank"
                                                                             rel="noopener noreferrer"
                                                                             className="font-mono hover:underline inline-flex items-center gap-1 text-[11px]"
-                                                                            title="View Credit/Crypto Split Contract on Basescan"
+                                                                            title="View Credit Split Contract on Basescan"
                                                                         >
                                                                             {req.deployedSplitAddress.slice(0, 6)}...{req.deployedSplitAddress.slice(-4)}
                                                                             <svg className="w-3 h-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1218,8 +1241,35 @@ export default function ClientRequestsPanel() {
                                                                     </div>
                                                                 )}
                                                                 {(["ach", "crypto"] as const).map(kind => {
-                                                                    const address = kind === "ach" ? req.deployedSplitAddressAch : req.deployedSplitAddressCrypto;
-                                                                    return address ? <div key={kind} className="flex items-center gap-1.5 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 py-1 text-blue-400"><span className="text-[10px] font-bold">{kind === "ach" ? "ACH" : "Crypto"}{req.splitOverrides?.[kind] ? "" : " (inactive)"}: </span><a className="font-mono text-[11px] hover:underline" href={`https://basescan.org/address/${address}`} target="_blank" rel="noopener noreferrer">{address.slice(0, 6)}?{address.slice(-4)}</a></div> : null;
+                                                                    const rawAddress = kind === "ach" ? (req.deployedSplitAddressAch || (req as any).splitAddressAch) : (req.deployedSplitAddressCrypto || (req as any).splitAddressCrypto);
+                                                                    if (!rawAddress) return null;
+                                                                    const address = String(rawAddress).trim();
+                                                                    const isAch = kind === "ach";
+                                                                    const label = isAch ? "ACH Split" : "Crypto Split";
+                                                                    const isInactive = req.splitOverrides?.[kind] === false;
+                                                                    const badgeColor = isAch
+                                                                        ? "bg-blue-500/10 border-blue-500/20 text-blue-400"
+                                                                        : "bg-cyan-500/10 border-cyan-500/20 text-cyan-400";
+
+                                                                    return (
+                                                                        <div key={kind} className={`flex items-center gap-1.5 rounded-md border px-2 py-1 ${badgeColor}`}>
+                                                                            <span className="text-[10px] font-bold">
+                                                                                {label}{isInactive ? " (inactive)" : ""}:{" "}
+                                                                            </span>
+                                                                            <a
+                                                                                className="font-mono hover:underline inline-flex items-center gap-1 text-[11px]"
+                                                                                href={`https://basescan.org/address/${address}`}
+                                                                                target="_blank"
+                                                                                rel="noopener noreferrer"
+                                                                                title={`View ${label} Contract on Basescan`}
+                                                                            >
+                                                                                {address.length >= 10 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address}
+                                                                                <svg className="w-3 h-3 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                                                </svg>
+                                                                            </a>
+                                                                        </div>
+                                                                    );
                                                                 })}
                                                                 {req.deployedSplitAddressCredit && (
                                                                     <div className="flex items-center gap-1.5 bg-purple-500/10 border border-purple-500/20 px-2 py-1 rounded-md text-purple-400">
@@ -1238,7 +1288,7 @@ export default function ClientRequestsPanel() {
                                                                         </a>
                                                                     </div>
                                                                 )}
-                                                                {!req.deployedSplitAddress && !req.deployedSplitAddressCredit && req.splitHistory && req.splitHistory.length > 0 && (
+                                                                {!req.deployedSplitAddress && !req.deployedSplitAddressCredit && !req.deployedSplitAddressAch && !req.deployedSplitAddressCrypto && req.splitHistory && req.splitHistory.length > 0 && (
                                                                     <div className="flex items-center gap-1.5 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-md text-emerald-400">
                                                                         <span className="font-bold text-[10px]">Split: </span>
                                                                         <a
@@ -1762,7 +1812,7 @@ export default function ClientRequestsPanel() {
                                                             <tr className="bg-emerald-500/5">
                                                                 <td className="px-6 py-4 font-mono text-xs text-emerald-400">
                                                                     <div className="flex flex-col gap-1">
-                                                                        <span className="font-bold text-[10px]">Current (v{getActiveVersionStr(req, false)})</span>
+                                                                        <span className="font-bold text-[10px]">Current (v{getActiveVersionStr(req, "credit")})</span>
                                                                         <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 w-fit">
                                                                             Credit
                                                                         </span>
@@ -1788,11 +1838,71 @@ export default function ClientRequestsPanel() {
                                                                 </td>
                                                             </tr>
                                                         )}
+                                                        {req.deployedSplitAddressAch && (
+                                                            <tr className="bg-blue-500/5">
+                                                                <td className="px-6 py-4 font-mono text-xs text-blue-400">
+                                                                    <div className="flex flex-col gap-1">
+                                                                        <span className="font-bold text-[10px]">Current (v{getActiveVersionStr(req, "ach")})</span>
+                                                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-blue-500/10 text-blue-400 border border-blue-500/20 w-fit">
+                                                                            ACH
+                                                                        </span>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-6 py-4">
+                                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border uppercase tracking-wide ${req.splitOverrides?.ach !== false ? "bg-blue-500/10 text-blue-400 border-blue-500/20" : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"}`}>
+                                                                        {req.splitOverrides?.ach !== false ? "Active" : "Inactive"}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-6 py-4 text-xs text-zinc-400">
+                                                                    <span className="font-mono text-white" title={req.deployedSplitAddressAch}>{req.deployedSplitAddressAch.slice(0, 6)}...{req.deployedSplitAddressAch.slice(-4)}</span>
+                                                                </td>
+                                                                <td className="px-6 py-4 text-right">
+                                                                    <a
+                                                                        href={`https://basescan.org/address/${req.deployedSplitAddressAch}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="text-blue-400 hover:underline text-xs"
+                                                                    >
+                                                                        View
+                                                                    </a>
+                                                                </td>
+                                                            </tr>
+                                                        )}
+                                                        {req.deployedSplitAddressCrypto && (
+                                                            <tr className="bg-cyan-500/5">
+                                                                <td className="px-6 py-4 font-mono text-xs text-cyan-400">
+                                                                    <div className="flex flex-col gap-1">
+                                                                        <span className="font-bold text-[10px]">Current (v{getActiveVersionStr(req, "crypto")})</span>
+                                                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 w-fit">
+                                                                            Crypto
+                                                                        </span>
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-6 py-4">
+                                                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium border uppercase tracking-wide ${req.splitOverrides?.crypto !== false ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/20" : "bg-zinc-500/10 text-zinc-400 border-zinc-500/20"}`}>
+                                                                        {req.splitOverrides?.crypto !== false ? "Active" : "Inactive"}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="px-6 py-4 text-xs text-zinc-400">
+                                                                    <span className="font-mono text-white" title={req.deployedSplitAddressCrypto}>{req.deployedSplitAddressCrypto.slice(0, 6)}...{req.deployedSplitAddressCrypto.slice(-4)}</span>
+                                                                </td>
+                                                                <td className="px-6 py-4 text-right">
+                                                                    <a
+                                                                        href={`https://basescan.org/address/${req.deployedSplitAddressCrypto}`}
+                                                                        target="_blank"
+                                                                        rel="noopener noreferrer"
+                                                                        className="text-cyan-400 hover:underline text-xs"
+                                                                    >
+                                                                        View
+                                                                    </a>
+                                                                </td>
+                                                            </tr>
+                                                        )}
                                                         {req.deployedSplitAddressCredit && (
                                                             <tr className="bg-purple-500/5">
                                                                 <td className="px-6 py-4 font-mono text-xs text-purple-400">
                                                                     <div className="flex flex-col gap-1">
-                                                                        <span className="font-bold text-[10px]">Current (v{getActiveVersionStr(req, true)})</span>
+                                                                        <span className="font-bold text-[10px]">Current (v{getActiveVersionStr(req, "debit")})</span>
                                                                         <span className="px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider bg-purple-500/10 text-purple-400 border border-purple-500/20 w-fit">
                                                                             Debit
                                                                         </span>
@@ -1824,11 +1934,16 @@ export default function ClientRequestsPanel() {
                                                                 <td className="px-6 py-4 font-mono text-xs text-zinc-500">
                                                                     <div className="flex flex-col gap-1">
                                                                         <span className="font-semibold text-zinc-400">v{getHistoryVersionStr(h, i, req.splitHistory || [])}</span>
-                                                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider w-fit ${h.isCredit === true
-                                                                                ? "bg-purple-500/10 text-purple-400 border border-purple-500/20"
-                                                                                : h.isCredit === false
-                                                                                    ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
-                                                                                    : "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"
+                                                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-semibold uppercase tracking-wider w-fit ${
+                                                                            h.splitKind === "ach"
+                                                                                ? "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                                                                : h.splitKind === "crypto"
+                                                                                    ? "bg-cyan-500/10 text-cyan-400 border border-cyan-500/20"
+                                                                                    : h.isCredit === true
+                                                                                        ? "bg-purple-500/10 text-purple-400 border border-purple-500/20"
+                                                                                        : h.isCredit === false
+                                                                                            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                                                                                            : "bg-zinc-500/10 text-zinc-400 border border-zinc-500/20"
                                                                             }`}>
                                                                             {h.splitKind === "ach" ? "ACH" : h.splitKind === "crypto" ? "Crypto" : h.isCredit === true ? "Debit" : h.isCredit === false ? "Credit" : "Unified"}
                                                                         </span>
@@ -1857,7 +1972,7 @@ export default function ClientRequestsPanel() {
                                                                 </td>
                                                             </tr>
                                                         ))}
-                                                        {!req.deployedSplitAddress && !req.deployedSplitAddressCredit && (!req.splitHistory || req.splitHistory.length === 0) && (
+                                                        {!req.deployedSplitAddress && !req.deployedSplitAddressCredit && !req.deployedSplitAddressAch && !req.deployedSplitAddressCrypto && (!req.splitHistory || req.splitHistory.length === 0) && (
                                                             <tr>
                                                                 <td colSpan={4} className="px-6 py-8 text-center text-zinc-500 text-xs italic bg-black/20">
                                                                     No deployment history found.

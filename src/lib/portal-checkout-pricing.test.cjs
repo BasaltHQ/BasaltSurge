@@ -256,11 +256,11 @@ test("crypto minimum rounds positive fees to cents without inventing a fee for z
   }
 });
 
-test("method presented fees agree across portal, receipt, and ACH onramp without adding Stripe twice", () => {
-  for (const funding of ['us_bank_account', 'crypto']) for (const presented of [0, 110, null]) {
-    const cfg = { splitConfig: { platformBps: 50, partnerBps: 25, agents: [] }, processingFeePct: 0,
+test("method presented fees include agents across portal, receipt, and ACH onramp without adding Stripe twice", () => {
+  for (const funding of ['us_bank_account', 'crypto']) for (const presented of [0, 110, null]) for (const agentBps of [0, 150]) {
+    const cfg = { splitConfig: { platformBps: 50, partnerBps: 25, agents: [{ bps: agentBps }] }, processingFeePct: 0,
       presentedFeeBps: 400, creditPresentedFeeBps: 500, achPresentedFeeBps: presented, cryptoPresentedFeeBps: presented };
-    const expectedPct = presented === null ? (funding === 'crypto' ? 0.75 : 1.35) : presented / 100 + 0.25;
+    const expectedPct = (presented === null ? (funding === 'crypto' ? 0.75 : 1.35) : presented / 100 + 0.25) + agentBps / 100;
     const values = { ...cfg, splitConfigCredit: undefined, methodSplits: cfg, receipt: {}, isCryptoDirect: funding === 'crypto', detectedCardFunding: funding === 'crypto' ? null : funding,
       stripeFeePct: 0.6, itemsSubtotalUsd: 100, taxUsd: 0, tipUsd: 0, shippingCostUsd: 0, storedProcessingFeeUsd: 0 };
     const effectiveBasePlatformFeePct = portalCalculation('effectiveBasePlatformFeePct', values)();

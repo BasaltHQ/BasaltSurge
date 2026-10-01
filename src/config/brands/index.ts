@@ -56,6 +56,7 @@ export type BrandConfig = {
 
   // Access Control
   accessMode?: "open" | "request"; // default: open
+  agentTransactionsEnabled?: boolean;
   unifiedFeeEnabled?: boolean;
   presentedFeeBps?: number;
   creditPresentedFeeBps?: number;
@@ -407,6 +408,7 @@ export function applyBrandDefaults(raw: BrandConfig): BrandConfig {
     defaultMerchantFeeBps,
     apimCatalog,
     accessMode: (raw.accessMode as any) || (envAccessMode === "request" ? "request" : (envAccessMode === "open" ? "open" : undefined)) || raw.accessMode,
+    agentTransactionsEnabled: raw.agentTransactionsEnabled === true,
     unifiedFeeEnabled: typeof raw.unifiedFeeEnabled === "boolean" ? raw.unifiedFeeEnabled : false,
     feeMinusEnabled: typeof raw.feeMinusEnabled === "boolean" ? raw.feeMinusEnabled : false,
     creditPlatformFeeBps: typeof raw.creditPlatformFeeBps === "number" ? raw.creditPlatformFeeBps : undefined,

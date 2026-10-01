@@ -1,4 +1,5 @@
 import { settlementRoutingFields } from "@/lib/payment-split-routing";
+import { checkoutVersion } from "@/lib/checkout-experiment";
 import { NextRequest, NextResponse } from "next/server";
 import * as crypto from "crypto";
 import { getContainer } from "@/lib/cosmos";
@@ -32,6 +33,7 @@ type ReceiptLineItem = {
 };
 
 export type Receipt = {
+  checkoutVersion?: "v1" | "v2";
   receiptId: string;
   totalUsd: number;
   currency: string;
@@ -214,6 +216,10 @@ export async function POST(req: NextRequest) {
       );
     }
     const wallet = caller.wallet;
+    const requestedVersion = checkoutVersion(body.checkoutVersion);
+    if (body.checkoutVersion !== undefined && !requestedVersion) {
+      return NextResponse.json({ error: "invalid_checkout_version", message: "checkoutVersion must be v1 or v2." }, { status: 400 });
+    }
 
     if (!id) {
       return NextResponse.json(
@@ -341,7 +347,33 @@ export async function POST(req: NextRequest) {
     const splits = computeSplitAmounts(grossMinor, brand, merchantFeeBps ?? 0);
     const effectiveProcessingFeeBps = getEffectiveProcessingFeeBps(brand, merchantFeeBps);
 
-    const parentUrl = req.headers.get("referer") || req.headers.get("origin") || undefined;
+    const parentUrl = (
+      (typeof body?.parentUrl === "string" && body.parentUrl.trim()) ||
+      (typeof body?.parent_url === "string" && body.parent_url.trim()) ||
+      (typeof body?.origin === "string" && body.origin.trim()) ||
+      (typeof body?.referrer === "string" && body.referrer.trim()) ||
+      req.headers.get("referer") ||
+      req.headers.get("origin") ||
+      undefined
+    );
+    const clientOrigin = (
+      (typeof body?.origin === "string" && body.origin.trim()) ||
+      req.headers.get("origin") ||
+      (parentUrl ? (() => { try { return new URL(parentUrl).origin; } catch { return undefined; } })() : undefined)
+    );
+    const ipAddress = (
+      req.headers.get("x-forwarded-for")?.split(",")[0].trim() ||
+      req.headers.get("x-real-ip") ||
+      (req as any).ip ||
+      (typeof body?.ipAddress === "string" && body.ipAddress.trim()) ||
+      (typeof body?.clientIp === "string" && body.clientIp.trim()) ||
+      undefined
+    );
+    const userAgent = (
+      req.headers.get("user-agent") ||
+      (typeof body?.userAgent === "string" && body.userAgent.trim()) ||
+      undefined
+    );
 
     // Construct receipt doc
     const docId = `receipt:${id}`;
@@ -370,6 +402,9 @@ export async function POST(req: NextRequest) {
             { error: "receipt_already_exists", message: "Use a new receipt id for a new currency valuation. Existing receipt pricing is retained for payment retries." },
             { status: 409, headers: { "x-correlation-id": correlationId } }
           );
+        }
+        if (!isSettled && existing.checkoutAssignedAt) {
+          return NextResponse.json({ error: "receipt_checkout_started", message: "Use a new receipt id; checkout presentation has already been assigned." }, { status: 409 });
         }
         if (isSettled) {
           const rawXfProto = req.headers.get("x-forwarded-proto");
@@ -413,6 +448,7 @@ export async function POST(req: NextRequest) {
       type: "receipt",
       wallet,
       receiptId: id,
+      ...(requestedVersion ? { checkoutVersion: requestedVersion } : {}),
       ...(isCryptoOnly ? { crypto: true } : {}),
       brandKey: brand.key || undefined,
       totalUsd,
@@ -426,6 +462,9 @@ export async function POST(req: NextRequest) {
       brandName,
       status: "pending",
       ...(parentUrl ? { parentUrl } : {}),
+      ...(clientOrigin ? { origin: clientOrigin } : {}),
+      ...(ipAddress ? { ipAddress } : {}),
+      ...(userAgent ? { userAgent } : {}),
       statusHistory: [{ status: "pending", ts: now }],
       employeeId,
       employeeName,
@@ -488,20 +527,22 @@ export async function POST(req: NextRequest) {
     const host = req.headers.get("host");
     const proto = xfProto || (process.env.NODE_ENV === "production" ? "https" : "http");
     const h = xfHost || (host ? host.split(",")[0].trim() : "");
-    const origin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
+    const appOrigin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
     const tParams = new URLSearchParams();
     tParams.set("recipient", wallet);
+    if (requestedVersion) tParams.set("checkout", requestedVersion);
     if (isCryptoOnly) tParams.set("crypto", "true");
     if (redirectUrl) tParams.set("redirect_url", redirectUrl);
     if (returnUrl) tParams.set("returnUrl", returnUrl);
     if (onSuccess) tParams.set("onSuccess", onSuccess);
     if (stripeEmail) tParams.set("stripeEmail", stripeEmail);
-    const paymentUrl = `${origin}/portal/${encodeURIComponent(id)}?${tParams.toString()}`;
+    const paymentUrl = `${appOrigin}/portal/${encodeURIComponent(id)}?${tParams.toString()}`;
     return NextResponse.json(
       {
         id,
         paymentUrl,
         status: "pending",
+        ...(requestedVersion ? { checkoutVersion: requestedVersion } : {}),
         ...(isCryptoOnly ? { crypto: true } : {}),
         ...(redirectUrl ? { redirectUrl } : {}),
         ...(returnUrl ? { returnUrl } : {}),

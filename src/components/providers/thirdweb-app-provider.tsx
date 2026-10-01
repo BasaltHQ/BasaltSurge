@@ -17,14 +17,12 @@ export function ThirdwebAppProvider({ children }: { children: React.ReactNode })
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const handleUpdate = (e: Event) => {
-      const customEvent = e as CustomEvent;
-      if (customEvent.detail && typeof customEvent.detail === "string") {
-        setClientId(customEvent.detail);
-      }
+    const handleUpdate = () => {
+      setClientId(getResolvedClientId());
     };
 
     window.addEventListener("pp:thirdweb-client-id:updated", handleUpdate);
+    handleUpdate();
     return () => {
       window.removeEventListener("pp:thirdweb-client-id:updated", handleUpdate);
     };

@@ -122,8 +122,16 @@ export interface ReceiptInvestigationReceipt {
   lineItems?: { label: string; priceUsd: number; qty?: number }[];
   items?: { label?: string; priceUsd?: number; quantity?: number; qty?: number }[];
   parentUrl?: string | null;
+  origin?: string | null;
+  userAgent?: string | null;
   splitAddress?: string | null;
   splitAddressCredit?: string | null;
+  splitAddressAch?: string | null;
+  splitAddressCrypto?: string | null;
+  splitConfigAch?: any;
+  splitConfigCrypto?: any;
+  splitVersionAch?: number | null;
+  splitVersionCrypto?: number | null;
   customerSessions?: any[];
   kycTierRequired?: string | null;
   onrampLimits?: any[] | null;
@@ -175,6 +183,7 @@ export interface ReceiptInvestigationReceipt {
   destinationAmount?: number;
   destination_amount?: number;
   isCrypto?: boolean;
+  crypto?: boolean;
   thirdwebMetadata?: any;
   paymentId?: string | null;
   transactions?: any[];
@@ -260,7 +269,7 @@ export default function ReceiptInvestigation({
   const isDebit = recordedRoute.kind === "debit";
   const splitBadgeLabel = ({ credit: "Credit Split", debit: "Debit Split", ach: "ACH Split", crypto: "Crypto Split" } as Record<string, string>)[recordedRoute.kind] || "Recorded Split";
 
-  const isReceiptCrypto = analyticsFunding(r) === "crypto" || !!r.thirdwebMetadata || !!r.paymentId;
+  const isReceiptCrypto = Boolean(r.isCrypto || r.crypto || isCrypto || isCoinbase || analyticsFunding(r) === "crypto" || r.thirdwebMetadata || r.paymentId);
   const investigationTabs = [
   { id: "overview", label: "Overview", icon: Sliders },
   ...(isReceiptCrypto ? [{ id: "crypto", label: "Crypto Details", icon: Coins, isCryptoTab: true }] : []),
@@ -612,13 +621,27 @@ export default function ReceiptInvestigation({
                 {payerWallet}
               </span>
               {payerWallet !== "N/A" && (
-                <button
-                  type="button"
-                  onClick={() => handleCopy(payerWallet, `tw-sender-${r.receiptId}`)}
-                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors shrink-0"
-                >
-                  {copySuccess[`tw-sender-${r.receiptId}`] ? "Copied!" : "Copy"}
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(payerWallet, `tw-sender-${r.receiptId}`)}
+                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors shrink-0"
+                    title="Copy sender wallet"
+                  >
+                    {copySuccess[`tw-sender-${r.receiptId}`] ? "Copied!" : "Copy"}
+                  </button>
+                  {/^0x[a-f0-9]{40}$/i.test(payerWallet) && (
+                    <a
+                      href={`https://basescan.org/address/${payerWallet}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/30 text-[10px] font-bold transition-colors flex items-center gap-1"
+                      title="View sender on Basescan"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -633,13 +656,27 @@ export default function ReceiptInvestigation({
                 {receiverWallet}
               </span>
               {receiverWallet !== "N/A" && (
-                <button
-                  type="button"
-                  onClick={() => handleCopy(receiverWallet, `tw-recv-${r.receiptId}`)}
-                  className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors shrink-0"
-                >
-                  {copySuccess[`tw-recv-${r.receiptId}`] ? "Copied!" : "Copy"}
-                </button>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleCopy(receiverWallet, `tw-recv-${r.receiptId}`)}
+                    className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors shrink-0"
+                    title="Copy receiver wallet"
+                  >
+                    {copySuccess[`tw-recv-${r.receiptId}`] ? "Copied!" : "Copy"}
+                  </button>
+                  {/^0x[a-f0-9]{40}$/i.test(receiverWallet) && (
+                    <a
+                      href={`https://basescan.org/address/${receiverWallet}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2 py-1 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/30 text-[10px] font-bold transition-colors flex items-center gap-1"
+                      title="View receiver on Basescan"
+                    >
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -1147,7 +1184,7 @@ export default function ReceiptInvestigation({
                     <Copy className="w-3.5 h-3.5" />
                   </button>
                   <ExplorerLink
-                    href={getBlockExplorerTxUrl((r as any).onrampChainId ?? (r as any).leg1ChainId ?? r.destinationChainId, (r as any).onrampTxHash || (r as any).leg1TxHash)}
+                    href={getBlockExplorerTxUrl((r as any).onrampChainId ?? (r as any).leg1ChainId ?? r.destinationChainId ?? (r as any).chainId ?? 8453, (r as any).onrampTxHash || (r as any).leg1TxHash)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-muted-foreground hover:text-white transition-colors"
@@ -1175,7 +1212,7 @@ export default function ReceiptInvestigation({
                     <Copy className="w-3.5 h-3.5" />
                   </button>
                   <ExplorerLink
-                    href={getBlockExplorerTxUrl((r as any).leg2ChainId ?? r.destinationChainId, r.transactionHash || (r as any).leg2TxHash)}
+                    href={getBlockExplorerTxUrl((r as any).leg2ChainId ?? r.destinationChainId ?? (r as any).chainId ?? 8453, r.transactionHash || (r as any).leg2TxHash)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-muted-foreground hover:text-white transition-colors"
@@ -1240,7 +1277,11 @@ export default function ReceiptInvestigation({
           {(
             <div className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
               <span className={`font-bold border px-2 py-0.5 rounded-full text-[10px] uppercase ${
-                isDebit
+                recordedRoute.kind === "ach"
+                  ? "text-blue-400 bg-blue-500/15 border-blue-500/30"
+                  : recordedRoute.kind === "crypto"
+                  ? "text-cyan-400 bg-cyan-500/15 border-cyan-500/30"
+                  : isDebit
                   ? "text-purple-400 bg-purple-500/15 border-purple-500/30"
                   : "text-emerald-400 bg-emerald-500/15 border-emerald-500/30"
               }`}>
@@ -1248,16 +1289,82 @@ export default function ReceiptInvestigation({
               </span>
               <span className="truncate max-w-full">{actualSplitAddress || "Historical destination unavailable"}</span>
               {actualSplitAddress && (
-                <button
-                  onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
-                  className="text-muted-foreground hover:text-white transition-colors"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                </button>
+                <>
+                  <button
+                    onClick={() => handleCopy(actualSplitAddress, `split-${r.receiptId}`)}
+                    className="text-muted-foreground hover:text-white transition-colors"
+                    title="Copy split address"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                  <a
+                    href={`https://basescan.org/address/${actualSplitAddress}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-muted-foreground hover:text-white transition-colors"
+                    title="View split contract on Basescan"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </>
               )}
               {copySuccess[`split-${r.receiptId}`] && <span className="text-xs text-emerald-400 font-bold">Copied!</span>}
             </div>
           )}
+          {/* Dedicated Configured Splits for ACH and Crypto */}
+          {(() => {
+            const achSplit = r.splitAddressAch || (siteConfig as any)?.splitAddressAch || (siteConfig as any)?.splitAch?.address;
+            const cryptoSplit = r.splitAddressCrypto || (siteConfig as any)?.splitAddressCrypto || (siteConfig as any)?.splitCrypto?.address;
+            const creditSplit = r.splitAddressCredit || (siteConfig as any)?.splitAddressCredit || (siteConfig as any)?.splitCredit?.address;
+            const extraSplits: Array<{ label: string; address: string; color: string; key: string }> = [];
+
+            if (achSplit && achSplit.toLowerCase() !== String(actualSplitAddress || "").toLowerCase()) {
+              extraSplits.push({ label: "ACH Split", address: achSplit, color: "text-blue-400 bg-blue-500/15 border-blue-500/30", key: "ach" });
+            }
+            if (cryptoSplit && cryptoSplit.toLowerCase() !== String(actualSplitAddress || "").toLowerCase()) {
+              extraSplits.push({ label: "Crypto Split", address: cryptoSplit, color: "text-cyan-400 bg-cyan-500/15 border-cyan-500/30", key: "crypto" });
+            }
+            if (creditSplit && creditSplit.toLowerCase() !== String(actualSplitAddress || "").toLowerCase()) {
+              extraSplits.push({ label: "Credit Split", address: creditSplit, color: "text-emerald-400 bg-emerald-500/15 border-emerald-500/30", key: "credit" });
+            }
+            if (extraSplits.length === 0) return null;
+
+            return (
+              <div className="mt-3 pt-3 border-t border-white/5 space-y-1.5">
+                <div className="text-[9px] uppercase tracking-wider text-muted-foreground font-bold">Configured Channel Splits</div>
+                <div className="flex flex-col gap-1.5">
+                  {extraSplits.map(s => (
+                    <div key={s.key} className="flex items-center gap-2 font-mono text-white text-xs flex-wrap">
+                      <span className={`font-bold border px-2 py-0.5 rounded-full text-[10px] uppercase ${s.color}`}>
+                        {s.label}
+                      </span>
+                      <span className="truncate max-w-[280px]">{s.address}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleCopy(s.address, `split-extra-${s.key}-${r.receiptId}`)}
+                        className="text-muted-foreground hover:text-white transition-colors"
+                        title={`Copy ${s.label} address`}
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                      </button>
+                      <a
+                        href={`https://basescan.org/address/${s.address}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-muted-foreground hover:text-white transition-colors"
+                        title={`View ${s.label} on Basescan`}
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </a>
+                      {copySuccess[`split-extra-${s.key}-${r.receiptId}`] && (
+                        <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
           {settlementPending && <p className="mt-2 text-xs text-amber-300">ACH accepted; on-chain settlement is still pending.</p>}
           {recordedRoute.source === "payment_snapshot" && <p className="mt-2 text-xs text-muted-foreground">Route saved at checkout.</p>}
           {recordedRoute.source === "settlement_target" && <p className="mt-2 text-xs text-muted-foreground">Current ACH settlement target. The checkout amount and fees remain unchanged.</p>}
@@ -1438,9 +1545,29 @@ export default function ReceiptInvestigation({
                         <td className="py-3 px-4 font-semibold text-white">{session.email || "N/A"}</td>
                         <td className="py-3 px-4 font-mono text-xs text-white/80 select-all" title={session.walletAddress}>
                           {session.walletAddress ? (
-                            <span className="flex items-center gap-1">
+                            <div className="flex items-center gap-1.5">
                               <span>{session.walletAddress.slice(0, 8)}...{session.walletAddress.slice(-6)}</span>
-                            </span>
+                              <button
+                                type="button"
+                                onClick={() => handleCopy(session.walletAddress, `cust-wallet-${idx}-${r.receiptId}`)}
+                                className="text-muted-foreground hover:text-white transition-colors"
+                                title="Copy wallet address"
+                              >
+                                <Copy className="w-3 h-3" />
+                              </button>
+                              <a
+                                href={`https://basescan.org/address/${session.walletAddress}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-muted-foreground hover:text-white transition-colors"
+                                title="View address on Basescan"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                              {copySuccess[`cust-wallet-${idx}-${r.receiptId}`] && (
+                                <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>
+                              )}
+                            </div>
                           ) : (
                             "N/A"
                           )}
@@ -1886,19 +2013,39 @@ export default function ReceiptInvestigation({
 
            {/* Smart Contract Split Target */}
            {activeSplitAddress && (
-             <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px]">
+             <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[11px] flex-wrap gap-2">
                <span className="text-muted-foreground">Smart Contract Split Address:</span>
-               <span className="font-bold text-purple-300 font-mono flex items-center gap-1.5">
-                 {activeSplitAddress}
+               <span className="font-bold text-purple-300 font-mono flex items-center gap-1.5 flex-wrap">
+                 <span className="truncate max-w-[260px]">{activeSplitAddress}</span>
+                 <button
+                   type="button"
+                   onClick={() => handleCopy(activeSplitAddress, `split-fee-${r.receiptId}`)}
+                   className="text-muted-foreground hover:text-white transition-colors"
+                   title="Copy split address"
+                 >
+                   <Copy className="w-3.5 h-3.5" />
+                 </button>
+                 <a
+                   href={`https://basescan.org/address/${activeSplitAddress}`}
+                   target="_blank"
+                   rel="noopener noreferrer"
+                   className="text-muted-foreground hover:text-white transition-colors"
+                   title="View split contract on Basescan"
+                 >
+                   <ExternalLink className="w-3.5 h-3.5" />
+                 </a>
+                 {copySuccess[`split-fee-${r.receiptId}`] && (
+                   <span className="text-[10px] text-emerald-400 font-bold">Copied!</span>
+                 )}
                  {r.transactionHash && (
                    <ExplorerLink
-                     href={getBlockExplorerTxUrl(r.destinationChainId, r.transactionHash)}
+                     href={getBlockExplorerTxUrl(r.destinationChainId ?? (r as any).chainId ?? 8453, r.transactionHash)}
                      target="_blank"
                      rel="noopener noreferrer"
                      className="text-[10px] text-blue-400 hover:underline flex items-center gap-0.5 ml-2"
                    >
                      <span>View transaction</span>
-             <span>↗</span>
+                     <ExternalLink className="w-2.5 h-2.5" />
                    </ExplorerLink>
                  )}
                </span>
@@ -2033,38 +2180,174 @@ export default function ReceiptInvestigation({
    )}
 
    {/* Tab 3: Initialization & Origin */}
-   {rowActiveTab === "origin" && (
-     <div className="space-y-4 animate-in fade-in duration-200 mt-1">
-      <div className="space-y-2">
-        <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Site Initialized On</div>
-        <div className="flex items-center gap-2 bg-black/30 p-3 rounded-2xl border border-white/10">
-          <Chrome className="w-4 h-4 text-primary flex-shrink-0" />
-          {r.parentUrl ? (
-            <a
-              href={r.parentUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="font-mono text-white hover:underline hover:text-primary truncate max-w-[280px]"
-            >
-              {r.parentUrl}
-            </a>
-          ) : (
-            <span className="text-muted-foreground">Direct Access / Parent URL unavailable</span>
-          )}
-        </div>
-      </div>
+   {rowActiveTab === "origin" && (() => {
+     const initOrigin = r.parentUrl || (r as any).origin || null;
+     const isEmbeddedIframe = Boolean(r.parentUrl || (r as any).checkoutMode === "iframe" || (r as any).checkoutMode === "embedded");
+     const integrationMode = (r as any).employeeId
+       ? "Terminal / POS Handheld"
+       : isEmbeddedIframe
+       ? "Embedded Checkout (Iframe)"
+       : "Direct Hosted Portal";
+     const clientUa = (r as any).userAgent || (Array.isArray(r.logs) ? r.logs.find(l => l.userAgent)?.userAgent : undefined);
+     const clientIp = r.ipAddress || (r as any).clientIp || "N/A";
+     const initStatus = Array.isArray(r.statusHistory) && r.statusHistory.length > 0 ? r.statusHistory[0].status : (r.status || "pending");
+     const initTime = Array.isArray(r.statusHistory) && r.statusHistory.length > 0 ? r.statusHistory[0].ts : (r.createdAt ? new Date(r.createdAt).getTime() : null);
 
-      <div className="space-y-2">
-        <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Integration Mode</div>
-        <div className="flex items-center gap-2 bg-black/30 p-3 rounded-2xl border border-white/10">
-          <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-          <span className="font-bold text-white/95">
-            {r.parentUrl ? "Embedded Checkout (Iframe)" : "Direct Checkout Link"}
-          </span>
-        </div>
-      </div>
-    </div>
-  )}
+     return (
+       <div className="space-y-4 animate-in fade-in duration-200 mt-1">
+         {/* Storefront & Entry Origin */}
+         <div className="bg-black/40 border border-white/10 rounded-2xl p-4 sm:p-5 space-y-4">
+           <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+             <div className="text-xs font-bold text-white flex items-center gap-2">
+               <Chrome className="w-4 h-4 text-primary" />
+               <span>Storefront Origin & Integration Channel</span>
+             </div>
+             <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30">
+               {integrationMode}
+             </span>
+           </div>
+
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1">
+               <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Site Initialized On / Storefront URL</div>
+               <div className="flex items-center justify-between gap-2 pt-0.5">
+                 {initOrigin ? (
+                   <>
+                     <span className="font-mono text-white text-xs truncate max-w-[280px]" title={initOrigin}>
+                       {initOrigin}
+                     </span>
+                     <div className="flex items-center gap-1 shrink-0">
+                       <button
+                         type="button"
+                         onClick={() => handleCopy(initOrigin, `origin-url-${r.receiptId}`)}
+                         className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors flex items-center gap-1"
+                         title="Copy storefront URL"
+                       >
+                         <Copy className="w-3 h-3" />
+                         <span>{copySuccess[`origin-url-${r.receiptId}`] ? "Copied!" : "Copy"}</span>
+                       </button>
+                       <a
+                         href={initOrigin}
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         className="px-2 py-1 rounded-lg bg-primary/20 hover:bg-primary/30 text-primary border border-primary/30 text-[10px] font-bold transition-colors flex items-center gap-1"
+                         title="Open storefront in new tab"
+                       >
+                         <ExternalLink className="w-3 h-3" />
+                       </a>
+                     </div>
+                   </>
+                 ) : (
+                   <span className="text-muted-foreground text-xs">Direct Hosted Portal / Origin not recorded</span>
+                 )}
+               </div>
+             </div>
+
+             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1">
+               <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Integration Mode</div>
+               <div className="flex items-center gap-2 pt-0.5">
+                 <Activity className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                 <span className="font-bold text-white text-xs">{integrationMode}</span>
+               </div>
+             </div>
+           </div>
+         </div>
+
+         {/* Client Device & Network Telemetry */}
+         <div className="bg-black/40 border border-white/10 rounded-2xl p-4 sm:p-5 space-y-4">
+           <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+             <div className="text-xs font-bold text-white flex items-center gap-2">
+               <Cpu className="w-4 h-4 text-purple-400" />
+               <span>Client Device & Network Diagnostics</span>
+             </div>
+             <span className="text-[10px] font-mono text-white/50">Verified Telemetry</span>
+           </div>
+
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1">
+               <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Client IP Address</div>
+               <div className="flex items-center justify-between gap-2 pt-0.5">
+                 <span className="font-mono text-white font-medium text-xs">{clientIp}</span>
+                 {clientIp !== "N/A" && (
+                   <button
+                     type="button"
+                     onClick={() => handleCopy(clientIp, `ip-${r.receiptId}`)}
+                     className="px-2 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold transition-colors flex items-center gap-1 shrink-0"
+                     title="Copy Client IP"
+                   >
+                     <Copy className="w-3 h-3" />
+                     <span>{copySuccess[`ip-${r.receiptId}`] ? "Copied!" : "Copy"}</span>
+                   </button>
+                 )}
+               </div>
+             </div>
+
+             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1">
+               <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Browser & Environment</div>
+               <div className="flex items-center gap-2 pt-0.5">
+                 <Smartphone className="w-4 h-4 text-blue-400 flex-shrink-0" />
+                 <span className="text-white font-medium text-xs">{parseUserAgent(clientUa)}</span>
+               </div>
+             </div>
+           </div>
+
+           {clientUa && (
+             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1">
+               <div className="flex items-center justify-between">
+                 <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Raw User Agent</div>
+                 <button
+                   type="button"
+                   onClick={() => handleCopy(clientUa, `ua-${r.receiptId}`)}
+                   className="text-muted-foreground hover:text-white transition-colors text-[10px] flex items-center gap-1"
+                   title="Copy User Agent"
+                 >
+                   <Copy className="w-3 h-3" />
+                   <span>{copySuccess[`ua-${r.receiptId}`] ? "Copied!" : "Copy"}</span>
+                 </button>
+               </div>
+               <div className="font-mono text-[11px] text-white/70 break-all pt-0.5 leading-relaxed">
+                 {clientUa}
+               </div>
+             </div>
+           )}
+         </div>
+
+         {/* Initialization Lifecycle & Order Context */}
+         <div className="bg-black/40 border border-white/10 rounded-2xl p-4 sm:p-5 space-y-4">
+           <div className="flex items-center justify-between border-b border-white/10 pb-2.5">
+             <div className="text-xs font-bold text-white flex items-center gap-2">
+               <Clock className="w-4 h-4 text-amber-400" />
+               <span>Initialization Lifecycle & Order Context</span>
+             </div>
+             <span className="text-[10px] font-mono text-white/50">Session Metadata</span>
+           </div>
+
+           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1">
+               <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Initialized At</div>
+               <div className="text-white text-xs font-medium pt-0.5">
+                 {initTime ? new Date(initTime).toLocaleString("en-US", { timeZone: timezone }) : "N/A"}
+               </div>
+             </div>
+
+             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1">
+               <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Initial Status</div>
+               <div className="text-amber-400 font-mono text-xs font-bold pt-0.5">
+                 {initStatus}
+               </div>
+             </div>
+
+             <div className="bg-white/[0.02] border border-white/5 rounded-xl p-3 space-y-1">
+               <div className="text-muted-foreground text-[10px] uppercase font-bold tracking-wider">Container / Brand</div>
+               <div className="text-white text-xs font-bold pt-0.5">
+                 {r.brandName || r.brandKey || "PortalPay"}
+               </div>
+             </div>
+           </div>
+         </div>
+       </div>
+     );
+   })()}
 
       </TabsContent>
     </Tabs>

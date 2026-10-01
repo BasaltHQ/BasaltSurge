@@ -15,7 +15,8 @@ type PricingConfig = {
   processingFeePct?: number;
 };
 
-/** Method-specific presented rates include the processor fee; null means derive from the split. */
+/** Method-specific base presented rates include the processor fee; partner and
+ * agent shares are added separately. Null means derive from the split. */
 export function resolveFundingPresentedFeeBps(funding: unknown, config: PricingConfig): number | undefined {
   const method = normalizeSettlementFunding(funding);
   const value = method === "us_bank_account" ? config.achPresentedFeeBps
@@ -28,12 +29,15 @@ export function resolveFundingPresentedFeeBps(funding: unknown, config: PricingC
 export function resolveFundingPlatformFeePct(funding: unknown, config: PricingConfig): number {
   const split = resolveSettlementSplitConfig({ ...config, funding, splitConfig: config.splitConfig, splitConfigCredit: config.splitConfigCredit });
   const partner = typeof split?.partnerBps === "number" ? split.partnerBps : 0;
+  const agents = Array.isArray(split?.agents) ? split.agents.reduce((sum: number, agent: any) => sum + (Number(agent.bps) || 0), 0) : 0;
   // Card presented fees may already include the processor charge. ACH and crypto
   // use the allocation of their routed contract, including inherited Credit.
   const presented = resolveFundingPresentedFeeBps(funding, config);
-  if (presented !== undefined) return (presented + partner) / 100;
+  if (presented !== undefined) {
+    const method = normalizeSettlementFunding(funding);
+    return (presented + partner + (method === "us_bank_account" || method === "crypto" ? agents : 0)) / 100;
+  }
   if (typeof split?.platformBps === "number") {
-    const agents = Array.isArray(split.agents) ? split.agents.reduce((sum: number, agent: any) => sum + (Number(agent.bps) || 0), 0) : 0;
     return (split.platformBps + partner + agents) / 100;
   }
   return (50 + partner) / 100;
