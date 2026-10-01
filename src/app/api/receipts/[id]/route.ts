@@ -20,6 +20,8 @@ type ReceiptLineItem = {
 };
 
 export type Receipt = {
+  checkoutVersion?: "v1" | "v2";
+  checkoutExperimentId?: string;
   receiptId: string;
   splitRoutingSnapshot?: Record<string, any>;
   settlementTarget?: ReturnType<typeof resolveReceiptSettlementTarget>;
@@ -158,7 +160,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     }
     const spec = {
       query:
-        "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.settlementSplitAddress, c.settlementSplitKind, c.settlementSplitVersion, c.splitAddressUsed, c.settlementSubmissionAt, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
+        "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.settlementSplitAddress, c.settlementSplitKind, c.settlementSplitVersion, c.splitAddressUsed, c.settlementSubmissionAt, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.checkoutVersion, c.checkoutExperimentId, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id AND c.wallet=@wallet ORDER BY c.createdAt DESC",
       parameters: [
         { name: "@id", value: id },
         { name: "@wallet", value: wallet }
@@ -173,7 +175,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       try {
         const specCrossPartition = {
           query:
-            "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.settlementSplitAddress, c.settlementSplitKind, c.settlementSplitVersion, c.splitAddressUsed, c.settlementSubmissionAt, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
+            "SELECT TOP 1 c.id, c._etag, c.brandKey, c.splitRoutingSnapshot, c.splitAddress, c.splitAddressCredit, c.splitConfig, c.splitConfigCredit, c.stripeSessionId, c.leg2TxHash, c.settlementSplitAddress, c.settlementSplitKind, c.settlementSplitVersion, c.splitAddressUsed, c.settlementSubmissionAt, c.receiptId, c.totalUsd, c.currency, c.pricing, c.lineItems, c.createdAt, c.wallet, c.brandName, c.status, c.refunds, c.jurisdictionCode, c.taxRate, c.taxComponents, c.transactionHash, c.transactionTimestamp, c.employeeId, c.tipAmount, c.buyerWallet, c.shippingAddress, c.shippingMethod, c.shippingCostUsd, c.tracking, c.customerEmail, c.stripeEmail, c.detectedCardFunding, c.lastPolledAt, c.stripeSessionStatus, c.customerSessions, c.checkoutVersion, c.checkoutExperimentId, c.failureCode, c.failureReason, c.failureCategory, c.failureAction, c.crypto FROM c WHERE c.type='receipt' AND c.receiptId=@id ORDER BY c.createdAt DESC",
           parameters: [{ name: "@id", value: id }],
         } as { query: string; parameters: { name: string; value: any }[] };
         const crossRes = await container.items.query(specCrossPartition).fetchAll();
@@ -187,6 +189,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         ? await getSiteConfigForWallet(row.wallet, row.brandKey).catch(() => null) : undefined;
       const rec: Receipt = {
         receiptId: String(row.receiptId || id),
+        checkoutVersion: row.checkoutVersion,
+        checkoutExperimentId: row.checkoutExperimentId,
         splitRoutingSnapshot: row.splitRoutingSnapshot,
         settlementTarget: resolveReceiptSettlementTarget(row, targetConfig),
         settlementSplitAddress: row.settlementSplitAddress,

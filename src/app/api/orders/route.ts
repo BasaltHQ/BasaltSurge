@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { checkoutVersion } from "@/lib/checkout-experiment";
 import { getContainer } from "@/lib/cosmos";
 import { getSiteConfigForWallet } from "@/lib/site-config";
 import { getBrandKey } from "@/config/brands";
@@ -181,6 +182,10 @@ export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   try {
     const body = await req.json().catch(() => ({}));
+    const requestedCheckout = checkoutVersion(body.checkoutVersion);
+    if (body.checkoutVersion !== undefined && !requestedCheckout) {
+      return NextResponse.json({ error: "invalid_checkout_version", message: "checkoutVersion must be v1 or v2." }, { status: 400 });
+    }
 
     // For order creation, prioritize x-wallet header (merchant's wallet) over authenticated user
     const xWalletHeader = req.headers.get("x-wallet");
@@ -1153,6 +1158,7 @@ export async function POST(req: NextRequest) {
 
     const receipt: Receipt = {
       receiptId,
+      ...(requestedCheckout ? { checkoutVersion: requestedCheckout } : {}),
       totalUsd,
       ...(pricing ? receiptCurrencyFields({ pricing, totalUsd, lineItems: finalLineItems }) : { currency: receiptCurrencyCode, lineItems: finalLineItems }),
       ...(isCryptoOnly ? { crypto: true } : {}),
@@ -1180,6 +1186,7 @@ export async function POST(req: NextRequest) {
     const doc = {
       id: `receipt:${receiptId}`,
       type: "receipt",
+      ...(requestedCheckout ? { checkoutVersion: requestedCheckout } : {}),
       wallet, // container partition key (merchant)
       brandKey: brandKey || undefined,
       receiptId,

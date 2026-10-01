@@ -3,7 +3,7 @@ export type LabField = { name: string; types: string[]; present: number };
 export type LabSchema = { name: string; fields: LabField[]; sampled: number };
 export type LabNode = { id: string; kind: "source" | "filter" | "transform" | "output"; label: string; detail: string; x: number; y: number };
 export type LabEdge = { id: string; from: string; to: string };
-export type LabFlow = { name: string; nodes: LabNode[]; edges: LabEdge[] };
+export type LabFlow = { name: string; nodes: LabNode[]; edges: LabEdge[]; preset?: "checkout-ab" };
 
 const sensitive = /password|secret|private.?key|api.?key|access.?token|refresh.?token|authorization|credential|mnemonic|seed.?phrase|client.?secret|connection.?string|session.?token|otp|two.?factor|recovery.?code|pin.?hash|^(token|pin|cvv|cvc|cookie|salt)$/i;
 const fieldPattern = "[a-zA-Z_][a-zA-Z0-9_]*(?:\\.[a-zA-Z_][a-zA-Z0-9_]*)*";
@@ -88,9 +88,26 @@ export const starterFlow: LabFlow = {
   edges: [{ id: "a", from: "source", to: "filter" }, { id: "b", from: "filter", to: "output" }],
 };
 
+export const checkoutAbFlow: LabFlow = {
+  name: "Checkout v1 vs v2", preset: "checkout-ab",
+  nodes: [
+    { id: "checkout-brand", kind: "source", label: "Partner brand / container", detail: "Choose the partner brand in the experiment controls. New eligible receipts only.", x: 40, y: 190 },
+    { id: "checkout-assign", kind: "filter", label: "Stable 50/50 assignment", detail: "Pin one version per receipt. Explicit receipt and URL overrides are excluded from the randomized cohorts.", x: 330, y: 190 },
+    { id: "checkout-v1", kind: "transform", label: "A · v1 sequential", detail: "Shared validation, identity, payment recovery and state capture. One step at a time.", x: 630, y: 70 },
+    { id: "checkout-v2", kind: "transform", label: "B · v2 accordion", detail: "The same checkout logic with the accordion presentation.", x: 630, y: 310 },
+    { id: "checkout-compare", kind: "output", label: "Compare outcomes", detail: "Compare assigned and exposed receipts, payment conversion, funnel reach, KYC, errors and paid order value.", x: 930, y: 190 },
+  ],
+  edges: [
+    { id: "ab-source", from: "checkout-brand", to: "checkout-assign" },
+    { id: "ab-a", from: "checkout-assign", to: "checkout-v1" }, { id: "ab-b", from: "checkout-assign", to: "checkout-v2" },
+    { id: "ab-a-result", from: "checkout-v1", to: "checkout-compare" }, { id: "ab-b-result", from: "checkout-v2", to: "checkout-compare" },
+  ],
+};
+
 export function isLabFlow(value: unknown): value is LabFlow {
   if (!value || typeof value !== "object") return false;
   const flow = value as LabFlow;
+  if (flow.preset !== undefined && flow.preset !== "checkout-ab") return false;
   if (typeof flow.name !== "string" || flow.name.length > 100 || !Array.isArray(flow.nodes) || !Array.isArray(flow.edges) || flow.nodes.length > 100 || flow.edges.length > 300) return false;
   const ids = new Set(flow.nodes.map(node => node?.id));
   return ids.size === flow.nodes.length && new Set(flow.edges.map(edge => edge?.id)).size === flow.edges.length && flow.nodes.every(node => node && typeof node.id === "string" && ["source", "filter", "transform", "output"].includes(node.kind) && typeof node.label === "string" && node.label.length <= 100 && typeof node.detail === "string" && node.detail.length <= 4000 && Number.isFinite(node.x) && Number.isFinite(node.y) && node.x >= 0 && node.x <= 2000 && node.y >= 0 && node.y <= 1500) && flow.edges.every(edge => edge && typeof edge.id === "string" && ids.has(edge.from) && ids.has(edge.to) && edge.from !== edge.to);

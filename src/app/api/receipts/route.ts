@@ -1,4 +1,5 @@
 import { settlementRoutingFields } from "@/lib/payment-split-routing";
+import { checkoutVersion } from "@/lib/checkout-experiment";
 import { NextRequest, NextResponse } from "next/server";
 import * as crypto from "crypto";
 import { getContainer } from "@/lib/cosmos";
@@ -32,6 +33,7 @@ type ReceiptLineItem = {
 };
 
 export type Receipt = {
+  checkoutVersion?: "v1" | "v2";
   receiptId: string;
   totalUsd: number;
   currency: string;
@@ -214,6 +216,10 @@ export async function POST(req: NextRequest) {
       );
     }
     const wallet = caller.wallet;
+    const requestedVersion = checkoutVersion(body.checkoutVersion);
+    if (body.checkoutVersion !== undefined && !requestedVersion) {
+      return NextResponse.json({ error: "invalid_checkout_version", message: "checkoutVersion must be v1 or v2." }, { status: 400 });
+    }
 
     if (!id) {
       return NextResponse.json(
@@ -397,6 +403,9 @@ export async function POST(req: NextRequest) {
             { status: 409, headers: { "x-correlation-id": correlationId } }
           );
         }
+        if (!isSettled && existing.checkoutAssignedAt) {
+          return NextResponse.json({ error: "receipt_checkout_started", message: "Use a new receipt id; checkout presentation has already been assigned." }, { status: 409 });
+        }
         if (isSettled) {
           const rawXfProto = req.headers.get("x-forwarded-proto");
           const rawXfHost = req.headers.get("x-forwarded-host");
@@ -439,6 +448,7 @@ export async function POST(req: NextRequest) {
       type: "receipt",
       wallet,
       receiptId: id,
+      ...(requestedVersion ? { checkoutVersion: requestedVersion } : {}),
       ...(isCryptoOnly ? { crypto: true } : {}),
       brandKey: brand.key || undefined,
       totalUsd,
@@ -520,6 +530,7 @@ export async function POST(req: NextRequest) {
     const appOrigin = h ? `${proto}://${h}` : (process.env.NEXT_PUBLIC_APP_URL || new URL(req.url).origin);
     const tParams = new URLSearchParams();
     tParams.set("recipient", wallet);
+    if (requestedVersion) tParams.set("checkout", requestedVersion);
     if (isCryptoOnly) tParams.set("crypto", "true");
     if (redirectUrl) tParams.set("redirect_url", redirectUrl);
     if (returnUrl) tParams.set("returnUrl", returnUrl);
@@ -531,6 +542,7 @@ export async function POST(req: NextRequest) {
         id,
         paymentUrl,
         status: "pending",
+        ...(requestedVersion ? { checkoutVersion: requestedVersion } : {}),
         ...(isCryptoOnly ? { crypto: true } : {}),
         ...(redirectUrl ? { redirectUrl } : {}),
         ...(returnUrl ? { returnUrl } : {}),

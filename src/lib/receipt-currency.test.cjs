@@ -267,6 +267,35 @@ test("crypto fee-minus and a zero-percent crypto allocation do not add the minim
   }
 });
 
+test("receipt checkoutVersion is validated, persisted, returned on reload, and included in its payment link", async () => {
+  const h = harness();
+  const body = { id: "versioned", lineItems: [{ label: "Item", priceUsd: 10 }], totalUsd: 10 };
+  assert.equal((await h.call("receipts", { ...body, checkoutVersion: "v3" })).status, 400);
+  assert.equal(h.docs.size, 0);
+  const result = await h.call("receipts", { ...body, checkoutVersion: "v1" });
+  assert.equal(result.status, 201);
+  assert.equal(h.docs.get("receipt:versioned").checkoutVersion, "v1");
+  assert.equal(new URL(result.data.paymentUrl).searchParams.get("checkout"), "v1");
+  const read = await h.call("receipts/[id]", null, "GET", "versioned");
+  assert.equal(read.data.receipt.checkoutVersion, "v1");
+  h.docs.get("receipt:versioned").checkoutAssignedAt = Date.now();
+  assert.equal((await h.call("receipts", { ...body, checkoutVersion: "v2" })).status, 409);
+  assert.equal(h.docs.get("receipt:versioned").checkoutVersion, "v1");
+});
+
+test("catalog orders and terminal receipts accept the same version override", async () => {
+  const h = harness();
+  await h.call("inventory", { sku: "AB", name: "Test", priceUsd: 10, stockQty: 10 });
+  const order = await h.call("orders", { items: [{ sku: "AB", qty: 1 }], checkoutVersion: "v1" });
+  assert.equal(order.status, 200);
+  assert.equal(h.docs.get(`receipt:${order.data.receipt.receiptId}`).checkoutVersion, "v1");
+  const terminal = await h.call("receipts/terminal", { amountUsd: 10, checkoutVersion: "v2" });
+  assert.equal(terminal.status, 200);
+  assert.equal(h.docs.get(`receipt:${terminal.data.receipt.receiptId}`).checkoutVersion, "v2");
+  assert.equal((await h.call("orders", { checkoutVersion: "v3" })).status, 400);
+  assert.equal((await h.call("receipts/terminal", { checkoutVersion: "v3" })).status, 400);
+});
+
 test("ACH edits and shipping preserve its allocation and Stripe fee instead of card presented fees", async () => {
   for (const feeMinusEnabled of [false, true]) {
     const h = harness({ feeMinusEnabled });

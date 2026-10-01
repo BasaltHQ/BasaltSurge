@@ -129,3 +129,7 @@
   .dl-workspace > .dl-hero { min-height:100px; }
   .dl-workspace .dl-canvas-scroll { height:clamp(360px,60dvh,620px); }
 }
+.data-lab .dl-experiment { border-bottom: 1px solid var(--dl-border, #29343b); }
+.data-lab .dl-experiment-controls { display: flex; gap: 16px; flex-wrap: wrap; align-items: end; padding: 16px; }
+.data-lab .dl-experiment-controls label { display: grid; gap: 8px; min-width: 220px; }
+.data-lab .dl-experiment-controls select { padding: 10px; border: 1px solid #344249; border-radius: 8px; background: #111b21; color: #e2ece8; }

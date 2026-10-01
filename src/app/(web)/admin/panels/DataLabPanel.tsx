@@ -5,7 +5,8 @@ import { useActiveAccount } from "thirdweb/react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Database, Search, ChevronRight, Play, Code2, Workflow, Table2, BarChart3, Braces, Download, RefreshCw, Save, Clock3, Layers3, ShieldCheck, ArrowUpRight, X, Bookmark, Terminal, Loader2, FlaskConical } from "lucide-react";
 import FlowCanvas, { downloadLabFile } from "@/components/admin/data-lab/FlowCanvas";
-import { isLabFlow, starterFlow, type LabFlow, type LabSchema } from "@/lib/data-lab";
+import { isLabFlow, starterFlow, checkoutAbFlow, type LabFlow, type LabSchema } from "@/lib/data-lab";
+import CheckoutExperimentPanel from "@/components/admin/data-lab/CheckoutExperimentPanel";
 import "@/components/admin/data-lab/data-lab.css";
 
 type Result = { rows: Record<string, unknown>[]; elapsedMs: number; limit: number; schema: string; requestCharge: number };
@@ -157,7 +158,7 @@ function DataLabWorkspace({ wallet }: { wallet: string }) {
     <header className="dl-hero">
       <div className="dl-hero-copy"><div className="dl-kicker"><span className="dl-crosshair">+</span> PLATFORM / INTELLIGENCE WORKSPACE</div><h1>Data Lab<span className="dl-title-dot">.</span></h1><p>Follow the data. Find the signal.</p></div>
       <div className="dl-hero-art" aria-hidden="true"><span /><span /><span /><Database size={35} /><i className="dl-art-label">DL / 01</i></div>
-      <div className="dl-connection"><span className={connected ? "dl-led" : "dl-led offline"} />{catalogLoading ? "CONNECTING" : connected ? "STORE CONNECTED" : "STORE UNAVAILABLE"}<small><ShieldCheck size={12} /> Read-only workspace</small></div>
+      <div className="dl-connection"><span className={connected ? "dl-led" : "dl-led offline"} />{catalogLoading ? "CONNECTING" : connected ? "STORE CONNECTED" : "STORE UNAVAILABLE"}<small><ShieldCheck size={12} />{workspace === "flow" && flow.preset === "checkout-ab" ? "Live experiment controls" : "Read-only queries"}</small></div>
     </header>
     <div className="dl-summary"><div><Database size={15} /><strong>{catalogLoading ? "—" : schemas.length}</strong><span>record schemas</span></div><div><Layers3 size={15} /><strong>{schema?.fields.length ?? "—"}</strong><span>fields in selection</span></div><div><Terminal size={15} /><strong>{history.length.toString().padStart(2, "0")}</strong><span>queries this session</span></div><div><Workflow size={15} /><strong>{flow.nodes.length.toString().padStart(2, "0")}</strong><span>flow nodes</span></div><span className="dl-summary-end">EXPLORE / QUERY / CONNECT</span></div>
     {notice && <div className="dl-notice" role="status">{notice}<button aria-label="Dismiss message" onClick={() => setNotice("")}><X size={14} /></button></div>}
@@ -197,10 +198,14 @@ function DataLabWorkspace({ wallet }: { wallet: string }) {
           {history.length > 0 && <details className="dl-history"><summary><Clock3 size={13} /> Session history <span>{history.length}</span></summary>{history.map((item, index) => <button key={index} onClick={() => { setQuery(item.query); setNotice("Query restored to the editor. Run it to refresh results."); }}><code>{item.query.replace(/\s+/g, " ")}</code><span>{item.rows} rows · {item.elapsed} ms · {item.time}</span></button>)}</details>}
         </>}
         {workspace === "schema" && <div className="dl-atlas"><div className="dl-atlas-heading"><div className="dl-schema-emblem"><Layers3 size={25} /></div><div><div className="dl-kicker">SCHEMA ATLAS</div><h2>{schemaName}</h2><p>Inferred from up to 50 records. Fields can vary between documents.</p></div><span className="dl-spacer" /><button onClick={() => { browseSchema(schemaName); setWorkspace("query"); }}><Play size={13} /> Query schema</button></div><div className="dl-schema-stats"><div><strong>{schema?.fields.length ?? "—"}</strong><span>observed fields</span></div><div><strong>{schema?.sampled ?? "—"}</strong><span>sampled records</span></div><div><strong>Document</strong><span>storage model</span></div></div><label className="dl-search"><Search size={14} /><input aria-label="Search schema fields" placeholder="Find a field…" value={fieldSearch} onChange={event => setFieldSearch(event.target.value)} /></label>{schemaLoading ? <p className="dl-padding dl-muted">Inspecting schema…</p> : schemaError ? <p className="dl-inline-error" role="alert">{schemaError}</p> : <div className="dl-table-scroll"><table className="dl-field-table"><thead><tr><th>Field path</th><th>Observed type</th><th>Sample coverage</th></tr></thead><tbody>{fields.map(field => <tr key={field.name}><td><code>{field.name}</code>{field.name === "id" && <span className="dl-tag">ID</span>}</td><td>{field.types.map(type => <span className="dl-type" key={type}>{type}</span>)}</td><td><div className="dl-coverage"><i style={{ width: `${schema?.sampled ? field.present / schema.sampled * 100 : 0}%` }} /></div><small>{field.present}/{schema?.sampled}</small></td></tr>)}</tbody></table>{!fields.length && <p className="dl-padding dl-muted">No observed fields match this selection.</p>}</div>}</div>}
-        {workspace === "flow" && <FlowCanvas flow={flow} onChange={setFlow} onSave={saveFlow} onNew={() => setFlow({ name: `Untitled flow ${savedFlows.length + 1}`, nodes: [], edges: [] })} />}
+        {workspace === "flow" && <>
+          <div className="dl-toolbar"><span>Presets</span><button onClick={() => setFlow(structuredClone(checkoutAbFlow))}><FlaskConical size={14} />Checkout v1 vs v2 · A/B test</button></div>
+          {flow.preset === "checkout-ab" && <CheckoutExperimentPanel />}
+          <FlowCanvas flow={flow} onChange={setFlow} onSave={saveFlow} onNew={() => setFlow({ name: `Untitled flow ${savedFlows.length + 1}`, nodes: [], edges: [] })} />
+        </>}
       </main>
     </div>
-    <footer className="dl-footer"><span><span className="dl-led" /> BASALTSURGE DATA LAB</span><span>One store. Many perspectives.</span><span>READ-ONLY / V1.0</span></footer>
+    <footer className="dl-footer"><span><span className="dl-led" /> BASALTSURGE DATA LAB</span><span>One store. Many perspectives.</span><span>{workspace === "flow" && flow.preset === "checkout-ab" ? "CHECKOUT EXPERIMENT" : "READ-ONLY QUERIES"}</span></footer>
     <Dialog.Root open={!!selectedRow} onOpenChange={open => { if (!open) setSelectedRow(null); }}>
       <Dialog.Portal>
         <Dialog.Overlay className="dl-inspect-backdrop" />

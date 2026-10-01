@@ -1,4 +1,5 @@
 import { calculateCryptoFeeUsd, resolveFundingPlatformFeePct } from "@/lib/portal-checkout-pricing";
+import { checkoutVersion } from "@/lib/checkout-experiment";
 import { settlementRoutingFields } from "@/lib/payment-split-routing";
 import { NextRequest, NextResponse } from "next/server";
 import { getContainer } from "@/lib/cosmos";
@@ -79,6 +80,10 @@ export async function POST(req: NextRequest) {
   const correlationId = crypto.randomUUID();
   try {
     const body = await req.json().catch(() => ({}));
+    const requestedCheckout = checkoutVersion(body.checkoutVersion);
+    if (body.checkoutVersion !== undefined && !requestedCheckout) {
+      return NextResponse.json({ error: "invalid_checkout_version", message: "checkoutVersion must be v1 or v2." }, { status: 400 });
+    }
     const url = new URL(req.url);
     const queryWallet = String(url.searchParams.get("wallet") || "").toLowerCase();
     const headerWallet = String(req.headers.get("x-wallet") || "").toLowerCase();
@@ -379,6 +384,7 @@ export async function POST(req: NextRequest) {
     const doc = {
       id: `receipt:${receiptId}`,
       type: "receipt",
+      ...(requestedCheckout ? { checkoutVersion: requestedCheckout } : {}),
       wallet,
       receiptId,
       totalUsd,
